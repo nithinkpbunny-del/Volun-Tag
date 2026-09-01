@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+/* ─── Design Tokens ──────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* ── Colors ── */
+  --sage: #4a7c6f;
+  --sage-light: #e8f0ee;
+  --sage-mid: #8fb5ac;
+  --clay: #c4714a;
+  --clay-light: #f5ede7;
+  --ink: #1a1f1c;
+  --ink-soft: #3d4541;
+  --mist: #f7f9f8;
+  --border: #dde5e2;
+  --white: #ffffff;
+
+  /* ── Typography ── */
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+
+  /* ── Spacing / Radius ── */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  --radius-xl: 32px;
+
+  /* ── Shadows ── */
+  --shadow-card: 0 1px 3px rgba(26, 31, 28, 0.06), 0 4px 16px rgba(26, 31, 28, 0.05);
+  --shadow-hover: 0 4px 20px rgba(26, 31, 28, 0.12);
+
+  /* ── Transitions ── */
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Global Styles ──────────────────────────────────────────────── */
+
+body {
+  font-family: var(--font-body);
+  background: var(--mist);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Page Wrapper & Transitions ─────────────────────────────────── */
+
+.page-wrapper {
+  padding-top: 64px;
+  min-height: 100vh;
+}
+
+.page-transition {
+  animation: pageIn 0.35s ease forwards;
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── Utility: Page layout ───────────────────────────────────────── */
+
+.page {
+  min-height: calc(100vh - 64px);
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+/* ─── Selection color ────────────────────────────────────────────── */
+
+::selection {
+  background: rgba(74, 124, 111, 0.2);
+  color: var(--ink);
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--mist);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sage-mid);
+}
+
+/* ─── Focus visible ──────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─── 3D Perspective Context ─────────────────────────────────────── */
+
+.page-wrapper {
+  perspective: 1200px;
+}
+
+.page-transition {
+  transform-style: preserve-3d;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .page-wrapper {
+    padding-top: 64px;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-wrapper {
+    padding-top: 56px;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+}

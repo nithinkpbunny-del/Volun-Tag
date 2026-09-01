@@ -1,0 +1,137 @@
+/* ─── NGO Form Specific Styles ───────────────────────────────────── */
+
+.ngo-icon {
+  background: var(--clay-light);
+}
+
+.ngo-card:hover .ngo-icon {
+  transform: scale(1.05) rotate(3deg);
+}
+
+/* ─── Category Grid ──────────────────────────────────────────────── */
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+}
+
+.category-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1rem 0.5rem;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  background: var(--mist);
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  text-align: center;
+  font-family: var(--font-body);
+  transform-style: preserve-3d;
+  box-shadow: 0 2px 8px rgba(26, 31, 28, 0.03);
+}
+
+.category-card:hover {
+  border-color: var(--sage-mid);
+  background: var(--sage-light);
+  transform: translateY(-4px) perspective(600px) rotateX(3deg);
+  box-shadow: 0 12px 24px rgba(26, 31, 28, 0.08),
+    0 4px 8px rgba(74, 124, 111, 0.05);
+}
+
+.category-card.selected {
+  border-color: var(--sage);
+  background: rgba(74, 124, 111, 0.08);
+  box-shadow: 0 2px 12px rgba(74, 124, 111, 0.15);
+}
+
+.category-icon {
+  font-size: 1.4rem;
+}
+
+.category-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.category-desc {
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* ─── Urgency Options ────────────────────────────────────────────── */
+
+.urgency-options {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.urgency-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--mist);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.urgency-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.urgency-low .urgency-dot {
+  background: #4caf50;
+}
+
+.urgency-medium .urgency-dot {
+  background: #ff9800;
+}
+
+.urgency-high .urgency-dot {
+  background: #f44336;
+}
+
+.urgency-btn:hover {
+  border-color: var(--sage-mid);
+  transform: translateY(-1px);
+}
+
+.urgency-btn.selected {
+  border-color: var(--sage);
+  background: var(--sage-light);
+  color: var(--sage);
+  font-weight: 600;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .category-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .category-card {
+    padding: 0.75rem 0.4rem;
+  }
+
+  .urgency-options {
+    flex-direction: column;
+  }
+}

@@ -1,0 +1,442 @@
+/* ─── NGO Registration Form ──────────────────────────────────────── */
+
+.ngo-register-card {
+  max-width: 620px;
+}
+
+.ngo-register-card .form-icon-wrap {
+  background: var(--clay-light);
+}
+
+.ngo-register-card:hover .form-icon-wrap {
+  transform: scale(1.05) rotate(3deg);
+}
+
+/* ─── Section Divider ────────────────────────────────────────────── */
+
+.form-section {
+  margin-bottom: 0.5rem;
+}
+
+.form-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1.5px solid var(--border);
+}
+
+.form-section-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--sage);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.form-section-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--ink);
+  letter-spacing: -0.015em;
+}
+
+/* ─── Input Type Parity (email / tel / number / url) ────────────────
+   These fields previously fell back to browser defaults because the
+   base rule only targeted input[type="text"]. Matching it here,
+   scoped to this card so nothing else is affected. Password is left
+   as-is, not requested. ──────────────────────────────────────────── */
+
+.ngo-register-card .form-group input[type="email"],
+.ngo-register-card .form-group input[type="tel"],
+.ngo-register-card .form-group input[type="number"],
+.ngo-register-card .form-group input[type="url"] {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  color: var(--ink);
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease,
+    background 0.25s ease;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.ngo-register-card .form-group input[type="email"]:focus,
+.ngo-register-card .form-group input[type="tel"]:focus,
+.ngo-register-card .form-group input[type="number"]:focus,
+.ngo-register-card .form-group input[type="url"]:focus {
+  border-color: var(--sage);
+  box-shadow: 0 0 0 3px rgba(74, 124, 111, 0.12);
+  background: #ffffff;
+}
+
+.ngo-register-card .form-group input[type="email"]:hover:not(:focus),
+.ngo-register-card .form-group input[type="tel"]:hover:not(:focus),
+.ngo-register-card .form-group input[type="number"]:hover:not(:focus),
+.ngo-register-card .form-group input[type="url"]:hover:not(:focus) {
+  border-color: var(--sage-mid);
+}
+
+.ngo-register-card .form-group input.input-error {
+  border-color: #c94a4a;
+  box-shadow: 0 0 0 3px rgba(201, 74, 74, 0.1);
+}
+
+/* ─── Category Dropdown (replacing grid for this form) ───────────── */
+
+.ngo-register-card .form-group select {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  color: var(--ink);
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%233d4541' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+}
+
+/* ─── Verification Documents Section ─────────────────────────────── */
+
+.docs-section {
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.docs-section .form-section-header {
+  border-bottom-color: rgba(221, 229, 226, 0.8);
+}
+
+.docs-section .form-section-number {
+  background: var(--clay);
+}
+
+.credibility-section .form-section-number {
+  background: var(--sage);
+}
+
+.docs-note {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-weight: 400;
+  line-height: 1.55;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  border: 1px solid rgba(221, 229, 226, 0.5);
+}
+
+/* ─── Upload Zone ────────────────────────────────────────────────── */
+
+.upload-field {
+  margin-bottom: 1rem;
+}
+
+.upload-field:last-child {
+  margin-bottom: 0;
+}
+
+.credibility-section .upload-field {
+  margin-bottom: 1.5rem;
+}
+
+.upload-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.4rem;
+  letter-spacing: 0.01em;
+}
+
+.upload-label .required {
+  color: #c94a4a;
+}
+
+.upload-label .optional-tag {
+  font-weight: 400;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  margin-left: 0.25rem;
+}
+
+.upload-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-zone:hover {
+  border-color: var(--sage-mid);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.upload-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 0;
+}
+
+.upload-zone-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+
+.upload-zone-text {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.upload-zone-text strong {
+  font-weight: 600;
+  color: var(--sage);
+}
+
+/* ─── Upload File Preview (documents) ────────────────────────────── */
+
+.upload-file-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1.5px solid var(--sage-mid);
+  border-radius: 12px;
+}
+
+.upload-file-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--sage);
+  flex-shrink: 0;
+}
+
+.upload-file-name {
+  flex: 1;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.upload-file-remove {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.upload-file-remove:hover {
+  background: rgba(201, 74, 74, 0.1);
+  color: #c94a4a;
+}
+
+.upload-file-remove svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ─── Image Preview Grid (NGO work photos) ───────────────────────── */
+
+.image-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.image-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.image-thumb-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(26, 31, 28, 0.55);
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.2s ease;
+}
+
+.image-thumb-remove:hover {
+  background: rgba(201, 74, 74, 0.85);
+}
+
+.image-thumb-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ─── Success State ──────────────────────────────────────────────── */
+
+.ngo-register-success {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.success-icon-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--sage-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+}
+
+.success-icon-wrap svg {
+  width: 28px;
+  height: 28px;
+  color: var(--sage);
+}
+
+.success-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+}
+
+.success-desc {
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  margin-bottom: 2rem;
+  max-width: 360px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.success-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.success-btn-primary {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, var(--sage), #3a6359);
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.success-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(74, 124, 111, 0.3);
+}
+
+.success-btn-secondary {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  background: var(--mist);
+  color: var(--ink-soft);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.success-btn-secondary:hover {
+  border-color: var(--sage-mid);
+  color: var(--sage);
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .ngo-register-card {
+    max-width: 100%;
+  }
+
+  .docs-section {
+    padding: 1.25rem 1rem;
+  }
+
+  .image-preview-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .success-actions {
+    flex-direction: column;
+  }
+}

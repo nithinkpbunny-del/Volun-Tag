@@ -1,0 +1,266 @@
+/* ─── Report Results Page ────────────────────────────────────────── */
+
+.report-results-page {
+  min-height: calc(100vh - 64px);
+  padding: 5rem 2rem 3rem;
+}
+
+.report-results-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* ─── Complaint Summary Card ─────────────────────────────────────── */
+
+.complaint-summary-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 1.75rem;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-card);
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(221, 229, 226, 0.4);
+}
+
+.summary-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.summary-row:first-child {
+  padding-top: 0;
+}
+
+.summary-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sage);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.summary-row p {
+  font-size: 0.95rem;
+  color: var(--ink);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.summary-block {
+  width: 100%;
+}
+
+/* ─── Status Badge ───────────────────────────────────────────────── */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.85rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.status-reported {
+  background: rgba(74, 124, 111, 0.12);
+  color: var(--sage);
+}
+
+.status-accepted {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+
+.status-in-progress {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+.status-resolved {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.status-rejected {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+/* ─── Created At ─────────────────────────────────────────────────── */
+
+.created-at-text {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+/* ─── Pending Recommendations ────────────────────────────────────── */
+
+.pending-recommendations {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 2.5rem;
+  text-align: center;
+  box-shadow: var(--shadow-card);
+}
+
+.pending-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.pending-title {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+}
+
+.pending-desc {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+/* ─── Results Header ─────────────────────────────────────────────── */
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.results-title {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  color: var(--ink);
+  margin: 0;
+}
+
+.results-subtitle {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin: 0.25rem 0 0;
+}
+
+/* ─── Empty State ────────────────────────────────────────────────── */
+
+.result-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 200px);
+  text-align: center;
+  padding: 2rem;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.empty-title {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+}
+
+.empty-desc {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin-bottom: 1.5rem;
+  max-width: 360px;
+}
+
+/* ─── Primary Button (reusable) ──────────────────────────────────── */
+
+.primary-btn {
+  background: var(--sage);
+  color: var(--white);
+  border: none;
+  padding: 0.65rem 1.5rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.primary-btn:hover {
+  background: var(--ink-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-hover);
+}
+
+/* ─── Explanation Card ───────────────────────────────────────────── */
+
+.explanation-card {
+  background: var(--sage-light);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.explanation-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sage);
+  margin-bottom: 0.35rem;
+}
+
+.explanation-card p {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .results-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .summary-row {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .report-results-page {
+    padding: 4rem 1rem 2rem;
+  }
+
+  .complaint-summary-card {
+    padding: 1.25rem;
+  }
+}
