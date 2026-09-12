@@ -284,6 +284,34 @@ class IssueDeleteResponse(BaseModel):
     complaint_id: str
 
 
+class VolunteerDashboardResponse(BaseModel):
+    name: str
+    email: str
+    contact_number: str
+    age: int
+    designation: str
+    gender: str
+    skills: Optional[str]
+    location: Optional[str]
+    availability: Optional[str]
+    experience: Optional[str]
+
+
+class NGODashboardResponse(BaseModel):
+    name: str
+    email: Optional[str]
+    contact_number: Optional[str]
+    category: Optional[str]
+    location: Optional[str]
+    requirement: Optional[str]
+    urgency: Optional[str]
+    year_founded: Optional[int]
+    website_url: Optional[str]
+    verification_status: str
+    verification_notes: Optional[str]
+    work_images: Optional[list[str]]
+
+
 # ─── Sample Seed Data ───────────────────────────────────────────────
 SEED_NGOS = [
         # ── Education ──
@@ -2217,6 +2245,30 @@ def get_volunteers(
     ]
 
 
+
+# ─── Volunteer Dashboard ───────────────────────────────────────────
+@app.get(
+    "/volunteer-dashboard/{email}",
+    response_model=VolunteerDashboardResponse,
+)
+def get_volunteer_dashboard(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    return volunteer
+
+
 @app.get("/ngos")
 def get_ngos(
     db: Session = Depends(get_db),
@@ -2240,6 +2292,31 @@ def get_ngos(
         }
         for n in ngos
     ]
+
+
+
+# ─── NGO Dashboard ────────────────────────────────────────────────
+@app.get(
+    "/ngo-dashboard/{email}",
+    response_model=NGODashboardResponse,
+)
+def get_ngo_dashboard(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    return ngo
 
 
 # ─── Delete Volunteer ──────────────────────────────────────────────
