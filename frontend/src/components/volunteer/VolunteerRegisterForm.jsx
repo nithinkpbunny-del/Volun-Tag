@@ -19,7 +19,7 @@ const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
 
 const API_BASE = "http://127.0.0.1:8000";
 
-export default function VolunteerRegisterForm({ showToast, setPage }) {
+export default function VolunteerRegisterForm({ showToast, setPage, setDashboardEmail }) {
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -218,6 +218,17 @@ export default function VolunteerRegisterForm({ showToast, setPage }) {
                 id="volunteer-reg-view-matches"
               >
                 View Matches
+              </button>
+
+              <button
+                className="success-btn-secondary"
+                onClick={() => {
+                  setDashboardEmail(form.email.trim());
+                  setPage("volunteer-dashboard");
+                }}
+                id="volunteer-reg-view-dashboard"
+              >
+                Go to My Dashboard
               </button>
 
               <button

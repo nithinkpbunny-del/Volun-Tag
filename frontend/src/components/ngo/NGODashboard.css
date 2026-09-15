@@ -1,0 +1,144 @@
+/* ─── NGO Dashboard Card ─────────────────────────────────────────── */
+
+.ngo-dashboard-card {
+  max-width: 620px;
+}
+
+.ngo-dashboard-card .form-icon-wrap.ngo-icon {
+  background: var(--sage-light);
+}
+
+/* ─── Verification Badge ─────────────────────────────────────────── */
+
+.verification-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.3rem 0.85rem;
+  border-radius: 100px;
+  letter-spacing: 0.03em;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.verification-approved {
+  background: #e6f4ef;
+  color: #2d7a5e;
+  border: 1px solid #b0d9c9;
+}
+
+.verification-pending {
+  background: #fef7e6;
+  color: #9a6d1a;
+  border: 1px solid #f4d98a;
+}
+
+.verification-rejected {
+  background: #fdecea;
+  color: #c0392b;
+  border: 1px solid #f1b5b0;
+}
+
+/* ─── Stats Row ──────────────────────────────────────────────────── */
+
+.ngo-dashboard-card .dashboard-stats-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.ngo-dashboard-card .dashboard-stat-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 1.25rem 1rem;
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ngo-dashboard-card .dashboard-stat-card:hover {
+  border-color: var(--sage-mid);
+  box-shadow: 0 4px 16px rgba(74, 124, 111, 0.1);
+}
+
+.ngo-dashboard-card .dashboard-stat-value {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--sage);
+  line-height: 1;
+}
+
+.ngo-dashboard-card .dashboard-stat-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
+/* ─── Detail Rows ────────────────────────────────────────────────── */
+
+.ngo-dashboard-card .dashboard-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ngo-dashboard-card .dashboard-detail-row:last-child {
+  border-bottom: none;
+}
+
+.ngo-dashboard-card .dashboard-detail-label {
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+  min-width: 130px;
+}
+
+.ngo-dashboard-card .dashboard-detail-value {
+  font-size: 0.88rem;
+  color: var(--ink);
+  text-align: right;
+  word-break: break-word;
+}
+
+.dashboard-link {
+  color: var(--sage);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.dashboard-link:hover {
+  text-decoration: underline;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .ngo-dashboard-card {
+    max-width: 100%;
+  }
+
+  .ngo-dashboard-card .dashboard-stats-row {
+    flex-direction: column;
+  }
+
+  .ngo-dashboard-card .dashboard-detail-row {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ngo-dashboard-card .dashboard-detail-value {
+    text-align: left;
+  }
+}

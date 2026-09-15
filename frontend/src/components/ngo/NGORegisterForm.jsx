@@ -19,7 +19,7 @@ const DOC_FIELDS = [
 
 const API_BASE = "http://127.0.0.1:8000";
 
-export default function NGORegisterForm({ showToast, setPage }) {
+export default function NGORegisterForm({ showToast, setPage, setDashboardEmail }) {
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -232,6 +232,17 @@ export default function NGORegisterForm({ showToast, setPage }) {
                 id="ngo-reg-view-matches"
               >
                 View Matches
+              </button>
+
+              <button
+                className="success-btn-secondary"
+                onClick={() => {
+                  setDashboardEmail(form.email.trim());
+                  setPage("ngo-dashboard");
+                }}
+                id="ngo-reg-view-dashboard"
+              >
+                Go to My Dashboard
               </button>
 
               <button

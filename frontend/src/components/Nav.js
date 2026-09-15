@@ -36,6 +36,21 @@ export default function Nav({ page, setPage }) {
           >
             Features
           </span>
+
+          <span
+            className={`nav-static-link nav-feature-link ${page === "dashboard-login" || page === "volunteer-dashboard" || page === "ngo-dashboard" ? "active" : ""}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("dashboard-login")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                navigate("dashboard-login");
+              }
+            }}
+          >
+            My Dashboard
+          </span>
         </div>
       </div>
     </nav>
