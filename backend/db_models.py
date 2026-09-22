@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 
 try:
     from .database import Base
@@ -51,6 +51,7 @@ class NGODB(Base):
     password = Column(String, nullable=True)
     year_founded = Column(Integer, nullable=True)
     website_url = Column(String, nullable=True)
+    motto = Column(String, nullable=True)
 
     # ── Verification documents ─────────────────────────────────────
     # These store server-side file paths/names.
@@ -77,6 +78,20 @@ class NGODB(Base):
         DateTime,
         nullable=True,
     )
+
+
+class ActivityDB(Base):
+    __tablename__ = "activities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ngo_id = Column(Integer, ForeignKey("ngos.id"), nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    required_skills = Column(Text, nullable=False)
+    location = Column(String, nullable=True)
+    event_date = Column(DateTime, nullable=True)
+    spots_available = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class IssueDB(Base):
