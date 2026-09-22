@@ -16,7 +16,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -29,7 +29,7 @@ try:
     from .issue_ai_pipeline import process_issue
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -310,6 +310,48 @@ class NGODashboardResponse(BaseModel):
     verification_status: str
     verification_notes: Optional[str]
     work_images: Optional[list[str]]
+
+
+class EventCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = ""
+    required_skills: str = Field(..., min_length=1)
+    location: Optional[str] = ""
+    event_date: Optional[datetime] = None
+    spots_available: Optional[int] = None
+
+
+class EventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ngo_id: int
+    title: str
+    description: Optional[str]
+    required_skills: str
+    location: Optional[str]
+    event_date: Optional[datetime]
+    spots_available: Optional[int]
+    created_at: datetime
+
+
+class NGOEventsResponse(BaseModel):
+    ngo_name: str
+    total_events: int
+    events: list[EventResponse]
+
+
+class VolunteerMatchEntry(BaseModel):
+    ngo_name: str
+    ngo_category: Optional[str]
+    ngo_location: Optional[str]
+    event_title: Optional[str]
+    match_percentage: Optional[float]
+
+
+class VolunteerMatchesResponse(BaseModel):
+    volunteer_name: str
+    matches: list[VolunteerMatchEntry]
 
 
 # ─── Sample Seed Data ───────────────────────────────────────────────
@@ -2222,6 +2264,81 @@ async def add_ngo(
     }
 
 
+# ─── Organize Event ────────────────────────────────────────────────
+@app.post(
+    "/organize-event/{email}",
+    response_model=EventResponse,
+    status_code=201,
+)
+def organize_event(
+    email: str,
+    event: EventCreate,
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    activity = ActivityDB(
+        ngo_id=ngo.id,
+        title=event.title,
+        description=event.description,
+        required_skills=event.required_skills,
+        location=event.location,
+        event_date=event.event_date,
+        spots_available=event.spots_available,
+    )
+
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+
+    return activity
+
+
+# ─── NGO Events ────────────────────────────────────────────────────
+@app.get(
+    "/ngo-events/{email}",
+    response_model=NGOEventsResponse,
+)
+def get_ngo_events(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    events = (
+        db.query(ActivityDB)
+        .filter(ActivityDB.ngo_id == ngo.id)
+        .order_by(ActivityDB.created_at.desc())
+        .all()
+    )
+
+    return NGOEventsResponse(
+        ngo_name=ngo.name,
+        total_events=len(events),
+        events=events,
+    )
+
+
 # ─── Data Retrieval ────────────────────────────────────────────────
 @app.get("/volunteers")
 def get_volunteers(
@@ -2377,6 +2494,128 @@ def delete_ngo(
         "message": f"NGO '{name}' deleted",
         "remaining": remaining,
     }
+
+
+# ─── Volunteer ↔ Activity Matching ─────────────────────────────────
+@app.get(
+    "/volunteer-matches/{email}",
+    response_model=VolunteerMatchesResponse,
+)
+def get_volunteer_matches(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    if not volunteer.skills:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # NGOs with Approved/Pending status that have at least one activity.
+    ngos_with_events = (
+        db.query(NGODB)
+        .filter(
+            NGODB.verification_status.in_(
+                ["Approved", "Pending"]
+            )
+        )
+        .join(
+            ActivityDB,
+            ActivityDB.ngo_id == NGODB.id,
+        )
+        .distinct()
+        .all()
+    )
+
+    if not ngos_with_events:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # For each NGO, get the most recently created event.
+    ngo_latest_events = []
+
+    for ngo in ngos_with_events:
+        latest_event = (
+            db.query(ActivityDB)
+            .filter(ActivityDB.ngo_id == ngo.id)
+            .order_by(
+                ActivityDB.created_at.desc()
+            )
+            .first()
+        )
+
+        if latest_event:
+            ngo_latest_events.append(
+                (ngo, latest_event)
+            )
+
+    if not ngo_latest_events:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # Compute cosine similarity between volunteer skills
+    # and each event's required_skills.
+    event_texts = [
+        ev.required_skills
+        for _, ev in ngo_latest_events
+    ]
+
+    vol_embedding = model.encode(
+        [volunteer.skills]
+    )
+
+    event_embeddings = model.encode(
+        event_texts
+    )
+
+    scores = cosine_similarity(
+        vol_embedding,
+        event_embeddings,
+    )[0]
+
+    matches = []
+
+    for idx, (ngo, event) in enumerate(
+        ngo_latest_events
+    ):
+        score = float(scores[idx])
+
+        matches.append(
+            VolunteerMatchEntry(
+                ngo_name=ngo.name,
+                ngo_category=ngo.category,
+                ngo_location=ngo.location,
+                event_title=event.title,
+                match_percentage=round(
+                    score * 100, 1
+                ),
+            )
+        )
+
+    matches.sort(
+        key=lambda m: m.match_percentage or 0,
+        reverse=True,
+    )
+
+    return VolunteerMatchesResponse(
+        volunteer_name=volunteer.name,
+        matches=matches,
+    )
 
 
 # ─── Volunteer ↔ NGO Matching ─────────────────────────────────────
