@@ -14,6 +14,7 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
   const [locationFilter, setLocationFilter] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
   const [expandedNgo, setExpandedNgo] = useState(null);
+  const [matches, setMatches] = useState([]);
 
   useEffect(() => {
     if (!email) {
@@ -94,6 +95,40 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
       cancelled = true;
     };
   }, [showToast]);
+
+  useEffect(() => {
+    if (!email) return;
+
+    let cancelled = false;
+
+    const fetchMatches = async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/volunteer-matches/${encodeURIComponent(email)}`
+        );
+
+        if (!res.ok) throw new Error();
+
+        const data = await res.json();
+
+        if (!cancelled) {
+          setMatches(data.matches || []);
+        }
+      } catch {
+        // Non-critical — silently ignore
+      }
+    };
+
+    fetchMatches();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [email]);
+
+  const matchMap = new Map(
+    matches.map((m) => [m.ngo_name, m])
+  );
 
   const locations = Array.from(
     new Set(ngos.map((n) => n.location).filter(Boolean))
@@ -295,6 +330,13 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
                             <span className={urgencyClass(ngo.urgency)}>
                               {urgencyLabel(ngo.urgency)}
                             </span>
+
+                            {matchMap.has(ngo.name) && (
+                              <span className="dashboard-match-badge">
+                                {matchMap.get(ngo.name).event_title} ·{" "}
+                                {matchMap.get(ngo.name).match_percentage}% match
+                              </span>
+                            )}
 
                             <button
                               type="button"

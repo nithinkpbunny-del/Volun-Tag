@@ -240,6 +240,32 @@
   color: #2d7a5e;
 }
 
+.dashboard-match-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.25rem 0.7rem;
+  border-radius: 100px;
+  background: var(--sage-light);
+  color: var(--sage);
+  border: 1px solid var(--sage);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: match-badge-pop 0.35s ease-out;
+}
+
+@keyframes match-badge-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .dashboard-view-btn {
   font-size: 0.78rem;
   font-weight: 600;
