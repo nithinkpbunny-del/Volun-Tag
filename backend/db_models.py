@@ -92,7 +92,7 @@ class ActivityDB(Base):
     event_date = Column(DateTime, nullable=True)
     spots_available = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
+    status = Column(String(20), nullable=False, default="Active")
 
 class IssueDB(Base):
     """Public issue reports, kept separate from volunteer-to-NGO matching data."""

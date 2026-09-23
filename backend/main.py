@@ -333,6 +333,11 @@ class EventResponse(BaseModel):
     event_date: Optional[datetime]
     spots_available: Optional[int]
     created_at: datetime
+    status: str
+
+
+class EventStatusUpdate(BaseModel):
+    status: Literal["Active", "Cancelled"]
 
 
 class NGOEventsResponse(BaseModel):
@@ -2311,6 +2316,7 @@ def organize_event(
 )
 def get_ngo_events(
     email: str,
+    include_cancelled: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     ngo = db.query(NGODB).filter(
@@ -2325,10 +2331,17 @@ def get_ngo_events(
             detail=f"No NGO found with email '{email}'",
         )
 
+    query = db.query(ActivityDB).filter(
+        ActivityDB.ngo_id == ngo.id,
+    )
+
+    if not include_cancelled:
+        query = query.filter(
+            ActivityDB.status == "Active",
+        )
+
     events = (
-        db.query(ActivityDB)
-        .filter(ActivityDB.ngo_id == ngo.id)
-        .order_by(ActivityDB.created_at.desc())
+        query.order_by(ActivityDB.created_at.desc())
         .all()
     )
 
@@ -2337,6 +2350,33 @@ def get_ngo_events(
         total_events=len(events),
         events=events,
     )
+
+
+# ─── Update Event Status ───────────────────────────────────────────
+@app.patch(
+    "/event-status/{event_id}",
+    response_model=EventResponse,
+)
+def update_event_status(
+    event_id: int,
+    status_update: EventStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    event.status = status_update.status
+    db.commit()
+    db.refresh(event)
+
+    return event
 
 
 # ─── Data Retrieval ────────────────────────────────────────────────
@@ -2522,7 +2562,7 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # NGOs with Approved/Pending status that have at least one activity.
+    # NGOs with Approved/Pending status that have at least one active activity.
     ngos_with_events = (
         db.query(NGODB)
         .filter(
@@ -2533,6 +2573,9 @@ def get_volunteer_matches(
         .join(
             ActivityDB,
             ActivityDB.ngo_id == NGODB.id,
+        )
+        .filter(
+            ActivityDB.status == "Active",
         )
         .distinct()
         .all()
@@ -2550,7 +2593,10 @@ def get_volunteer_matches(
     for ngo in ngos_with_events:
         latest_event = (
             db.query(ActivityDB)
-            .filter(ActivityDB.ngo_id == ngo.id)
+            .filter(
+                ActivityDB.ngo_id == ngo.id,
+                ActivityDB.status == "Active",
+            )
             .order_by(
                 ActivityDB.created_at.desc()
             )
