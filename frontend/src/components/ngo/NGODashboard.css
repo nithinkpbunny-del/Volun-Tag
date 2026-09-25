@@ -1,144 +1,185 @@
-/* ─── NGO Dashboard Card ─────────────────────────────────────────── */
+/* ─── NGO Dashboard — mirrors VolunteerDashboard structure ──────── */
 
-.ngo-dashboard-card {
-  max-width: 620px;
-}
+/* Reuses dashboard-shell, dashboard-subnav, dashboard-subnav-tabs,
+   dashboard-subnav-tab, dashboard-profile-strip, dashboard-avatar-circle,
+   dashboard-profile-info, dashboard-profile-name, dashboard-content-grid,
+   dashboard-main-col, dashboard-sidebar-col, dashboard-section-header,
+   dashboard-section-title, dashboard-section-sub, dashboard-ngo-list,
+   dashboard-ngo-row, dashboard-ngo-row-main, dashboard-ngo-info,
+   dashboard-ngo-name, dashboard-ngo-meta, dashboard-ngo-actions,
+   dashboard-ngo-detail, dashboard-view-btn, dashboard-stats-row,
+   dashboard-stat-card, dashboard-stat-value, dashboard-stat-label,
+   dashboard-sidebar-heading, dashboard-placeholder-card,
+   dashboard-placeholder-title, dashboard-placeholder-text,
+   dashboard-report-btn, dashboard-search-input, dashboard-footer-actions,
+   dashboard-verification-tag, verification-* from VolunteerDashboard.css.
+   Only NGO-specific additions are here. */
 
-.ngo-dashboard-card .form-icon-wrap.ngo-icon {
-  background: var(--sage-light);
-}
 
-/* ─── Verification Badge ─────────────────────────────────────────── */
+/* ─── Profile motto ──────────────────────────────────────────────── */
 
-.verification-badge {
-  display: inline-block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.3rem 0.85rem;
-  border-radius: 100px;
-  letter-spacing: 0.03em;
-  margin-top: 0.5rem;
-  margin-bottom: 0.25rem;
-}
-
-.verification-approved {
-  background: #e6f4ef;
-  color: #2d7a5e;
-  border: 1px solid #b0d9c9;
-}
-
-.verification-pending {
-  background: #fef7e6;
-  color: #9a6d1a;
-  border: 1px solid #f4d98a;
-}
-
-.verification-rejected {
-  background: #fdecea;
-  color: #c0392b;
-  border: 1px solid #f1b5b0;
-}
-
-/* ─── Stats Row ──────────────────────────────────────────────────── */
-
-.ngo-dashboard-card .dashboard-stats-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
-}
-
-.ngo-dashboard-card .dashboard-stat-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  padding: 1.25rem 1rem;
-  background: var(--mist);
-  border: 1.5px solid var(--border);
-  border-radius: 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.ngo-dashboard-card .dashboard-stat-card:hover {
-  border-color: var(--sage-mid);
-  box-shadow: 0 4px 16px rgba(74, 124, 111, 0.1);
-}
-
-.ngo-dashboard-card .dashboard-stat-value {
-  font-family: var(--font-display);
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--sage);
-  line-height: 1;
-}
-
-.ngo-dashboard-card .dashboard-stat-label {
-  font-size: 0.78rem;
-  font-weight: 500;
+.dashboard-profile-motto {
+  font-size: 0.85rem;
+  font-style: italic;
   color: var(--ink-soft);
-  text-align: center;
-  letter-spacing: 0.01em;
+  margin: 2px 0 0.5rem;
+  line-height: 1.4;
 }
 
-/* ─── Detail Rows ────────────────────────────────────────────────── */
 
-.ngo-dashboard-card .dashboard-detail-row {
+/* ─── Org-detail rows (profile tab) ──────────────────────────────── */
+
+.ngo-detail-list {
+  border-top: 1px solid var(--border);
+}
+
+.ngo-detail-row {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  padding: 0.85rem 0;
+  padding: 0.8rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.ngo-dashboard-card .dashboard-detail-row:last-child {
+.ngo-detail-row:last-child {
   border-bottom: none;
 }
 
-.ngo-dashboard-card .dashboard-detail-label {
-  font-size: 0.83rem;
+.ngo-detail-label {
+  font-size: 0.82rem;
   font-weight: 600;
   color: var(--ink-soft);
   flex-shrink: 0;
-  min-width: 130px;
+  min-width: 110px;
 }
 
-.ngo-dashboard-card .dashboard-detail-value {
-  font-size: 0.88rem;
+.ngo-detail-value {
+  font-size: 0.86rem;
   color: var(--ink);
   text-align: right;
   word-break: break-word;
 }
 
-.dashboard-link {
+.ngo-detail-link {
   color: var(--sage);
   text-decoration: none;
   word-break: break-all;
 }
 
-.dashboard-link:hover {
+.ngo-detail-link:hover {
   text-decoration: underline;
 }
 
+
+/* ─── Events toolbar ─────────────────────────────────────────────── */
+
+.ngo-events-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+
+/* ─── Event create form ──────────────────────────────────────────── */
+
+.ngo-event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1.25rem;
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 1rem;
+  animation: ngo-form-slide 0.25s ease-out;
+}
+
+@keyframes ngo-form-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ngo-event-submit-btn {
+  align-self: flex-end;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--sage);
+  border: none;
+  border-radius: 10px;
+  padding: 0.6rem 1.3rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ngo-event-submit-btn:hover:not(:disabled) {
+  background: var(--sage-dark, #3a6b5c);
+}
+
+.ngo-event-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ─── Event status badge ─────────────────────────────────────────── */
+
+.ngo-event-status-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 100px;
+}
+
+.status-active {
+  background: #e6f4ef;
+  color: #2d7a5e;
+}
+
+.status-cancelled {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+
+/* ─── Cancel event button ────────────────────────────────────────── */
+
+.ngo-cancel-event-btn {
+  margin-top: 0.75rem;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c0392b;
+  background: #fdecea;
+  border: 1px solid #f1b5b0;
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ngo-cancel-event-btn:hover {
+  background: #f9d6d2;
+}
+
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
-@media (max-width: 480px) {
-  .ngo-dashboard-card {
-    max-width: 100%;
-  }
-
-  .ngo-dashboard-card .dashboard-stats-row {
+@media (max-width: 760px) {
+  .ngo-detail-row {
     flex-direction: column;
+    gap: 0.2rem;
   }
 
-  .ngo-dashboard-card .dashboard-detail-row {
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .ngo-dashboard-card .dashboard-detail-value {
+  .ngo-detail-value {
     text-align: left;
   }
 }

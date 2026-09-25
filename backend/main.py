@@ -307,6 +307,7 @@ class NGODashboardResponse(BaseModel):
     urgency: Optional[str]
     year_founded: Optional[int]
     website_url: Optional[str]
+    motto: Optional[str]
     verification_status: str
     verification_notes: Optional[str]
     work_images: Optional[list[str]]
