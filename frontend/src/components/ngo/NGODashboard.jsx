@@ -24,6 +24,7 @@ export default function NGODashboard({ email, showToast, setPage }) {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_EVENT });
   const [submitting, setSubmitting] = useState(false);
+  const [editingEventId, setEditingEventId] = useState(null);
 
   // ── Fetch profile ───────────────────────────────────────────────
   useEffect(() => {
@@ -164,6 +165,49 @@ export default function NGODashboard({ email, showToast, setPage }) {
       await fetchEvents();
     } catch (err) {
       showToast(err.message || "Failed to create event", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ── Update event (partial edit) ─────────────────────────────────
+  const handleUpdateEvent = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+
+    try {
+      const body = {
+        title: formData.title.trim(),
+        required_skills: formData.required_skills.trim(),
+        location: formData.location.trim() || "",
+        event_date: formData.event_date
+          ? new Date(formData.event_date).toISOString()
+          : null,
+        spots_available: formData.spots_available
+          ? Number(formData.spots_available)
+          : null,
+      };
+
+      const res = await fetch(
+        `${API_BASE}/update-event/${editingEventId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to update event");
+      }
+
+      showToast("Event updated successfully!", "success");
+      setEditingEventId(null);
+      setFormData({ ...EMPTY_EVENT });
+      await fetchEvents();
+    } catch (err) {
+      showToast(err.message || "Failed to update event", "error");
     } finally {
       setSubmitting(false);
     }
@@ -498,26 +542,113 @@ export default function NGODashboard({ email, showToast, setPage }) {
 
                     {expandedEvent === ev.id && (
                       <div className="dashboard-ngo-detail">
-                        <p>
-                          <strong>Description:</strong>{" "}
-                          {ev.description || "No description provided."}
-                        </p>
-                        <p>
-                          <strong>Required Skills:</strong> {ev.required_skills}
-                        </p>
-                        <p>
-                          <strong>Spots Available:</strong>{" "}
-                          {ev.spots_available ?? "Unlimited"}
-                        </p>
+                        {editingEventId === ev.id ? (
+                          <form className="ngo-event-form" onSubmit={handleUpdateEvent}>
+                            <input
+                              type="text"
+                              className="dashboard-search-input"
+                              placeholder="Event title *"
+                              value={formData.title}
+                              onChange={onField("title")}
+                              required
+                            />
 
-                        {ev.status === "Active" && (
-                          <button
-                            type="button"
-                            className="ngo-cancel-event-btn"
-                            onClick={() => handleCancel(ev.id)}
-                          >
-                            Cancel event
-                          </button>
+                            <input
+                              type="text"
+                              className="dashboard-search-input"
+                              placeholder="Required skills *"
+                              value={formData.required_skills}
+                              onChange={onField("required_skills")}
+                              required
+                            />
+
+                            <input
+                              type="text"
+                              className="dashboard-search-input"
+                              placeholder="Location"
+                              value={formData.location}
+                              onChange={onField("location")}
+                            />
+
+                            <input
+                              type="date"
+                              className="dashboard-search-input"
+                              placeholder="Event date"
+                              value={formData.event_date}
+                              onChange={onField("event_date")}
+                            />
+
+                            <input
+                              type="number"
+                              className="dashboard-search-input"
+                              placeholder="Spots available"
+                              min="1"
+                              value={formData.spots_available}
+                              onChange={onField("spots_available")}
+                            />
+
+                            <div style={{ display: "flex", gap: "0.5rem" }}>
+                              <button
+                                type="submit"
+                                className="ngo-event-submit-btn"
+                                disabled={submitting}
+                              >
+                                {submitting ? "Saving..." : "Save changes"}
+                              </button>
+                              <button
+                                type="button"
+                                className="dashboard-view-btn"
+                                onClick={() => {
+                                  setEditingEventId(null);
+                                  setFormData({ ...EMPTY_EVENT });
+                                }}
+                              >
+                                Cancel edit
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <>
+                            <p>
+                              <strong>Description:</strong>{" "}
+                              {ev.description || "No description provided."}
+                            </p>
+                            <p>
+                              <strong>Required Skills:</strong> {ev.required_skills}
+                            </p>
+                            <p>
+                              <strong>Spots Available:</strong>{" "}
+                              {ev.spots_available ?? "Unlimited"}
+                            </p>
+
+                            {ev.status === "Active" && (
+                              <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+                                <button
+                                  type="button"
+                                  className="dashboard-view-btn"
+                                  onClick={() => {
+                                    setEditingEventId(ev.id);
+                                    setFormData({
+                                      title: ev.title || "",
+                                      required_skills: ev.required_skills || "",
+                                      location: ev.location || "",
+                                      event_date: ev.event_date ? ev.event_date.slice(0, 10) : "",
+                                      spots_available: ev.spots_available != null ? String(ev.spots_available) : "",
+                                    });
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ngo-cancel-event-btn"
+                                  onClick={() => handleCancel(ev.id)}
+                                >
+                                  Cancel event
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
