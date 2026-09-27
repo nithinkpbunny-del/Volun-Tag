@@ -14,3 +14,4 @@ frontend/node_modules/
 *.db
 *.sqlite
 *.sqlite3
+*.db.backup*
