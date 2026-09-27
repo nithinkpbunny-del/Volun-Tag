@@ -149,6 +149,7 @@ class NGODashboardResponse(BaseModel):
     year_founded: Optional[int]
     website_url: Optional[str]
     motto: Optional[str]
+    legal_structure: Optional[str]
     verification_status: str
     verification_notes: Optional[str]
     work_images: Optional[list[str]]

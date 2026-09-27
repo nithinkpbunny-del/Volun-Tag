@@ -355,8 +355,8 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
                         {expandedNgo === ngo.name && (
                           <div className="dashboard-ngo-detail">
                             <p>
-                              {ngo.requirement ||
-                                "No requirement details provided."}
+                              {ngo.motto ||
+                                "No motto provided."}
                             </p>
 
                             <span

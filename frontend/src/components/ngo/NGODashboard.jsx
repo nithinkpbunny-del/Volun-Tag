@@ -363,8 +363,8 @@ export default function NGODashboard({ email, showToast, setPage }) {
                   </div>
 
                   <div className="ngo-detail-row">
-                    <span className="ngo-detail-label">Requirement</span>
-                    <span className="ngo-detail-value">{profile.requirement || "—"}</span>
+                    <span className="ngo-detail-label">Legal Structure</span>
+                    <span className="ngo-detail-value">{profile.legal_structure || "—"}</span>
                   </div>
 
                   <div className="ngo-detail-row">
