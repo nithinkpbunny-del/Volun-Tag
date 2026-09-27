@@ -1109,35 +1109,29 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # NGOs with Approved/Pending status that have at least one active activity.
-    ngos_with_events = (
+    # NGOs with Approved/Pending status
+    ngos = (
         db.query(NGODB)
         .filter(
             NGODB.verification_status.in_(
                 ["Approved", "Pending"]
             )
         )
-        .join(
-            ActivityDB,
-            ActivityDB.ngo_id == NGODB.id,
-        )
-        .filter(
-            ActivityDB.status == "Active",
-        )
-        .distinct()
+        .order_by(NGODB.id)
         .all()
     )
 
-    if not ngos_with_events:
+    if not ngos:
         return VolunteerMatchesResponse(
             volunteer_name=volunteer.name,
             matches=[],
         )
 
-    # For each NGO, get the most recently created event.
-    ngo_latest_events = []
+    # For each NGO, check for its latest active event;
+    # fall back to NGO motto if no active event exists.
+    candidates = []
 
-    for ngo in ngos_with_events:
+    for ngo in ngos:
         latest_event = (
             db.query(ActivityDB)
             .filter(
@@ -1150,52 +1144,71 @@ def get_volunteer_matches(
             .first()
         )
 
-        if latest_event:
-            ngo_latest_events.append(
-                (ngo, latest_event)
+        if latest_event and latest_event.required_skills and latest_event.required_skills.strip():
+            candidates.append(
+                {
+                    "ngo": ngo,
+                    "event": latest_event,
+                    "match_text": latest_event.required_skills.strip(),
+                }
+            )
+        elif ngo.motto and ngo.motto.strip():
+            candidates.append(
+                {
+                    "ngo": ngo,
+                    "event": None,
+                    "match_text": ngo.motto.strip(),
+                }
             )
 
-    if not ngo_latest_events:
+    if not candidates:
         return VolunteerMatchesResponse(
             volunteer_name=volunteer.name,
             matches=[],
         )
 
     # Compute cosine similarity between volunteer skills
-    # and each event's required_skills.
-    event_texts = [
-        ev.required_skills
-        for _, ev in ngo_latest_events
+    # and each candidate's match text (event required_skills or NGO motto).
+    match_texts = [
+        c["match_text"]
+        for c in candidates
     ]
 
     vol_embedding = model.encode(
         [volunteer.skills]
     )
 
-    event_embeddings = model.encode(
-        event_texts
+    candidate_embeddings = model.encode(
+        match_texts
     )
 
     scores = cosine_similarity(
         vol_embedding,
-        event_embeddings,
+        candidate_embeddings,
     )[0]
 
     matches = []
 
-    for idx, (ngo, event) in enumerate(
-        ngo_latest_events
-    ):
+    for idx, c in enumerate(candidates):
+        ngo = c["ngo"]
+        event = c["event"]
         score = float(scores[idx])
+
+        boost = compute_category_boost(
+            volunteer.skills or "",
+            ngo.category or "",
+        )
+
+        final_score = min(score + boost, 1.0)
 
         matches.append(
             VolunteerMatchEntry(
                 ngo_name=ngo.name,
                 ngo_category=ngo.category,
                 ngo_location=ngo.location,
-                event_title=event.title,
+                event_title=event.title if event else None,
                 match_percentage=round(
-                    score * 100, 1
+                    final_score * 100, 1
                 ),
             )
         )
@@ -1289,7 +1302,7 @@ def match_volunteers(
     ]
 
     ngo_texts = [
-        n.requirement or ""
+        n.motto or ""
         for n in filtered_ngos
     ]
 
@@ -1346,8 +1359,8 @@ def match_volunteers(
                         matched_ngo.category
                         or "Uncategorized"
                     ),
-                    "ngo_requirement": (
-                        matched_ngo.requirement
+                    "ngo_motto": (
+                        matched_ngo.motto
                     ),
                     "score": round(score, 4),
                     "percentage": round(

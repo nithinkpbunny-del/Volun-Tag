@@ -257,7 +257,7 @@ def _build_issue_text(
 def _generate_explanation(
     ngo_name: str,
     ngo_category: str,
-    ngo_requirement: str,
+    ngo_motto: str,
     confidence: str,
     percentage: float,
     issue_text: str,
@@ -301,13 +301,13 @@ def _generate_explanation(
             f" The NGO focuses on {category_label}."
         )
 
-    # Requirement summary sentence
-    if ngo_requirement:
-        # Take the first sentence (up to ~120 chars) of the requirement
-        req_preview = ngo_requirement.strip()
-        if len(req_preview) > 120:
-            req_preview = req_preview[:117].rsplit(" ", 1)[0] + "..."
-        explanation += f" Their stated need: \"{req_preview}\""
+    # Motto summary sentence
+    if ngo_motto:
+        # Take the first sentence (up to ~120 chars) of the motto
+        motto_preview = ngo_motto.strip()
+        if len(motto_preview) > 120:
+            motto_preview = motto_preview[:117].rsplit(" ", 1)[0] + "..."
+        explanation += f" Their stated need: \"{motto_preview}\""
 
     return explanation
 
@@ -332,7 +332,7 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         matching (includes image captions and detected category when
         available).
         ``recommended_ngos`` – list of up to 3 recommendation dicts, each
-        containing: ngo, ngo_category, ngo_requirement, score, percentage,
+        containing: ngo, ngo_category, ngo_motto, score, percentage,
         confidence.
         ``recommendation_explanations`` – parallel list of explanation
         strings.
@@ -384,7 +384,7 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
 
     # 4. Generate embeddings
     model = _get_model()
-    ngo_texts = [ngo.requirement for ngo in ngos]
+    ngo_texts = [ngo.motto or "" for ngo in ngos]
 
     issue_embedding = model.encode([issue_text])       # shape (1, dim)
     ngo_embeddings = model.encode(ngo_texts)            # shape (N, dim)
@@ -415,7 +415,7 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         recommended_ngos.append({
             "ngo": ngo.name,
             "ngo_category": ngo.category or "Uncategorized",
-            "ngo_requirement": ngo.requirement,
+            "ngo_motto": ngo.motto,
             "score": round(score, 4),
             "percentage": percentage,
             "confidence": confidence,
@@ -425,7 +425,7 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
             _generate_explanation(
                 ngo_name=ngo.name,
                 ngo_category=ngo.category,
-                ngo_requirement=ngo.requirement,
+                ngo_motto=ngo.motto,
                 confidence=confidence,
                 percentage=percentage,
                 issue_text=issue_text,

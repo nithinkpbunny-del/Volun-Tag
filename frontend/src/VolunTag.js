@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import Nav from "./components/Nav";
 import LandingPage from "./components/LandingPage";
 import VolunteerForm from "./components/VolunteerForm";
-import NGOForm from "./components/NGOForm";
 import VolunteerRegisterForm from "./components/volunteer/VolunteerRegisterForm";
 import NGORegisterForm from "./components/ngo/NGORegisterForm";
 import ResultsPage from "./components/ResultsPage";
@@ -94,12 +93,7 @@ export default function VolunTag() {
  
           {page === "volunteer" && (
             <VolunteerForm showToast={showToast} />
-          )}
- 
-          {page === "ngo" && (
-            <NGOForm showToast={showToast} />
-          )}
- 
+          )} 
           {page === "results" && (
             <ResultsPage showToast={showToast} />
           )}
