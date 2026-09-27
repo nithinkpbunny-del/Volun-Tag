@@ -484,7 +484,8 @@ async def add_ngo(
     password: str = Form(...),
     category: str = Form(...),
     location: str = Form(...),
-    requirement: str = Form(...),
+    motto: str = Form(...),
+    legal_structure: str = Form(...),
     year_founded: Optional[int] = Form(default=None),
     website_url: Optional[str] = Form(default=None),
 
@@ -501,6 +502,21 @@ async def add_ngo(
         default=None
     ),
     cert_fcra: Optional[UploadFile] = File(
+        default=None
+    ),
+    trust_deed: Optional[UploadFile] = File(
+        default=None
+    ),
+    society_registration_certificate: Optional[UploadFile] = File(
+        default=None
+    ),
+    society_moa: Optional[UploadFile] = File(
+        default=None
+    ),
+    section8_incorporation_certificate: Optional[UploadFile] = File(
+        default=None
+    ),
+    section8_moa_aoa: Optional[UploadFile] = File(
         default=None
     ),
 
@@ -521,7 +537,8 @@ async def add_ngo(
     contact_number = contact_number.strip()
     category = category.strip()
     location = location.strip()
-    requirement = requirement.strip()
+    motto = motto.strip()
+    legal_structure = legal_structure.strip()
 
     website_url = (
         website_url.strip()
@@ -566,10 +583,16 @@ async def add_ngo(
             detail="Location is required",
         )
 
-    if not requirement:
+    if not motto:
         raise HTTPException(
             status_code=422,
-            detail="Volunteer requirement is required",
+            detail="Motto is required",
+        )
+
+    if not legal_structure:
+        raise HTTPException(
+            status_code=422,
+            detail="Legal structure is required",
         )
 
     # ── Duplicate NGO name ─────────────────────────────────────────
@@ -620,6 +643,31 @@ async def add_ngo(
     saved_fcra = await save_ngo_file(
         cert_fcra,
         "FCRA Certificate",
+    )
+
+    saved_trust_deed = await save_ngo_file(
+        trust_deed,
+        "Trust Deed",
+    )
+
+    saved_society_registration_certificate = await save_ngo_file(
+        society_registration_certificate,
+        "Society Registration Certificate",
+    )
+
+    saved_society_moa = await save_ngo_file(
+        society_moa,
+        "Society MOA",
+    )
+
+    saved_section8_incorporation_certificate = await save_ngo_file(
+        section8_incorporation_certificate,
+        "Section 8 Incorporation Certificate",
+    )
+
+    saved_section8_moa_aoa = await save_ngo_file(
+        section8_moa_aoa,
+        "Section 8 MOA/AOA",
     )
 
     # ── Save optional NGO work images ───────────────────────────────
@@ -690,9 +738,10 @@ async def add_ngo(
         password=password,
         category=category,
         location=location,
-        requirement=requirement,
         year_founded=year_founded,
         website_url=website_url,
+        motto=motto,
+        legal_structure=legal_structure,
 
         registration_certificate=(
             registration_certificate
@@ -701,6 +750,15 @@ async def add_ngo(
         cert_12a=saved_12a,
         cert_80g=saved_80g,
         cert_fcra=saved_fcra,
+        trust_deed=saved_trust_deed,
+        society_registration_certificate=(
+            saved_society_registration_certificate
+        ),
+        society_moa=saved_society_moa,
+        section8_incorporation_certificate=(
+            saved_section8_incorporation_certificate
+        ),
+        section8_moa_aoa=saved_section8_moa_aoa,
 
         work_images=(
             saved_work_images
@@ -928,7 +986,7 @@ def get_ngos(
     return [
         {
             "name": n.name,
-            "requirement": n.requirement,
+            "motto": n.motto,
             "category": n.category,
             "location": n.location,
             "urgency": n.urgency,

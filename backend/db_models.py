@@ -42,7 +42,6 @@ class NGODB(Base):
     name = Column(String, unique=True, nullable=False)
     category = Column(String, nullable=True)
     location = Column(String, nullable=True)
-    requirement = Column(String, nullable=True)
     urgency = Column(String, nullable=True, default="medium")
 
     # ── NGO account / registration details ─────────────────────────
@@ -52,6 +51,7 @@ class NGODB(Base):
     year_founded = Column(Integer, nullable=True)
     website_url = Column(String, nullable=True)
     motto = Column(String, nullable=True)
+    legal_structure = Column(String, nullable=True)
 
     # ── Verification documents ─────────────────────────────────────
     # These store server-side file paths/names.
@@ -60,6 +60,11 @@ class NGODB(Base):
     cert_12a = Column(String, nullable=True)
     cert_80g = Column(String, nullable=True)
     cert_fcra = Column(String, nullable=True)
+    trust_deed = Column(String, nullable=True)
+    society_registration_certificate = Column(String, nullable=True)
+    society_moa = Column(String, nullable=True)
+    section8_incorporation_certificate = Column(String, nullable=True)
+    section8_moa_aoa = Column(String, nullable=True)
 
     # Optional photos showing NGO work.
     work_images = Column(JSON, nullable=True)
