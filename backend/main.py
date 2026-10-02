@@ -1,14 +1,11 @@
 import logging
 import os
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -16,7 +13,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -27,9 +24,17 @@ try:
         update_issue_status,
     )
     from .issue_ai_pipeline import process_issue
+    from .schemas import (
+        Volunteer, NGO, IssueCreate, IssueStatusUpdate, IssueResponse,
+        IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
+        NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
+        EventUpdate, NGOEventsResponse, VolunteerMatchEntry, VolunteerMatchesResponse,
+    )
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -40,6 +45,14 @@ except ImportError:
         update_issue_status,
     )
     from issue_ai_pipeline import process_issue
+    from schemas import (
+        Volunteer, NGO, IssueCreate, IssueStatusUpdate, IssueResponse,
+        IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
+        NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
+        EventUpdate, NGOEventsResponse, VolunteerMatchEntry, VolunteerMatchesResponse,
+    )
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 
 
 logger = logging.getLogger(__name__)
@@ -82,1489 +95,14 @@ app.add_middleware(
 )
 
 
-# ─── AI Matching Model ─────────────────────────────────────────────
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-
-# ─── Category keywords for weighted matching ───────────────────────
-CATEGORY_KEYWORDS = {
-    "Education": [
-        "teaching",
-        "tutoring",
-        "mentoring",
-        "training",
-        "curriculum",
-        "literacy",
-        "school",
-        "education",
-        "learning",
-        "academic",
-        "student",
-        "instructor",
-    ],
-    "Health": [
-        "medical",
-        "nursing",
-        "health",
-        "wellness",
-        "therapy",
-        "first aid",
-        "mental health",
-        "counseling",
-        "healthcare",
-        "clinical",
-        "nutrition",
-        "fitness",
-    ],
-    "Environment": [
-        "conservation",
-        "recycling",
-        "sustainability",
-        "ecology",
-        "wildlife",
-        "climate",
-        "green",
-        "environmental",
-        "nature",
-        "cleanup",
-        "reforestation",
-        "pollution",
-    ],
-    "Animal Welfare": [
-        "animal",
-        "pet",
-        "shelter",
-        "veterinary",
-        "rescue",
-        "wildlife",
-        "adoption",
-        "foster",
-        "canine",
-        "feline",
-        "habitat",
-        "species",
-    ],
-    "Social Services": [
-        "community",
-        "outreach",
-        "support",
-        "welfare",
-        "advocacy",
-        "housing",
-        "food bank",
-        "poverty",
-        "homeless",
-        "elderly",
-        "youth",
-        "disability",
-    ],
-}
-
-CATEGORY_BOOST = 0.15
-
-
-# ─── Pydantic Models ───────────────────────────────────────────────
-class Volunteer(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    email: str = Field(..., min_length=1)
-    contact_number: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
-    age: int = Field(..., ge=1, le=120)
-    designation: str = Field(..., min_length=1)
-    gender: str = Field(..., min_length=1)
-
-    # Existing matching fields.
-    skills: str = Field(..., min_length=1)
-    location: str = Field(..., min_length=1)
-    availability: str = Field(..., min_length=1)
-    experience: Optional[str] = ""
-
-
-class NGO(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    requirement: Optional[str] = ""
-    category: Optional[str] = ""
-    location: Optional[str] = ""
-    urgency: Optional[str] = "medium"
-
-
-class IssueCreate(BaseModel):
-    """Public input for a report; AI and recommendation fields are server-owned."""
-
-    reporter_name: Optional[str] = Field(default=None, max_length=100)
-    contact_information: Optional[str] = Field(default=None, max_length=255)
-    user_description: str = Field(..., min_length=1, max_length=5000)
-    location: str = Field(..., min_length=1, max_length=500)
-    image_paths: Optional[list[str]] = Field(default=None, max_length=10)
-
-    @field_validator("user_description", "location")
-    @classmethod
-    def required_text_cannot_be_blank(cls, value: str) -> str:
-        value = value.strip()
-
-        if not value:
-            raise ValueError("must not be empty or whitespace only")
-
-        return value
-
-    @field_validator("reporter_name", "contact_information")
-    @classmethod
-    def optional_text_is_trimmed(
-        cls,
-        value: Optional[str],
-    ) -> Optional[str]:
-        if value is None:
-            return None
-
-        value = value.strip()
-
-        return value or None
-
-    @field_validator("image_paths")
-    @classmethod
-    def image_paths_are_valid(
-        cls,
-        value: Optional[list[str]],
-    ) -> Optional[list[str]]:
-        if value is None:
-            return None
-
-        cleaned_paths = [path.strip() for path in value]
-
-        if any(not path for path in cleaned_paths):
-            raise ValueError("image paths must not be empty")
-
-        if any(len(path) > 1000 for path in cleaned_paths):
-            raise ValueError("image paths must be 1000 characters or fewer")
-
-        return cleaned_paths
-
-
-class IssueStatusUpdate(BaseModel):
-    status: Literal[
-        "Reported",
-        "Accepted",
-        "In Progress",
-        "Resolved",
-        "Rejected",
-    ]
-
-
-class IssueResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    complaint_id: str
-    reporter_name: Optional[str]
-    contact_information: Optional[str]
-    user_description: str
-    location: str
-    image_paths: Optional[list[str]]
-    ai_image_caption: Optional[str]
-    ai_scene_category: Optional[str]
-    merged_problem_description: Optional[str]
-    status: str
-    recommended_ngos: Optional[list[Any]]
-    recommendation_explanations: Optional[list[Any]]
-    created_at: datetime
-    updated_at: datetime
-
-
-class IssueStatsResponse(BaseModel):
-    total_issues: int
-    reported: int
-    accepted: int
-    in_progress: int
-    resolved: int
-    rejected: int
-
-
-class IssueDeleteResponse(BaseModel):
-    message: str
-    complaint_id: str
-
-
-# ─── Sample Seed Data ───────────────────────────────────────────────
-SEED_NGOS = [
-        # ── Education ──
-    NGO(
-        name="Bright Horizons Foundation",
-        requirement="Looking for volunteers to support after-school tutoring programs, exam preparation, and study skill workshops for high school students in low-income areas.",
-        category="Education",
-        location="Ahmedabad, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="Rising Stars Youth Mission",
-        requirement="Need volunteers to run summer learning camps, distribute school supplies, and mentor first-generation learners on college readiness.",
-        category="Education",
-        location="Indore, India",
-        urgency="low",
-    ),
-
-    # ── Health ──
-    NGO(
-        name="Compass Care Network",
-        requirement="Seeking healthcare volunteers including nurses, paramedics, and health educators to run mobile health clinics and vaccination drives in rural districts.",
-        category="Health",
-        location="Bhopal, India",
-        urgency="high",
-    ),
-    NGO(
-        name="Wellspring Charitable Trust",
-        requirement="Looking for volunteer counselors and psychologists to provide mental health support groups and stress-management workshops for frontline workers.",
-        category="Health",
-        location="Patna, India",
-        urgency="medium",
-    ),
-
-    # ── Environment ──
-    NGO(
-        name="Rooted Community Alliance",
-        requirement="Need volunteers for tree plantation drives, urban gardening projects, and composting awareness campaigns to promote sustainable living.",
-        category="Environment",
-        location="Coimbatore, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="Clear Skies Environmental Trust",
-        requirement="Seeking volunteers with backgrounds in environmental science and data collection to monitor river water quality and run cleanup drives.",
-        category="Environment",
-        location="Guwahati, India",
-        urgency="high",
-    ),
-
-    # ── Animal Welfare ──
-    NGO(
-        name="Second Chance Animal Sanctuary",
-        requirement="Looking for volunteers to assist with animal shelter upkeep, feeding schedules, adoption drives, and basic veterinary support for rescued strays.",
-        category="Animal Welfare",
-        location="Nagpur, India",
-        urgency="low",
-    ),
-    NGO(
-        name="Anchor Point Foundation",
-        requirement="Need volunteers for street animal sterilization drives, rescue transport, and community education on responsible pet ownership.",
-        category="Animal Welfare",
-        location="Surat, India",
-        urgency="medium",
-    ),
-
-    # ── Social Services ──
-    NGO(
-        name="Common Ground Welfare Society",
-        requirement="Seeking volunteers for disaster relief coordination, shelter support for displaced families, and basic needs distribution during emergencies.",
-        category="Social Services",
-        location="Bhubaneswar, India",
-        urgency="high",
-    ),
-    NGO(
-        name="Hearts United Trust",
-        requirement="Looking for volunteers to support elder-care visits, distribute daily meals to homeless individuals, and coordinate winter blanket drives.",
-        category="Social Services",
-        location="Kanpur, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="Teach For Tomorrow",
-        requirement="Need volunteers who can teach mathematics, science, and English to underprivileged children in rural schools. Must be patient and good at explaining concepts simply.",
-        category="Education",
-        location="Jaipur, India",
-        urgency="high",
-    ),
-    NGO(
-        name="GreenEarth Foundation",
-        requirement="Looking for volunteers passionate about reforestation, waste management, and environmental awareness campaigns. Experience with community mobilization preferred.",
-        category="Environment",
-        location="Bangalore, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="HealthFirst India",
-        requirement="Seeking medical professionals and health workers to conduct free health camps, first aid training, and mental health counseling in underserved areas.",
-        category="Health",
-        location="Mumbai, India",
-        urgency="high",
-    ),
-    NGO(
-        name="PawsCare Animal Rescue",
-        requirement="Need animal lovers to help with rescue operations, shelter management, foster care coordination, and veterinary assistance for stray animals.",
-        category="Animal Welfare",
-        location="Delhi, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="HopeHarbor Community Center",
-        requirement="Looking for social workers, counselors, and community organizers to run outreach programs for homeless and elderly populations.",
-        category="Social Services",
-        location="Chennai, India",
-        urgency="high",
-    ),
-    NGO(
-        name="Code4Kids Academy",
-        requirement="Seeking software developers and tech professionals to teach coding, web development, and digital literacy to children aged 10-16.",
-        category="Education",
-        location="Hyderabad, India",
-        urgency="low",
-    ),
-    NGO(
-        name="CleanAir Initiative",
-        requirement="Need environmental scientists, data analysts, and campaigners to monitor air quality, analyze pollution data, and run public awareness drives.",
-        category="Environment",
-        location="Delhi, India",
-        urgency="high",
-    ),
-    NGO(
-        name="NutriLife Foundation",
-        requirement="Looking for nutritionists, dietitians, and health educators to design meal plans and conduct nutrition workshops for malnourished children.",
-        category="Health",
-        location="Kolkata, India",
-        urgency="medium",
-    ),
-    NGO(
-        name="Wildlife Warriors Trust",
-        requirement="Seeking wildlife enthusiasts and conservation biologists to help with habitat restoration, species monitoring, and anti-poaching awareness.",
-        category="Animal Welfare",
-        location="Pune, India",
-        urgency="low",
-    ),
-    NGO(
-        name="YouthRise Foundation",
-        requirement="Need mentors, career counselors, and life skills trainers to guide underprivileged youth through education and career development programs.",
-        category="Social Services",
-        location="Lucknow, India",
-        urgency="medium",
-    ),
-]
-
-
-SEED_VOLUNTEERS = [
-    Volunteer(
-        name="Aditya Rao",
-        email="aditya.rao.seed@voluntag.test",
-        contact_number="9999990031",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Male",
-        skills="Curriculum design, teaching high school science, lab demonstrations, exam coaching",
-        location="Bangalore, India",
-        availability="Weekends",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Nandini Bose",
-        email="nandini.bose.seed@voluntag.test",
-        contact_number="9999990032",
-        password="seed123",
-        age=23,
-        designation="Student",
-        gender="Female",
-        skills="Public health awareness, first aid training, blood donation camps, community health surveys",
-        location="Kolkata, India",
-        availability="Flexible",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Farhan Ansari",
-        email="farhan.ansari.seed@voluntag.test",
-        contact_number="9999990033",
-        password="seed123",
-        age=31,
-        designation="Employee",
-        gender="Male",
-        skills="Solar energy installation, renewable energy advocacy, sustainability audits, green building consulting",
-        location="Ahmedabad, India",
-        availability="Part-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Ritika Chawla",
-        email="ritika.chawla.seed@voluntag.test",
-        contact_number="9999990034",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Female",
-        skills="Dog training, animal behavior, shelter volunteering, rescue coordination, pet adoption events",
-        location="Chandigarh, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Devansh Malhotra",
-        email="devansh.malhotra.seed@voluntag.test",
-        contact_number="9999990035",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Male",
-        skills="Homeless shelter support, food distribution, disaster relief logistics, emergency response coordination",
-        location="Delhi, India",
-        availability="Full-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Ishita Ghosh",
-        email="ishita.ghosh.seed@voluntag.test",
-        contact_number="9999990036",
-        password="seed123",
-        age=22,
-        designation="Student",
-        gender="Female",
-        skills="Primary school tutoring, storytelling for children, literacy programs, reading circles",
-        location="Pune, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Rajat Kapoor",
-        email="rajat.kapoor.seed@voluntag.test",
-        contact_number="9999990037",
-        password="seed123",
-        age=34,
-        designation="Employee",
-        gender="Male",
-        skills="Emergency medicine, trauma care, ambulance response, paramedic training",
-        location="Mumbai, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Simran Kaur",
-        email="simran.kaur.seed@voluntag.test",
-        contact_number="9999990038",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Wetland conservation, bird sanctuary management, ecological surveys, nature trail guiding",
-        location="Chandigarh, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Yash Thakur",
-        email="yash.thakur.seed@voluntag.test",
-        contact_number="9999990039",
-        password="seed123",
-        age=24,
-        designation="Student",
-        gender="Male",
-        skills="Wildlife photography, species documentation, forest patrol assistance, conservation awareness campaigns",
-        location="Dehradun, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Aarushi Bhatia",
-        email="aarushi.bhatia.seed@voluntag.test",
-        contact_number="9999990040",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Female",
-        skills="Elderly care, old-age home visits, companionship programs, geriatric health support",
-        location="Jaipur, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Kabir Malik",
-        email="kabir.malik.seed@voluntag.test",
-        contact_number="9999990041",
-        password="seed123",
-        age=32,
-        designation="Employee",
-        gender="Male",
-        skills="STEM education, robotics workshops, science fair mentoring, coding bootcamps for teenagers",
-        location="Hyderabad, India",
-        availability="Weekends",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Neha Pandey",
-        email="neha.pandey.seed@voluntag.test",
-        contact_number="9999990042",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Female",
-        skills="Maternal health, prenatal counseling, nutrition for pregnant women, community health worker training",
-        location="Lucknow, India",
-        availability="Weekdays",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Siddharth Jain",
-        email="siddharth.jain.seed@voluntag.test",
-        contact_number="9999990043",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Male",
-        skills="Plastic waste reduction, recycling drives, zero-waste workshops, circular economy advocacy",
-        location="Indore, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Ayesha Siddiqui",
-        email="ayesha.siddiqui.seed@voluntag.test",
-        contact_number="9999990044",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Female",
-        skills="Feral cat rescue, TNR programs, animal sterilization camps, stray animal feeding drives",
-        location="Bhopal, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Vivaan Chatterjee",
-        email="vivaan.chatterjee.seed@voluntag.test",
-        contact_number="9999990045",
-        password="seed123",
-        age=33,
-        designation="Employee",
-        gender="Male",
-        skills="Rural employment programs, skill development training, microfinance literacy, livelihood support",
-        location="Kolkata, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Riya D'Souza",
-        email="riya.dsouza.seed@voluntag.test",
-        contact_number="9999990046",
-        password="seed123",
-        age=21,
-        designation="Student",
-        gender="Female",
-        skills="Special needs tutoring, inclusive education, sign language basics, classroom assistance",
-        location="Goa, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Aryan Chauhan",
-        email="aryan.chauhan.seed@voluntag.test",
-        contact_number="9999990047",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Male",
-        skills="Disaster preparedness training, flood relief, emergency shelter setup, crisis communication",
-        location="Guwahati, India",
-        availability="Full-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Tanvi Shah",
-        email="tanvi.shah.seed@voluntag.test",
-        contact_number="9999990048",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Organic farming, permaculture design, seed banking, sustainable agriculture training",
-        location="Nashik, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Om Prakash",
-        email="om.prakash.seed@voluntag.test",
-        contact_number="9999990049",
-        password="seed123",
-        age=37,
-        designation="Employee",
-        gender="Male",
-        skills="Vocational training, carpentry instruction, tailoring workshops, livelihood skill building for youth",
-        location="Kanpur, India",
-        availability="Part-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Diya Menon",
-        email="diya.menon.seed@voluntag.test",
-        contact_number="9999990050",
-        password="seed123",
-        age=24,
-        designation="Student",
-        gender="Female",
-        skills="Bird rescue, wildlife first aid, aviary maintenance, exotic animal care",
-        location="Kochi, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Reyansh Oberoi",
-        email="reyansh.oberoi.seed@voluntag.test",
-        contact_number="9999990051",
-        password="seed123",
-        age=35,
-        designation="Employee",
-        gender="Male",
-        skills="Preventive cardiology, community health screenings, diabetes awareness camps, chronic disease education",
-        location="Chennai, India",
-        availability="Weekdays",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Kritika Suri",
-        email="kritika.suri.seed@voluntag.test",
-        contact_number="9999990052",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Female",
-        skills="Slum rehabilitation, affordable housing advocacy, community sanitation drives, urban poverty alleviation",
-        location="Mumbai, India",
-        availability="Full-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Aniket Joshi",
-        email="aniket.joshi.seed@voluntag.test",
-        contact_number="9999990053",
-        password="seed123",
-        age=22,
-        designation="Student",
-        gender="Male",
-        skills="Environmental education, school eco-clubs, plantation drives, waste segregation awareness",
-        location="Pune, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Mahima Bansal",
-        email="mahima.bansal.seed@voluntag.test",
-        contact_number="9999990054",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Female",
-        skills="Adult literacy programs, women's education, vocational counseling, self-help group facilitation",
-        location="Chandigarh, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Zaid Khan",
-        email="zaid.khan.seed@voluntag.test",
-        contact_number="9999990055",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Male",
-        skills="Physiotherapy for elderly, home-based rehabilitation, mobility aid training, post-surgery care support",
-        location="Hyderabad, India",
-        availability="Weekdays",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Vanya Kohli",
-        email="vanya.kohli.seed@voluntag.test",
-        contact_number="9999990056",
-        password="seed123",
-        age=23,
-        designation="Student",
-        gender="Female",
-        skills="Marine conservation, beach cleanup drives, coral reef awareness, coastal ecology research",
-        location="Goa, India",
-        availability="Flexible",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Harsh Vardhan",
-        email="harsh.vardhan.seed@voluntag.test",
-        contact_number="9999990057",
-        password="seed123",
-        age=31,
-        designation="Employee",
-        gender="Male",
-        skills="Legal literacy workshops, tenant rights advocacy, RTI filing assistance, paralegal support for underserved communities",
-        location="Delhi, India",
-        availability="Part-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Sanya Grover",
-        email="sanya.grover.seed@voluntag.test",
-        contact_number="9999990058",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Female",
-        skills="Horse rescue, equine therapy assistance, farm animal sanctuary support, livestock welfare",
-        location="Jaipur, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Ishaan Bakshi",
-        email="ishaan.bakshi.seed@voluntag.test",
-        contact_number="9999990059",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Male",
-        skills="Career mentoring for engineering students, resume workshops, mock interview coaching, campus placement guidance",
-        location="Bangalore, India",
-        availability="Flexible",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Alia Fernandes",
-        email="alia.fernandes.seed@voluntag.test",
-        contact_number="9999990060",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Female",
-        skills="Oral hygiene camps, dental health education, pediatric dentistry outreach, hygiene awareness programs",
-        location="Goa, India",
-        availability="Weekdays",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Dhruv Sethi",
-        email="dhruv.sethi.seed@voluntag.test",
-        contact_number="9999990061",
-        password="seed123",
-        age=33,
-        designation="Employee",
-        gender="Male",
-        skills="Renewable energy policy research, carbon footprint auditing, corporate sustainability consulting",
-        location="Gurgaon, India",
-        availability="Part-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Navya Iyer",
-        email="navya.iyer.seed@voluntag.test",
-        contact_number="9999990062",
-        password="seed123",
-        age=24,
-        designation="Student",
-        gender="Female",
-        skills="Peer counseling, adolescent mental health support, school wellness programs, stress workshops for teens",
-        location="Chennai, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Kunal Wadhwa",
-        email="kunal.wadhwa.seed@voluntag.test",
-        contact_number="9999990063",
-        password="seed123",
-        age=36,
-        designation="Employee",
-        gender="Male",
-        skills="Slum school infrastructure, classroom building projects, education access advocacy, school supply drives",
-        location="Mumbai, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Prisha Anand",
-        email="prisha.anand.seed@voluntag.test",
-        contact_number="9999990064",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Snake rescue and relocation, reptile handling, wildlife helpline coordination, urban wildlife conflict mitigation",
-        location="Bangalore, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Rehan Qureshi",
-        email="rehan.qureshi.seed@voluntag.test",
-        contact_number="9999990065",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Male",
-        skills="Refugee resettlement support, migrant worker assistance, cross-cultural communication, humanitarian aid coordination",
-        location="Delhi, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Aditi Vyas",
-        email="aditi.vyas.seed@voluntag.test",
-        contact_number="9999990066",
-        password="seed123",
-        age=22,
-        designation="Student",
-        gender="Female",
-        skills="Girls' education advocacy, menstrual hygiene workshops, school dropout prevention counseling",
-        location="Udaipur, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Veer Chopra",
-        email="veer.chopra.seed@voluntag.test",
-        contact_number="9999990067",
-        password="seed123",
-        age=34,
-        designation="Employee",
-        gender="Male",
-        skills="Watershed restoration, groundwater recharge projects, rainwater harvesting consultation, drought relief planning",
-        location="Nagpur, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Myra Kapadia",
-        email="myra.kapadia.seed@voluntag.test",
-        contact_number="9999990068",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Female",
-        skills="Palliative care support, hospice volunteering, end-of-life counseling, caregiver respite support",
-        location="Mumbai, India",
-        availability="Weekdays",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Arnav Trivedi",
-        email="arnav.trivedi.seed@voluntag.test",
-        contact_number="9999990069",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Male",
-        skills="Digital literacy for seniors, basic computer training, smartphone usage workshops, online safety education",
-        location="Surat, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Larisa D'Costa",
-        email="larisa.dcosta.seed@voluntag.test",
-        contact_number="9999990070",
-        password="seed123",
-        age=23,
-        designation="Student",
-        gender="Female",
-        skills="Turtle conservation, nesting site monitoring, marine wildlife rehabilitation, beach patrol volunteering",
-        location="Goa, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Uday Ranganathan",
-        email="uday.ranganathan.seed@voluntag.test",
-        contact_number="9999990071",
-        password="seed123",
-        age=32,
-        designation="Employee",
-        gender="Male",
-        skills="Vaccination drive logistics, cold-chain management, immunization awareness campaigns, rural health outreach",
-        location="Coimbatore, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Zoya Merchant",
-        email="zoya.merchant.seed@voluntag.test",
-        contact_number="9999990072",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Female",
-        skills="Domestic violence support, women's shelter counseling, crisis hotline staffing, survivor advocacy",
-        location="Pune, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Shaurya Bedi",
-        email="shaurya.bedi.seed@voluntag.test",
-        contact_number="9999990073",
-        password="seed123",
-        age=21,
-        designation="Student",
-        gender="Male",
-        skills="Coral nursery maintenance, scuba-assisted reef cleanup, underwater photography for research, dive training",
-        location="Andaman, India",
-        availability="Flexible",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Anushka Bhalla",
-        email="anushka.bhalla.seed@voluntag.test",
-        contact_number="9999990074",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Foster care support, orphanage volunteering, child welfare advocacy, adoption process assistance",
-        location="Delhi, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Rudra Pillai",
-        email="rudra.pillai.seed@voluntag.test",
-        contact_number="9999990075",
-        password="seed123",
-        age=38,
-        designation="Employee",
-        gender="Male",
-        skills="Mangrove restoration, coastal erosion mitigation, community fisheries management, blue carbon research",
-        location="Kochi, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Esha Nanda",
-        email="esha.nanda.seed@voluntag.test",
-        contact_number="9999990076",
-        password="seed123",
-        age=24,
-        designation="Student",
-        gender="Female",
-        skills="Pet grooming, animal shelter cleaning, volunteer coordination for adoption fairs, small animal care",
-        location="Jaipur, India",
-        availability="Weekends",
-        experience="Beginner",
-    ),
-    Volunteer(
-        name="Nikhil Sarin",
-        email="nikhil.sarin.seed@voluntag.test",
-        contact_number="9999990077",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Male",
-        skills="Financial literacy workshops, microloan counseling, budgeting classes for low-income families, savings group facilitation",
-        location="Ahmedabad, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Pihu Sachdeva",
-        email="pihu.sachdeva.seed@voluntag.test",
-        contact_number="9999990078",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Female",
-        skills="Speech therapy support, communication disorder awareness, early childhood intervention, special education advocacy",
-        location="Chandigarh, India",
-        availability="Weekdays",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Vihaan Rastogi",
-        email="vihaan.rastogi.seed@voluntag.test",
-        contact_number="9999990079",
-        password="seed123",
-        age=25,
-        designation="Other",
-        gender="Other",
-        skills="Urban farming workshops, rooftop gardening, community composting, food security advocacy",
-        location="Bangalore, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Trisha Kulshreshtha",
-        email="trisha.kulshreshtha.seed@voluntag.test",
-        contact_number="9999990080",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Female",
-        skills="Disability rights advocacy, accessible infrastructure consulting, inclusive employment programs, assistive technology training",
-        location="Mumbai, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Ravi Kumar",
-        email="ravi.seed@voluntag.test",
-        contact_number="9999990001",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Male",
-        skills="Teaching, mathematics, tutoring, mentoring, curriculum design, patience with children",
-        location="Jaipur, India",
-        availability="Weekends",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Priya Sharma",
-        email="priya.seed@voluntag.test",
-        contact_number="9999990002",
-        password="seed123",
-        age=24,
-        designation="Employee",
-        gender="Female",
-        skills="Environmental science, reforestation, sustainability projects, waste management, community engagement",
-        location="Bangalore, India",
-        availability="Flexible",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Ankit Patel",
-        email="ankit.seed@voluntag.test",
-        contact_number="9999990003",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Male",
-        skills="First aid, nursing, health camps, blood donation drives, patient care",
-        location="Mumbai, India",
-        availability="Weekdays",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Sneha Reddy",
-        email="sneha.seed@voluntag.test",
-        contact_number="9999990004",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Animal rescue, shelter management, pet fostering, veterinary assistance, adoption coordination",
-        location="Delhi, India",
-        availability="Flexible",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Arjun Nair",
-        email="arjun.seed@voluntag.test",
-        contact_number="9999990005",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Male",
-        skills="Social work, community outreach, elderly care, youth mentorship, counseling",
-        location="Chennai, India",
-        availability="Part-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Meera Joshi",
-        email="meera.seed@voluntag.test",
-        contact_number="9999990006",
-        password="seed123",
-        age=23,
-        designation="Student",
-        gender="Female",
-        skills="Python programming, web development, teaching coding to kids, digital literacy training",
-        location="Hyderabad, India",
-        availability="Weekends",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Vikram Singh",
-        email="vikram.seed@voluntag.test",
-        contact_number="9999990007",
-        password="seed123",
-        age=32,
-        designation="Employee",
-        gender="Male",
-        skills="Data analysis, air quality monitoring, environmental campaigning, public policy research",
-        location="Delhi, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Kavitha Menon",
-        email="kavitha.seed@voluntag.test",
-        contact_number="9999990008",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Female",
-        skills="Nutrition, dietetics, meal planning, health education, childhood nutrition programs",
-        location="Kolkata, India",
-        availability="Weekdays",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Rahul Deshmukh",
-        email="rahul.seed@voluntag.test",
-        contact_number="9999990009",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Male",
-        skills="Wildlife conservation, habitat restoration, bird watching, anti-poaching campaigns, ecology research",
-        location="Pune, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Anita Desai",
-        email="anita.seed@voluntag.test",
-        contact_number="9999990010",
-        password="seed123",
-        age=31,
-        designation="Employee",
-        gender="Female",
-        skills="Career counseling, mentoring youth, resume building, interview coaching, life skills training",
-        location="Lucknow, India",
-        availability="Flexible",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Suresh Iyer",
-        email="suresh.seed@voluntag.test",
-        contact_number="9999990011",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Male",
-        skills="Mathematics teaching, science education, school tutoring, exam preparation, student mentoring",
-        location="Chennai, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Deepa Krishnan",
-        email="deepa.seed@voluntag.test",
-        contact_number="9999990012",
-        password="seed123",
-        age=25,
-        designation="Employee",
-        gender="Female",
-        skills="Graphic design, content writing, social media management, marketing campaigns, event planning",
-        location="Bangalore, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Amit Gupta",
-        email="amit.seed@voluntag.test",
-        contact_number="9999990013",
-        password="seed123",
-        age=35,
-        designation="Employee",
-        gender="Male",
-        skills="Medical doctor, clinical practice, health awareness, preventive healthcare, rural health camps",
-        location="Mumbai, India",
-        availability="Weekends",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Fatima Khan",
-        email="fatima.seed@voluntag.test",
-        contact_number="9999990014",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Recycling programs, eco-friendly workshops, climate change awareness, green energy advocacy",
-        location="Delhi, India",
-        availability="Part-time",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Rajesh Verma",
-        email="rajesh.seed@voluntag.test",
-        contact_number="9999990015",
-        password="seed123",
-        age=33,
-        designation="Employee",
-        gender="Male",
-        skills="Carpentry, construction, building maintenance, infrastructure repair, manual labor",
-        location="Jaipur, India",
-        availability="Full-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Lakshmi Sundaram",
-        email="lakshmi.seed@voluntag.test",
-        contact_number="9999990016",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Female",
-        skills="Yoga instruction, fitness training, mental wellness, meditation coaching, stress management",
-        location="Mumbai, India",
-        availability="Weekdays",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Sanjay Bhatt",
-        email="sanjay.seed@voluntag.test",
-        contact_number="9999990017",
-        password="seed123",
-        age=34,
-        designation="Employee",
-        gender="Male",
-        skills="Legal aid, human rights advocacy, policy drafting, community welfare, dispute resolution",
-        location="Delhi, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Pooja Agarwal",
-        email="pooja.seed@voluntag.test",
-        contact_number="9999990018",
-        password="seed123",
-        age=24,
-        designation="Student",
-        gender="Female",
-        skills="Photography, videography, documentary filmmaking, event coverage, visual storytelling",
-        location="Kolkata, India",
-        availability="Flexible",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Karthik Rajan",
-        email="karthik.seed@voluntag.test",
-        contact_number="9999990019",
-        password="seed123",
-        age=27,
-        designation="Employee",
-        gender="Male",
-        skills="Software engineering, app development, database management, tech workshops, hackathon mentoring",
-        location="Hyderabad, India",
-        availability="Weekends",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Nisha Tiwari",
-        email="nisha.seed@voluntag.test",
-        contact_number="9999990020",
-        password="seed123",
-        age=23,
-        designation="Student",
-        gender="Female",
-        skills="Public speaking, debate coaching, communication skills training, English language teaching",
-        location="Lucknow, India",
-        availability="Weekdays",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Manoj Pillai",
-        email="manoj.seed@voluntag.test",
-        contact_number="9999990021",
-        password="seed123",
-        age=36,
-        designation="Employee",
-        gender="Male",
-        skills="Plumbing, electrical work, housing repair, shelter construction for homeless, infrastructure support",
-        location="Chennai, India",
-        availability="Full-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Swati Kulkarni",
-        email="swati.seed@voluntag.test",
-        contact_number="9999990022",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Female",
-        skills="Child psychology, special education, learning disability support, behavioral therapy, counseling children",
-        location="Pune, India",
-        availability="Flexible",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Rohan Saxena",
-        email="rohan.seed@voluntag.test",
-        contact_number="9999990023",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Male",
-        skills="Event management, fundraising, donor outreach, grant writing, NGO administration",
-        location="Delhi, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Divya Nambiar",
-        email="divya.seed@voluntag.test",
-        contact_number="9999990024",
-        password="seed123",
-        age=26,
-        designation="Employee",
-        gender="Female",
-        skills="Water conservation, river cleanup drives, watershed management, environmental impact assessment",
-        location="Bangalore, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Arun Prakash",
-        email="arun.seed@voluntag.test",
-        contact_number="9999990025",
-        password="seed123",
-        age=32,
-        designation="Employee",
-        gender="Male",
-        skills="Physiotherapy, rehabilitation, sports medicine, elderly mobility support, occupational therapy",
-        location="Mumbai, India",
-        availability="Weekdays",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Geeta Rao",
-        email="geeta.seed@voluntag.test",
-        contact_number="9999990026",
-        password="seed123",
-        age=28,
-        designation="Employee",
-        gender="Female",
-        skills="Food distribution, soup kitchen management, food bank coordination, hunger relief programs",
-        location="Chennai, India",
-        availability="Flexible",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Imran Sheikh",
-        email="imran.seed@voluntag.test",
-        contact_number="9999990027",
-        password="seed123",
-        age=30,
-        designation="Employee",
-        gender="Male",
-        skills="Translation, Urdu-English-Hindi, multilingual communication, documentation, interpretation services",
-        location="Lucknow, India",
-        availability="Part-time",
-        experience="Experienced",
-    ),
-    Volunteer(
-        name="Bhavna Mehta",
-        email="bhavna.seed@voluntag.test",
-        contact_number="9999990028",
-        password="seed123",
-        age=25,
-        designation="Student",
-        gender="Female",
-        skills="Dance instruction, performing arts, cultural event organization, music teaching, art therapy",
-        location="Jaipur, India",
-        availability="Weekends",
-        experience="Intermediate",
-    ),
-    Volunteer(
-        name="Venkat Subramanian",
-        email="venkat.seed@voluntag.test",
-        contact_number="9999990029",
-        password="seed123",
-        age=38,
-        designation="Employee",
-        gender="Male",
-        skills="Agricultural science, organic farming, crop management, farmer training, soil conservation",
-        location="Hyderabad, India",
-        availability="Full-time",
-        experience="Expert",
-    ),
-    Volunteer(
-        name="Tanya Chopra",
-        email="tanya.seed@voluntag.test",
-        contact_number="9999990030",
-        password="seed123",
-        age=29,
-        designation="Employee",
-        gender="Female",
-        skills="Mental health counseling, crisis intervention, substance abuse support, emotional well-being workshops",
-        location="Delhi, India",
-        availability="Flexible",
-        experience="Experienced",
-    ),
-]
-
-
 # ─── Startup / Seed Data ───────────────────────────────────────────
 @app.on_event("startup")
 def seed_data():
     """Load sample data on server startup."""
-
-    Base.metadata.create_all(bind=engine)
-
-    db = SessionLocal()
-
-    try:
-        seeded_volunteers = 0
-        seeded_ngos = 0
-
-        if db.query(func.count(VolunteerDB.id)).scalar() == 0:
-            db.add_all(
-                VolunteerDB(**volunteer.dict())
-                for volunteer in SEED_VOLUNTEERS
-            )
-            seeded_volunteers = len(SEED_VOLUNTEERS)
-
-        if db.query(func.count(NGODB.id)).scalar() == 0:
-            db.add_all(
-                NGODB(
-                    name=ngo.name,
-                    requirement=ngo.requirement or None,
-                    category=ngo.category or None,
-                    location=ngo.location or None,
-                    urgency=ngo.urgency or "medium",
-                    verification_status="Approved",
-                )
-                for ngo in SEED_NGOS
-            )
-            seeded_ngos = len(SEED_NGOS)
-
-        if seeded_volunteers or seeded_ngos:
-            db.commit()
-
-            print(
-                f"✅ Seeded {seeded_volunteers} volunteers "
-                f"and {seeded_ngos} NGOs"
-            )
-
-    finally:
-        db.close()
+    run_seed()
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
-def compute_category_boost(
-    skills_text: str,
-    category: str,
-) -> float:
-    """Return a boost score if volunteer skills match NGO category keywords."""
-
-    if not category or category not in CATEGORY_KEYWORDS:
-        return 0.0
-
-    keywords = CATEGORY_KEYWORDS[category]
-    skills_lower = skills_text.lower()
-
-    matches = sum(
-        1
-        for kw in keywords
-        if kw in skills_lower
-    )
-
-    if matches == 0:
-        return 0.0
-
-    return min(matches / 3.0, 1.0) * CATEGORY_BOOST
-
-
-def classify_confidence(score: float) -> str:
-    """Classify match score into confidence tiers."""
-
-    if score >= 0.70:
-        return "high"
-
-    if score >= 0.50:
-        return "medium"
-
-    return "low"
-
-
 async def save_ngo_file(
     upload: Optional[UploadFile],
     field_name: str,
@@ -1946,7 +484,8 @@ async def add_ngo(
     password: str = Form(...),
     category: str = Form(...),
     location: str = Form(...),
-    requirement: str = Form(...),
+    motto: str = Form(...),
+    legal_structure: str = Form(...),
     year_founded: Optional[int] = Form(default=None),
     website_url: Optional[str] = Form(default=None),
 
@@ -1963,6 +502,21 @@ async def add_ngo(
         default=None
     ),
     cert_fcra: Optional[UploadFile] = File(
+        default=None
+    ),
+    trust_deed: Optional[UploadFile] = File(
+        default=None
+    ),
+    society_registration_certificate: Optional[UploadFile] = File(
+        default=None
+    ),
+    society_moa: Optional[UploadFile] = File(
+        default=None
+    ),
+    section8_incorporation_certificate: Optional[UploadFile] = File(
+        default=None
+    ),
+    section8_moa_aoa: Optional[UploadFile] = File(
         default=None
     ),
 
@@ -1983,7 +537,8 @@ async def add_ngo(
     contact_number = contact_number.strip()
     category = category.strip()
     location = location.strip()
-    requirement = requirement.strip()
+    motto = motto.strip()
+    legal_structure = legal_structure.strip()
 
     website_url = (
         website_url.strip()
@@ -2028,10 +583,16 @@ async def add_ngo(
             detail="Location is required",
         )
 
-    if not requirement:
+    if not motto:
         raise HTTPException(
             status_code=422,
-            detail="Volunteer requirement is required",
+            detail="Motto is required",
+        )
+
+    if not legal_structure:
+        raise HTTPException(
+            status_code=422,
+            detail="Legal structure is required",
         )
 
     # ── Duplicate NGO name ─────────────────────────────────────────
@@ -2082,6 +643,31 @@ async def add_ngo(
     saved_fcra = await save_ngo_file(
         cert_fcra,
         "FCRA Certificate",
+    )
+
+    saved_trust_deed = await save_ngo_file(
+        trust_deed,
+        "Trust Deed",
+    )
+
+    saved_society_registration_certificate = await save_ngo_file(
+        society_registration_certificate,
+        "Society Registration Certificate",
+    )
+
+    saved_society_moa = await save_ngo_file(
+        society_moa,
+        "Society MOA",
+    )
+
+    saved_section8_incorporation_certificate = await save_ngo_file(
+        section8_incorporation_certificate,
+        "Section 8 Incorporation Certificate",
+    )
+
+    saved_section8_moa_aoa = await save_ngo_file(
+        section8_moa_aoa,
+        "Section 8 MOA/AOA",
     )
 
     # ── Save optional NGO work images ───────────────────────────────
@@ -2152,9 +738,10 @@ async def add_ngo(
         password=password,
         category=category,
         location=location,
-        requirement=requirement,
         year_founded=year_founded,
         website_url=website_url,
+        motto=motto,
+        legal_structure=legal_structure,
 
         registration_certificate=(
             registration_certificate
@@ -2163,6 +750,15 @@ async def add_ngo(
         cert_12a=saved_12a,
         cert_80g=saved_80g,
         cert_fcra=saved_fcra,
+        trust_deed=saved_trust_deed,
+        society_registration_certificate=(
+            saved_society_registration_certificate
+        ),
+        society_moa=saved_society_moa,
+        section8_incorporation_certificate=(
+            saved_section8_incorporation_certificate
+        ),
+        section8_moa_aoa=saved_section8_moa_aoa,
 
         work_images=(
             saved_work_images
@@ -2194,6 +790,142 @@ async def add_ngo(
     }
 
 
+# ─── Organize Event ────────────────────────────────────────────────
+@app.post(
+    "/organize-event/{email}",
+    response_model=EventResponse,
+    status_code=201,
+)
+def organize_event(
+    email: str,
+    event: EventCreate,
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    activity = ActivityDB(
+        ngo_id=ngo.id,
+        title=event.title,
+        description=event.description,
+        required_skills=event.required_skills,
+        location=event.location,
+        event_date=event.event_date,
+        spots_available=event.spots_available,
+    )
+
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+
+    return activity
+
+
+# ─── NGO Events ────────────────────────────────────────────────────
+@app.get(
+    "/ngo-events/{email}",
+    response_model=NGOEventsResponse,
+)
+def get_ngo_events(
+    email: str,
+    include_cancelled: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    query = db.query(ActivityDB).filter(
+        ActivityDB.ngo_id == ngo.id,
+    )
+
+    if not include_cancelled:
+        query = query.filter(
+            ActivityDB.status == "Active",
+        )
+
+    events = (
+        query.order_by(ActivityDB.created_at.desc())
+        .all()
+    )
+
+    return NGOEventsResponse(
+        ngo_name=ngo.name,
+        total_events=len(events),
+        events=events,
+    )
+
+
+# ─── Update Event Status ───────────────────────────────────────────
+@app.patch(
+    "/event-status/{event_id}",
+    response_model=EventResponse,
+)
+def update_event_status(
+    event_id: int,
+    status_update: EventStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    event.status = status_update.status
+    db.commit()
+    db.refresh(event)
+
+    return event
+
+
+# ─── Update Event (partial) ────────────────────────────────────────
+@app.patch("/update-event/{event_id}", response_model=EventResponse)
+def update_event(
+    event_id: int,
+    event_update: EventUpdate,
+    db: Session = Depends(get_db),
+):
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    for field, value in event_update.model_dump(exclude_unset=True).items():
+        setattr(event, field, value)
+
+    db.commit()
+    db.refresh(event)
+
+    return event
+
+
 # ─── Data Retrieval ────────────────────────────────────────────────
 @app.get("/volunteers")
 def get_volunteers(
@@ -2217,6 +949,30 @@ def get_volunteers(
     ]
 
 
+
+# ─── Volunteer Dashboard ───────────────────────────────────────────
+@app.get(
+    "/volunteer-dashboard/{email}",
+    response_model=VolunteerDashboardResponse,
+)
+def get_volunteer_dashboard(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    return volunteer
+
+
 @app.get("/ngos")
 def get_ngos(
     db: Session = Depends(get_db),
@@ -2230,7 +986,7 @@ def get_ngos(
     return [
         {
             "name": n.name,
-            "requirement": n.requirement,
+            "motto": n.motto,
             "category": n.category,
             "location": n.location,
             "urgency": n.urgency,
@@ -2240,6 +996,31 @@ def get_ngos(
         }
         for n in ngos
     ]
+
+
+
+# ─── NGO Dashboard ────────────────────────────────────────────────
+@app.get(
+    "/ngo-dashboard/{email}",
+    response_model=NGODashboardResponse,
+)
+def get_ngo_dashboard(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email)
+        == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    return ngo
 
 
 # ─── Delete Volunteer ──────────────────────────────────────────────
@@ -2300,6 +1081,147 @@ def delete_ngo(
         "message": f"NGO '{name}' deleted",
         "remaining": remaining,
     }
+
+
+# ─── Volunteer ↔ Activity Matching ─────────────────────────────────
+@app.get(
+    "/volunteer-matches/{email}",
+    response_model=VolunteerMatchesResponse,
+)
+def get_volunteer_matches(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    if not volunteer.skills:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # NGOs with Approved/Pending status
+    ngos = (
+        db.query(NGODB)
+        .filter(
+            NGODB.verification_status.in_(
+                ["Approved", "Pending"]
+            )
+        )
+        .order_by(NGODB.id)
+        .all()
+    )
+
+    if not ngos:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # For each NGO, check for its latest active event;
+    # fall back to NGO motto if no active event exists.
+    candidates = []
+
+    for ngo in ngos:
+        latest_event = (
+            db.query(ActivityDB)
+            .filter(
+                ActivityDB.ngo_id == ngo.id,
+                ActivityDB.status == "Active",
+            )
+            .order_by(
+                ActivityDB.created_at.desc()
+            )
+            .first()
+        )
+
+        if latest_event and latest_event.required_skills and latest_event.required_skills.strip():
+            candidates.append(
+                {
+                    "ngo": ngo,
+                    "event": latest_event,
+                    "match_text": latest_event.required_skills.strip(),
+                }
+            )
+        elif ngo.motto and ngo.motto.strip():
+            candidates.append(
+                {
+                    "ngo": ngo,
+                    "event": None,
+                    "match_text": ngo.motto.strip(),
+                }
+            )
+
+    if not candidates:
+        return VolunteerMatchesResponse(
+            volunteer_name=volunteer.name,
+            matches=[],
+        )
+
+    # Compute cosine similarity between volunteer skills
+    # and each candidate's match text (event required_skills or NGO motto).
+    match_texts = [
+        c["match_text"]
+        for c in candidates
+    ]
+
+    vol_embedding = model.encode(
+        [volunteer.skills]
+    )
+
+    candidate_embeddings = model.encode(
+        match_texts
+    )
+
+    scores = cosine_similarity(
+        vol_embedding,
+        candidate_embeddings,
+    )[0]
+
+    matches = []
+
+    for idx, c in enumerate(candidates):
+        ngo = c["ngo"]
+        event = c["event"]
+        score = float(scores[idx])
+
+        boost = compute_category_boost(
+            volunteer.skills or "",
+            ngo.category or "",
+        )
+
+        final_score = min(score + boost, 1.0)
+
+        matches.append(
+            VolunteerMatchEntry(
+                ngo_name=ngo.name,
+                ngo_category=ngo.category,
+                ngo_location=ngo.location,
+                event_title=event.title if event else None,
+                match_percentage=round(
+                    final_score * 100, 1
+                ),
+            )
+        )
+
+    matches.sort(
+        key=lambda m: m.match_percentage or 0,
+        reverse=True,
+    )
+
+    return VolunteerMatchesResponse(
+        volunteer_name=volunteer.name,
+        matches=matches,
+    )
 
 
 # ─── Volunteer ↔ NGO Matching ─────────────────────────────────────
@@ -2380,7 +1302,7 @@ def match_volunteers(
     ]
 
     ngo_texts = [
-        n.requirement or ""
+        n.motto or ""
         for n in filtered_ngos
     ]
 
@@ -2437,8 +1359,8 @@ def match_volunteers(
                         matched_ngo.category
                         or "Uncategorized"
                     ),
-                    "ngo_requirement": (
-                        matched_ngo.requirement
+                    "ngo_motto": (
+                        matched_ngo.motto
                     ),
                     "score": round(score, 4),
                     "percentage": round(

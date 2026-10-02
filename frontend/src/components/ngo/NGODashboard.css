@@ -1,0 +1,185 @@
+/* ─── NGO Dashboard — mirrors VolunteerDashboard structure ──────── */
+
+/* Reuses dashboard-shell, dashboard-subnav, dashboard-subnav-tabs,
+   dashboard-subnav-tab, dashboard-profile-strip, dashboard-avatar-circle,
+   dashboard-profile-info, dashboard-profile-name, dashboard-content-grid,
+   dashboard-main-col, dashboard-sidebar-col, dashboard-section-header,
+   dashboard-section-title, dashboard-section-sub, dashboard-ngo-list,
+   dashboard-ngo-row, dashboard-ngo-row-main, dashboard-ngo-info,
+   dashboard-ngo-name, dashboard-ngo-meta, dashboard-ngo-actions,
+   dashboard-ngo-detail, dashboard-view-btn, dashboard-stats-row,
+   dashboard-stat-card, dashboard-stat-value, dashboard-stat-label,
+   dashboard-sidebar-heading, dashboard-placeholder-card,
+   dashboard-placeholder-title, dashboard-placeholder-text,
+   dashboard-report-btn, dashboard-search-input, dashboard-footer-actions,
+   dashboard-verification-tag, verification-* from VolunteerDashboard.css.
+   Only NGO-specific additions are here. */
+
+
+/* ─── Profile motto ──────────────────────────────────────────────── */
+
+.dashboard-profile-motto {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--ink-soft);
+  margin: 2px 0 0.5rem;
+  line-height: 1.4;
+}
+
+
+/* ─── Org-detail rows (profile tab) ──────────────────────────────── */
+
+.ngo-detail-list {
+  border-top: 1px solid var(--border);
+}
+
+.ngo-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ngo-detail-row:last-child {
+  border-bottom: none;
+}
+
+.ngo-detail-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+  min-width: 110px;
+}
+
+.ngo-detail-value {
+  font-size: 0.86rem;
+  color: var(--ink);
+  text-align: right;
+  word-break: break-word;
+}
+
+.ngo-detail-link {
+  color: var(--sage);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.ngo-detail-link:hover {
+  text-decoration: underline;
+}
+
+
+/* ─── Events toolbar ─────────────────────────────────────────────── */
+
+.ngo-events-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+
+/* ─── Event create form ──────────────────────────────────────────── */
+
+.ngo-event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1.25rem;
+  background: var(--mist);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 1rem;
+  animation: ngo-form-slide 0.25s ease-out;
+}
+
+@keyframes ngo-form-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ngo-event-submit-btn {
+  align-self: flex-end;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--sage);
+  border: none;
+  border-radius: 10px;
+  padding: 0.6rem 1.3rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ngo-event-submit-btn:hover:not(:disabled) {
+  background: var(--sage-dark, #3a6b5c);
+}
+
+.ngo-event-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ─── Event status badge ─────────────────────────────────────────── */
+
+.ngo-event-status-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 100px;
+}
+
+.status-active {
+  background: #e6f4ef;
+  color: #2d7a5e;
+}
+
+.status-cancelled {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+
+/* ─── Cancel event button ────────────────────────────────────────── */
+
+.ngo-cancel-event-btn {
+  margin-top: 0.75rem;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c0392b;
+  background: #fdecea;
+  border: 1px solid #f1b5b0;
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ngo-cancel-event-btn:hover {
+  background: #f9d6d2;
+}
+
+
+/* ─── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .ngo-detail-row {
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .ngo-detail-value {
+    text-align: left;
+  }
+}

@@ -127,7 +127,7 @@ export default function ReportResultsPage({ result, showToast, onRestart }) {
                 </div>
 
                 <div className="match-description">
-                  <p>{item.ngo_requirement}</p>
+                  <p>{item.ngo_motto}</p>
                 </div>
 
                 {Array.isArray(recommendation_explanations) && recommendation_explanations[index] && (

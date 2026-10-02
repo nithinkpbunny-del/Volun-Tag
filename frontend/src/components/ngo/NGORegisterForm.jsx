@@ -9,6 +9,22 @@ const CATEGORIES = [
   "Social Services",
 ];
 
+const LEGAL_STRUCTURES = ["Trust", "Society", "Section 8 Company"];
+
+const LEGAL_DOC_FIELDS = {
+  Trust: [
+    { key: "trust_deed", label: "Trust Deed" },
+  ],
+  Society: [
+    { key: "society_registration_certificate", label: "Certificate of Registration" },
+    { key: "society_moa", label: "Memorandum of Association (MOA)" },
+  ],
+  "Section 8 Company": [
+    { key: "section8_incorporation_certificate", label: "Certificate of Incorporation" },
+    { key: "section8_moa_aoa", label: "MOA & AOA" },
+  ],
+};
+
 const DOC_FIELDS = [
   { key: "registration_cert", label: "Registration Certificate", required: false },
   { key: "pan_card", label: "PAN Card", required: false },
@@ -19,8 +35,9 @@ const DOC_FIELDS = [
 
 const API_BASE = "http://127.0.0.1:8000";
 
-export default function NGORegisterForm({ showToast, setPage }) {
+export default function NGORegisterForm({ showToast, setPage, setDashboardEmail }) {
   const [form, setForm] = useState({
+    legal_structure: "",
     name: "",
     email: "",
     phone: "",
@@ -29,7 +46,7 @@ export default function NGORegisterForm({ showToast, setPage }) {
     location: "",
     yearFounded: "",
     websiteUrl: "",
-    requirement: "",
+    motto: "",
   });
 
   const [docs, setDocs] = useState({});
@@ -87,6 +104,10 @@ export default function NGORegisterForm({ showToast, setPage }) {
   const validate = () => {
     const errs = {};
 
+    if (!form.legal_structure) {
+      errs.legal_structure = "Please select a legal structure";
+    }
+
     if (!form.name.trim()) {
       errs.name = "Organization name is required";
     }
@@ -111,8 +132,8 @@ export default function NGORegisterForm({ showToast, setPage }) {
       errs.location = "Location is required";
     }
 
-    if (!form.requirement.trim()) {
-      errs.requirement = "Volunteer requirement is required";
+    if (!form.motto.trim()) {
+      errs.motto = "Motto is required";
     }
 
     setErrors(errs);
@@ -137,13 +158,14 @@ export default function NGORegisterForm({ showToast, setPage }) {
   try {
     const formData = new FormData();
 
+    formData.append("legal_structure", form.legal_structure);
     formData.append("name", form.name.trim());
     formData.append("email", form.email.trim());
     formData.append("contact_number", form.phone.trim());
     formData.append("password", form.password);
     formData.append("category", form.category);
     formData.append("location", form.location.trim());
-    formData.append("requirement", form.requirement.trim());
+    formData.append("motto", form.motto.trim());
 
     if (form.yearFounded) {
       formData.append("year_founded", form.yearFounded);
@@ -154,6 +176,14 @@ export default function NGORegisterForm({ showToast, setPage }) {
     }
 
     DOC_FIELDS.forEach((doc) => {
+      if (docs[doc.key]) {
+        formData.append(doc.key, docs[doc.key]);
+      }
+    });
+
+    // Append conditional legal-structure documents
+    const legalDocs = LEGAL_DOC_FIELDS[form.legal_structure] || [];
+    legalDocs.forEach((doc) => {
       if (docs[doc.key]) {
         formData.append(doc.key, docs[doc.key]);
       }
@@ -236,6 +266,17 @@ export default function NGORegisterForm({ showToast, setPage }) {
 
               <button
                 className="success-btn-secondary"
+                onClick={() => {
+                  setDashboardEmail(form.email.trim());
+                  setPage("ngo-dashboard");
+                }}
+                id="ngo-reg-view-dashboard"
+              >
+                Go to My Dashboard
+              </button>
+
+              <button
+                className="success-btn-secondary"
                 onClick={() => setPage("landing")}
                 id="ngo-reg-go-home"
               >
@@ -285,6 +326,36 @@ export default function NGORegisterForm({ showToast, setPage }) {
               <span className="form-section-title">
                 Organization Details
               </span>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="ngo-reg-legal-structure">
+                Legal Structure <span className="required">*</span>
+              </label>
+
+              <select
+                id="ngo-reg-legal-structure"
+                value={form.legal_structure}
+                onChange={(e) =>
+                  updateField("legal_structure", e.target.value)
+                }
+                className={errors.legal_structure ? "input-error" : ""}
+                required
+              >
+                <option value="">Select a legal structure</option>
+
+                {LEGAL_STRUCTURES.map((ls) => (
+                  <option key={ls} value={ls}>
+                    {ls}
+                  </option>
+                ))}
+              </select>
+
+              {errors.legal_structure && (
+                <span className="error-text">
+                  {errors.legal_structure}
+                </span>
+              )}
             </div>
 
             <div className="form-group">
@@ -453,25 +524,24 @@ export default function NGORegisterForm({ showToast, setPage }) {
             </div>
 
             <div className="form-group">
-              <label htmlFor="ngo-reg-requirement">
-                Volunteer Requirement{" "}
-                <span className="required">*</span>
+              <label htmlFor="ngo-reg-motto">
+                Motto <span className="required">*</span>
               </label>
 
-              <textarea
-                id="ngo-reg-requirement"
-                value={form.requirement}
+              <input
+                id="ngo-reg-motto"
+                type="text"
+                value={form.motto}
                 onChange={(e) =>
-                  updateField("requirement", e.target.value)
+                  updateField("motto", e.target.value)
                 }
-                className={errors.requirement ? "input-error" : ""}
-                rows="4"
-                placeholder="Describe the type of volunteers, skills, or help your NGO needs..."
+                className={errors.motto ? "input-error" : ""}
+                required
               />
 
-              {errors.requirement && (
+              {errors.motto && (
                 <span className="error-text">
-                  {errors.requirement}
+                  {errors.motto}
                 </span>
               )}
             </div>
@@ -588,6 +658,111 @@ export default function NGORegisterForm({ showToast, setPage }) {
               </div>
             ))}
           </div>
+
+          {/* ── Conditional Legal Structure Documents ── */}
+          {form.legal_structure && LEGAL_DOC_FIELDS[form.legal_structure] && (
+            <div className="docs-section">
+              <div className="form-section-header">
+                <span className="form-section-number">✦</span>
+
+                <span className="form-section-title">
+                  {form.legal_structure} Documents
+                </span>
+              </div>
+
+              <p className="docs-note">
+                Optional — upload the relevant documents for your selected
+                legal structure.
+              </p>
+
+              {LEGAL_DOC_FIELDS[form.legal_structure].map((doc) => (
+                <div className="upload-field" key={doc.key}>
+                  <span className="upload-label">
+                    {doc.label}
+                    <span className="optional-tag"> (optional)</span>
+                  </span>
+
+                  {docs[doc.key] ? (
+                    <div className="upload-file-preview">
+                      <svg
+                        className="upload-file-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                        <path d="M14 2v6h6" />
+                      </svg>
+
+                      <span className="upload-file-name">
+                        {docs[doc.key].name}
+                      </span>
+
+                      <button
+                        type="button"
+                        className="upload-file-remove"
+                        onClick={() => removeDoc(doc.key)}
+                        aria-label={`Remove ${doc.label}`}
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="upload-zone">
+                        <svg
+                          className="upload-zone-icon"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+
+                        <span className="upload-zone-text">
+                          <strong>Click to upload</strong> or drag and
+                          drop
+                        </span>
+
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(e) =>
+                            handleDocChange(doc.key, e)
+                          }
+                          aria-label={`Upload ${doc.label}`}
+                        />
+                      </label>
+
+                      {errors[doc.key] && (
+                        <span className="error-text">
+                          {errors[doc.key]}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* ── Section 3: Additional Credibility ── */}
           <div className="docs-section credibility-section">

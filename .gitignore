@@ -9,3 +9,12 @@ frontend/node_modules/
 # Misc
 .env
 .DS_Store
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db.backup*
+
+# Uploaded files (runtime data, not source)
+backend/uploads/
