@@ -220,9 +220,21 @@ export default function Messages({
   // References for safety & live updates
   const isMountedRef = useRef(true);
   const isFetchingConvosRef = useRef(false);
-  const isFetchingThreadRef = useRef(false);
+  const sendingRef = useRef(false);
+  const lastHandledStartWithRef = useRef(null);
+
+  // Keep activeConvo, conversations, pendingFile, and showToast in refs updated on every render
   const activeConvoRef = useRef(activeConvo);
   activeConvoRef.current = activeConvo;
+
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+
+  const pendingFileRef = useRef(pendingFile);
+  pendingFileRef.current = pendingFile;
+
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
 
   const messagesContainerRef = useRef(null);
   const isNearBottomRef = useRef(true);
@@ -253,12 +265,12 @@ export default function Messages({
       } catch {
         detailMsg = `${fallbackMsg} (${res.status})`;
       }
-      if (showToast) {
-        showToast(detailMsg, "error");
+      if (showToastRef.current) {
+        showToastRef.current(detailMsg, "error");
       }
       return detailMsg;
     },
-    [showToast]
+    []
   );
 
   // ─── Mark Thread Messages As Read ────────────────────────────────
@@ -270,7 +282,7 @@ export default function Messages({
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            reader_email: email.trim().lower ? email.trim().toLowerCase() : email.trim(),
+            reader_email: email.trim().toLowerCase(),
             other_email: otherEmail.trim().toLowerCase(),
           }),
         });
@@ -311,8 +323,8 @@ export default function Messages({
           onUnreadChangeRef.current(totalUnread);
         }
       } catch (err) {
-        if (!isBackground && showToast) {
-          showToast("Network error while loading conversations", "error");
+        if (!isBackground && showToastRef.current) {
+          showToastRef.current("Network error while loading conversations", "error");
         }
       } finally {
         isFetchingConvosRef.current = false;
@@ -321,21 +333,22 @@ export default function Messages({
         }
       }
     },
-    [email, notifyError, showToast]
+    [email, notifyError]
   );
 
   // ─── Fetch Thread Messages ───────────────────────────────────────
   const fetchThread = useCallback(
     async (otherEmail, isBackground = false) => {
-      if (!email || !otherEmail || isFetchingThreadRef.current) return;
-      isFetchingThreadRef.current = true;
+      if (!email || !otherEmail) return;
       if (!isBackground) setLoadingThread(true);
+
+      const targetEmail = otherEmail.trim().toLowerCase();
 
       try {
         const res = await fetch(
           `${API_BASE}/messages/${encodeURIComponent(
             email.trim().toLowerCase()
-          )}/with/${encodeURIComponent(otherEmail.trim().toLowerCase())}`
+          )}/with/${encodeURIComponent(targetEmail)}`
         );
 
         if (!res.ok) {
@@ -346,6 +359,11 @@ export default function Messages({
         const data = await res.json();
         if (!isMountedRef.current) return;
 
+        // Discard result if user switched conversations while fetch was in flight
+        if (activeConvoRef.current?.other_email?.toLowerCase() !== targetEmail) {
+          return;
+        }
+
         const newMessages = data || [];
         setMessages(newMessages);
 
@@ -355,21 +373,20 @@ export default function Messages({
             (m) => !m.is_mine && m.read_at === null
           );
           if (hasUnread) {
-            markMessagesAsRead(otherEmail);
+            markMessagesAsRead(targetEmail);
           }
         }
       } catch (err) {
-        if (!isBackground && showToast) {
-          showToast("Network error while loading message thread", "error");
+        if (!isBackground && showToastRef.current) {
+          showToastRef.current("Network error while loading message thread", "error");
         }
       } finally {
-        isFetchingThreadRef.current = false;
         if (!isBackground && isMountedRef.current) {
           setLoadingThread(false);
         }
       }
     },
-    [email, markMessagesAsRead, notifyError, showToast]
+    [email, markMessagesAsRead, notifyError]
   );
 
   // ─── Scroll Management ───────────────────────────────────────────
@@ -427,39 +444,63 @@ export default function Messages({
       isMountedRef.current = false;
       clearInterval(convoInterval);
       clearInterval(threadInterval);
+      if (pendingFileRef.current?.previewUrl) {
+        URL.revokeObjectURL(pendingFileRef.current.previewUrl);
+      }
     };
-  }, [fetchConversations, fetchThread]);
+  }, [email, fetchConversations, fetchThread]);
 
   // ─── Handle startWith Prop ───────────────────────────────────────
   useEffect(() => {
-    if (!startWith || !startWith.email || role !== "volunteer") return;
+    if (!startWith?.email || role !== "volunteer" || loadingConvos) return;
 
     const targetEmail = startWith.email.trim().toLowerCase();
-    const existing = conversations.find(
+    if (lastHandledStartWithRef.current === targetEmail) return;
+    lastHandledStartWithRef.current = targetEmail;
+
+    const existing = conversationsRef.current.find(
       (c) => c.other_email.toLowerCase() === targetEmail
     );
 
     if (existing) {
+      if (pendingFileRef.current?.previewUrl) {
+        URL.revokeObjectURL(pendingFileRef.current.previewUrl);
+      }
+      setPendingFile(null);
+      setMessages([]);
       setActiveConvo(existing);
       fetchThread(existing.other_email, false);
     } else {
-      // Start a virtual conversation with no messages yet
+      if (pendingFileRef.current?.previewUrl) {
+        URL.revokeObjectURL(pendingFileRef.current.previewUrl);
+      }
+      setPendingFile(null);
       const virtualConvo = {
         other_email: targetEmail,
         other_name: startWith.name || startWith.email,
         other_role: "ngo",
         isVirtual: true,
       };
-      setActiveConvo(virtualConvo);
       setMessages([]);
+      setActiveConvo(virtualConvo);
     }
-  }, [startWith, role, conversations, fetchThread]);
+  }, [startWith?.email, startWith?.name, role, loadingConvos, fetchThread]);
 
   // ─── Select a Conversation ───────────────────────────────────────
   const handleSelectConvo = (convo) => {
-    setActiveConvo(convo);
+    if (activeConvoRef.current?.other_email?.toLowerCase() === convo.other_email?.toLowerCase()) {
+      return;
+    }
+
+    if (pendingFileRef.current?.previewUrl) {
+      URL.revokeObjectURL(pendingFileRef.current.previewUrl);
+    }
     setPendingFile(null);
     setAttachMenuOpen(false);
+
+    // Clear messages when switching conversations
+    setMessages([]);
+    setActiveConvo(convo);
     fetchThread(convo.other_email, false);
 
     // Clear unread count locally for instant responsiveness
@@ -492,34 +533,45 @@ export default function Messages({
   const handleFileChosen = (e, forcedType = null) => {
     setAttachMenuOpen(false);
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      if (textareaRef.current) textareaRef.current.focus();
+      return;
+    }
 
     // Reset input value so same file can be selected again
     e.target.value = "";
 
     const ext = file.name.split(".").pop().toLowerCase();
     if (BLOCKED_EXTENSIONS.includes(ext)) {
-      if (showToast) {
-        showToast(
+      if (showToastRef.current) {
+        showToastRef.current(
           `Files with extension .${ext} are blocked for security reasons`,
           "error"
         );
       }
+      if (textareaRef.current) textareaRef.current.focus();
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      if (showToast) {
-        showToast("File size cannot exceed the 10 MB limit", "error");
+      if (showToastRef.current) {
+        showToastRef.current("File size cannot exceed the 10 MB limit", "error");
       }
+      if (textareaRef.current) textareaRef.current.focus();
       return;
     }
 
     if (file.size === 0) {
-      if (showToast) {
-        showToast("Empty files cannot be uploaded", "error");
+      if (showToastRef.current) {
+        showToastRef.current("Empty files cannot be uploaded", "error");
       }
+      if (textareaRef.current) textareaRef.current.focus();
       return;
+    }
+
+    // Revoke previous pending preview if any
+    if (pendingFileRef.current?.previewUrl) {
+      URL.revokeObjectURL(pendingFileRef.current.previewUrl);
     }
 
     const isImage =
@@ -546,20 +598,23 @@ export default function Messages({
   };
 
   const removePendingFile = () => {
-    if (pendingFile?.previewUrl) {
-      URL.revokeObjectURL(pendingFile.previewUrl);
+    if (pendingFileRef.current?.previewUrl) {
+      URL.revokeObjectURL(pendingFileRef.current.previewUrl);
     }
     setPendingFile(null);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
   };
 
   // ─── Geolocation Sharing ─────────────────────────────────────────
   const handleShareLocation = () => {
     setAttachMenuOpen(false);
-    if (!activeConvo) return;
+    if (!activeConvo || sendingRef.current) return;
 
     if (!navigator.geolocation) {
-      if (showToast) {
-        showToast("Geolocation is not supported by your browser", "error");
+      if (showToastRef.current) {
+        showToastRef.current("Geolocation is not supported by your browser", "error");
       }
       return;
     }
@@ -569,6 +624,7 @@ export default function Messages({
     );
     if (!confirmed) return;
 
+    sendingRef.current = true;
     setIsSending(true);
 
     navigator.geolocation.getCurrentPosition(
@@ -592,23 +648,34 @@ export default function Messages({
           }
 
           const savedMsg = await res.json();
-          setMessages((prev) => [...prev, savedMsg]);
-          scrollToBottom(true);
+          if (activeConvoRef.current?.other_email?.toLowerCase() === activeConvo.other_email.toLowerCase()) {
+            setMessages((prev) => [...prev, savedMsg]);
+            scrollToBottom(true);
+          }
           fetchConversations(true);
 
           if (activeConvo.isVirtual) {
             setActiveConvo((prev) => ({ ...prev, isVirtual: false }));
           }
         } catch {
-          if (showToast) {
-            showToast("Network error while sharing location", "error");
+          if (showToastRef.current) {
+            showToastRef.current("Network error while sharing location", "error");
           }
         } finally {
-          setIsSending(false);
+          sendingRef.current = false;
+          if (isMountedRef.current) {
+            setIsSending(false);
+          }
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+          }
         }
       },
       (err) => {
-        setIsSending(false);
+        sendingRef.current = false;
+        if (isMountedRef.current) {
+          setIsSending(false);
+        }
         let msg = "Could not retrieve your location";
         if (err.code === 1) {
           msg = "Location permission denied. Please allow location access to share.";
@@ -617,7 +684,10 @@ export default function Messages({
         } else if (err.code === 3) {
           msg = "Location request timed out. Please try again.";
         }
-        if (showToast) showToast(msg, "error");
+        if (showToastRef.current) showToastRef.current(msg, "error");
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
       },
       { enableHighAccuracy: true, timeout: 12000 }
     );
@@ -626,7 +696,7 @@ export default function Messages({
   // ─── Sending Message (Text or File) ──────────────────────────────
   const handleSend = async (e) => {
     if (e) e.preventDefault();
-    if (!activeConvo || isSending) return;
+    if (!activeConvo || sendingRef.current) return;
 
     const trimmed = inputText.trim();
 
@@ -634,10 +704,13 @@ export default function Messages({
     if (!trimmed && !pendingFile) return;
 
     if (trimmed.length > 2000) {
-      if (showToast) showToast("Message exceeds 2000 character limit", "error");
+      if (showToastRef.current) {
+        showToastRef.current("Message exceeds 2000 character limit", "error");
+      }
       return;
     }
 
+    sendingRef.current = true;
     setIsSending(true);
 
     try {
@@ -662,10 +735,12 @@ export default function Messages({
         }
 
         const savedMsg = await res.json();
-        setMessages((prev) => [...prev, savedMsg]);
+        if (activeConvoRef.current?.other_email?.toLowerCase() === activeConvo.other_email.toLowerCase()) {
+          setMessages((prev) => [...prev, savedMsg]);
+          scrollToBottom(true);
+        }
         setInputText("");
         removePendingFile();
-        scrollToBottom(true);
         fetchConversations(true);
 
         if (activeConvo.isVirtual) {
@@ -689,9 +764,11 @@ export default function Messages({
         }
 
         const savedMsg = await res.json();
-        setMessages((prev) => [...prev, savedMsg]);
+        if (activeConvoRef.current?.other_email?.toLowerCase() === activeConvo.other_email.toLowerCase()) {
+          setMessages((prev) => [...prev, savedMsg]);
+          scrollToBottom(true);
+        }
         setInputText("");
-        scrollToBottom(true);
         fetchConversations(true);
 
         if (activeConvo.isVirtual) {
@@ -699,11 +776,20 @@ export default function Messages({
         }
       }
     } catch {
-      if (showToast) showToast("Network error while sending message", "error");
+      if (showToastRef.current) {
+        showToastRef.current("Network error while sending message", "error");
+      }
     } finally {
-      setIsSending(false);
+      sendingRef.current = false;
+      if (isMountedRef.current) {
+        setIsSending(false);
+      }
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
     }
   };
+
 
   // Keyboard shortcut: Enter to send, Shift+Enter for newline
   const handleKeyDown = (e) => {
