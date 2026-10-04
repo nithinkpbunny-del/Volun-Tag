@@ -198,6 +198,22 @@ class NGOEventsResponse(BaseModel):
     events: list[EventResponse]
 
 
+class NGOIssueEntry(BaseModel):
+    complaint_id: str
+    location: str
+    user_description: str
+    status: str
+    created_at: datetime
+    match_percentage: float
+    confidence: str
+    explanation: Optional[str] = None
+
+
+class NGOIssuesResponse(BaseModel):
+    ngo_name: str
+    issues: list[NGOIssueEntry]
+
+
 class VolunteerMatchEntry(BaseModel):
     ngo_name: str
     ngo_category: Optional[str]

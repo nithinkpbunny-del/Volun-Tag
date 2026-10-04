@@ -171,6 +171,79 @@
 }
 
 
+/* ─── Issue status badges (Reported Problems tab) ────────────────── */
+
+.issue-status-reported {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.issue-status-accepted {
+  background: #e6f4ef;
+  color: #2d7a5e;
+}
+
+.issue-status-in-progress {
+  background: #fef7e0;
+  color: #b5850a;
+}
+
+.issue-status-resolved {
+  background: #e6f4ef;
+  color: #137333;
+}
+
+.issue-status-rejected {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+
+/* ─── Match percentage pill ──────────────────────────────────────── */
+
+.ngo-issue-match-pct {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.22rem 0.6rem;
+  border-radius: 100px;
+  background: linear-gradient(135deg, #e0ecff 0%, #d6f0e0 100%);
+  color: #2d5f8a;
+  white-space: nowrap;
+}
+
+
+/* ─── AI explanation card (expanded detail) ──────────────────────── */
+
+.ngo-issue-explanation {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--mist, #f5f7f6);
+  border-left: 3px solid var(--sage, #4a8c73);
+  border-radius: 0 10px 10px 0;
+}
+
+.ngo-issue-explanation-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--sage, #4a8c73);
+  margin-bottom: 0.35rem;
+}
+
+.ngo-issue-explanation-text {
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--ink, #2c2c2c);
+}
+
+.ngo-issue-confidence {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft, #6b6b6b);
+}
+
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 760px) {

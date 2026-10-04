@@ -26,6 +26,11 @@ export default function NGODashboard({ email, showToast, setPage }) {
   const [submitting, setSubmitting] = useState(false);
   const [editingEventId, setEditingEventId] = useState(null);
 
+  // Reported-problems tab state
+  const [issues, setIssues] = useState([]);
+  const [loadingIssues, setLoadingIssues] = useState(true);
+  const [expandedIssue, setExpandedIssue] = useState(null);
+
   // ── Fetch profile ───────────────────────────────────────────────
   useEffect(() => {
     if (!email) {
@@ -121,6 +126,41 @@ export default function NGODashboard({ email, showToast, setPage }) {
     };
 
     load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [email]);
+
+  // ── Fetch reported problems ─────────────────────────────────────
+  useEffect(() => {
+    if (!email) return;
+
+    let cancelled = false;
+
+    const loadIssues = async () => {
+      setLoadingIssues(true);
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/ngo-issues/${encodeURIComponent(email)}`
+        );
+
+        if (!res.ok) throw new Error();
+
+        const data = await res.json();
+
+        if (!cancelled) {
+          setIssues(data.issues || []);
+        }
+      } catch {
+        // silent
+      } finally {
+        if (!cancelled) setLoadingIssues(false);
+      }
+    };
+
+    loadIssues();
 
     return () => {
       cancelled = true;
@@ -288,14 +328,15 @@ export default function NGODashboard({ email, showToast, setPage }) {
         {/* ── Subnav ──────────────────────────────────────────── */}
         <div className="dashboard-subnav">
           <div className="dashboard-subnav-tabs">
-            {["profile", "events", "messages", "settings"].map((tab) => (
+            {["profile", "events", "problems", "messages", "settings"].map((tab) => (
+
               <button
                 key={tab}
                 type="button"
                 className={`dashboard-subnav-tab ${activeTab === tab ? "active" : ""}`}
                 onClick={() => setActiveTab(tab)}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === "problems" ? "Reported Problems" : tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </div>
@@ -650,6 +691,90 @@ export default function NGODashboard({ email, showToast, setPage }) {
                             )}
                           </>
                         )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </>
+        )}
+
+        {/* ── Reported Problems tab ────────────────────────────── */}
+        {activeTab === "problems" && (
+          <>
+            <div className="dashboard-section-header">
+              <span className="dashboard-section-title">Reported Problems</span>
+              <span className="dashboard-section-sub">
+                {issues.length} matched
+              </span>
+            </div>
+
+            <div className="dashboard-ngo-list">
+              {loadingIssues && (
+                <p className="dashboard-placeholder-text">Loading reported problems...</p>
+              )}
+
+              {!loadingIssues && issues.length === 0 && (
+                <div className="dashboard-placeholder-card" style={{ marginTop: "0.75rem" }}>
+                  <p className="dashboard-placeholder-title">No reported problems yet</p>
+                  <p className="dashboard-placeholder-text">
+                    When citizens report issues that match your organization, they will appear here.
+                  </p>
+                </div>
+              )}
+
+              {!loadingIssues &&
+                issues.map((iss) => (
+                  <div className="dashboard-ngo-row" key={iss.complaint_id}>
+                    <div className="dashboard-ngo-row-main">
+                      <div className="dashboard-ngo-info">
+                        <p className="dashboard-ngo-name">{iss.location}</p>
+                        <p className="dashboard-ngo-meta">
+                          {formatDate(iss.created_at)} · {iss.complaint_id}
+                        </p>
+                      </div>
+
+                      <div className="dashboard-ngo-actions">
+                        <span
+                          className={`ngo-event-status-badge issue-status-${(iss.status || "reported").toLowerCase().replace(/ /g, "-")}`}
+                        >
+                          {iss.status || "Reported"}
+                        </span>
+
+                        <span className="ngo-issue-match-pct">
+                          {iss.match_percentage}% match
+                        </span>
+
+                        <button
+                          type="button"
+                          className="dashboard-view-btn"
+                          onClick={() =>
+                            setExpandedIssue(
+                              expandedIssue === iss.complaint_id ? null : iss.complaint_id
+                            )
+                          }
+                        >
+                          {expandedIssue === iss.complaint_id ? "Hide" : "Details"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {expandedIssue === iss.complaint_id && (
+                      <div className="dashboard-ngo-detail">
+                        <p>
+                          <strong>Description:</strong> {iss.user_description}
+                        </p>
+
+                        {iss.explanation && (
+                          <div className="ngo-issue-explanation">
+                            <p className="ngo-issue-explanation-label">AI Explanation</p>
+                            <p className="ngo-issue-explanation-text">{iss.explanation}</p>
+                          </div>
+                        )}
+
+                        <p className="ngo-issue-confidence">
+                          <strong>Confidence:</strong> {iss.confidence}
+                        </p>
                       </div>
                     )}
                   </div>

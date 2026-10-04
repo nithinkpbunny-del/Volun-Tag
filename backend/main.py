@@ -28,7 +28,8 @@ try:
         Volunteer, NGO, IssueCreate, IssueStatusUpdate, IssueResponse,
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
-        EventUpdate, NGOEventsResponse, VolunteerMatchEntry, VolunteerMatchesResponse,
+        EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        VolunteerMatchEntry, VolunteerMatchesResponse,
     )
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -49,7 +50,8 @@ except ImportError:
         Volunteer, NGO, IssueCreate, IssueStatusUpdate, IssueResponse,
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
-        EventUpdate, NGOEventsResponse, VolunteerMatchEntry, VolunteerMatchesResponse,
+        EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        VolunteerMatchEntry, VolunteerMatchesResponse,
     )
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -871,6 +873,64 @@ def get_ngo_events(
         total_events=len(events),
         events=events,
     )
+
+
+# ─── NGO Issues (reported problems matched to an NGO) ─────────────
+@app.get(
+    "/ngo-issues/{email}",
+    response_model=NGOIssuesResponse,
+)
+def get_ngo_issues(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """Return issues whose AI recommendations include the NGO identified by *email*."""
+
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{email}'",
+        )
+
+    all_issues = (
+        db.query(IssueDB)
+        .order_by(IssueDB.created_at.desc(), IssueDB.id.desc())
+        .all()
+    )
+
+    matched: list[NGOIssueEntry] = []
+
+    for issue in all_issues:
+        recs = issue.recommended_ngos
+        if not recs or not isinstance(recs, list):
+            continue
+
+        expls = issue.recommendation_explanations
+        if not isinstance(expls, list):
+            expls = []
+
+        for idx, entry in enumerate(recs):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("ngo") == ngo.name:
+                matched.append(NGOIssueEntry(
+                    complaint_id=issue.complaint_id,
+                    location=issue.location,
+                    user_description=issue.user_description,
+                    status=issue.status,
+                    created_at=issue.created_at,
+                    match_percentage=entry.get("percentage", 0.0),
+                    confidence=entry.get("confidence", "Unknown"),
+                    explanation=expls[idx] if idx < len(expls) else None,
+                ))
+                break  # one match per issue is enough
+
+    return NGOIssuesResponse(ngo_name=ngo.name, issues=matched)
 
 
 # ─── Update Event Status ───────────────────────────────────────────
