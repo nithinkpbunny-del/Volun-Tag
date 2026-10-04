@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+)
 
 try:
     from .database import Base
@@ -139,3 +141,45 @@ class IssueDB(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+
+
+class MessageDB(Base):
+    """Direct messages between volunteers and NGOs."""
+
+    __tablename__ = "messages"
+
+    __table_args__ = (
+        Index("ix_messages_sender_recipient", "sender_email", "recipient_email"),
+        Index("ix_messages_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Participants
+    sender_email = Column(String(255), nullable=False)
+    sender_role = Column(String(20), nullable=False)       # "volunteer" | "ngo"
+    recipient_email = Column(String(255), nullable=False)
+    recipient_role = Column(String(20), nullable=False)     # "volunteer" | "ngo"
+
+    # Content
+    message_type = Column(String(20), nullable=False, default="text")  # text|image|document|location
+    body = Column(Text, nullable=True)
+
+    # File attachment (for image / document types)
+    file_path = Column(String(500), nullable=True)
+    file_name = Column(String(255), nullable=True)
+    file_size = Column(Integer, nullable=True)
+    mime_type = Column(String(100), nullable=True)
+
+    # Location sharing (for location type)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
+    # Timestamps
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    read_at = Column(DateTime, nullable=True)
