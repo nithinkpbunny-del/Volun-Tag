@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -31,7 +33,7 @@ try:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
-        MessageSend, MessageResponse, ConversationEntry,
+        MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
@@ -55,7 +57,7 @@ except ImportError:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
-        MessageSend, MessageResponse, ConversationEntry,
+        MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
@@ -66,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
+MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -1552,6 +1556,58 @@ def _fmt_dt(dt) -> str | None:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _validate_pair(
+    sender_email: str,
+    recipient_email: str,
+    db: Session,
+) -> tuple[str, str]:
+    """Validate messaging rules between sender and recipient.
+
+    Returns (sender_role, recipient_role).
+    Applies the same rules as POST /messages:
+    - 400 if sender == recipient (self)
+    - 404 if either email is unknown (server-side role lookup)
+    - 400 if both parties have the same role
+    - 403 if an NGO tries to start a conversation without prior message
+    """
+    s_email = sender_email.strip().lower()
+    r_email = recipient_email.strip().lower()
+
+    if s_email == r_email:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+
+    sender_role, _ = _resolve_role(s_email, db)
+    recipient_role, _ = _resolve_role(r_email, db)
+
+    # Same-role check
+    if sender_role == recipient_role:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Both parties are {sender_role}s. "
+                "Only volunteer ↔ NGO conversations are allowed."
+            ),
+        )
+
+    # NGO cannot start a conversation
+    if sender_role == "ngo":
+        prior = db.query(MessageDB.id).filter(
+            MessageDB.sender_email == r_email,
+            MessageDB.recipient_email == s_email,
+        ).first()
+
+        if not prior:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "NGOs cannot start a conversation. "
+                    "A volunteer must send the first message."
+                ),
+            )
+
+    return sender_role, recipient_role
+
+
 # ─── POST /messages ───────────────────────────────────────────────
 @app.post("/messages", response_model=MessageResponse, status_code=201)
 def send_message(
@@ -1612,7 +1668,7 @@ def send_message(
         recipient_role=msg.recipient_role,
         message_type=msg.message_type,
         body=msg.body,
-        file_path=msg.file_path,
+        file_path=None,
         file_name=msg.file_name,
         file_size=msg.file_size,
         mime_type=msg.mime_type,
@@ -1621,6 +1677,215 @@ def send_message(
         created_at=_fmt_dt(msg.created_at),
         read_at=_fmt_dt(msg.read_at),
         is_mine=True,
+        file_url=f"/messages/files/{msg.id}" if msg.file_path else None,
+    )
+
+
+# ─── POST /messages/file ──────────────────────────────────────────
+@app.post("/messages/file", response_model=MessageResponse, status_code=201)
+async def send_file_message(
+    sender_email: str = Form(...),
+    recipient_email: str = Form(...),
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    """Send an image or document attachment between a volunteer and an NGO."""
+    s_email = sender_email.strip().lower()
+    r_email = recipient_email.strip().lower()
+    sender_role, recipient_role = _validate_pair(s_email, r_email, db)
+
+    # Validate caption
+    clean_caption = caption.strip() if caption is not None else None
+    if clean_caption:
+        if len(clean_caption) > 2000:
+            raise HTTPException(
+                status_code=400,
+                detail="Caption cannot exceed 2000 characters",
+            )
+    else:
+        clean_caption = None
+
+    # Block dangerous types by extension (case-insensitive)
+    base_name = Path(file.filename or "file").name.strip() or "file"
+    file_ext = Path(base_name).suffix.lower().lstrip(".")
+
+    dangerous_extensions = {
+        "exe", "bat", "cmd", "com", "msi", "scr", "sh",
+        "app", "apk", "jar", "dmg", "pkg", "vbs", "ps1",
+    }
+    if file_ext in dangerous_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension '.{file_ext}' is not allowed for security reasons",
+        )
+
+    # Max 10 MB: enforce by reading in chunks, stop and return 413 when exceeded. Reject empty files (400).
+    chunk_size = 64 * 1024  # 64 KB
+    max_file_size = 10 * 1024 * 1024  # 10 MB
+    bytes_read = 0
+    chunks = []
+
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        bytes_read += len(chunk)
+        if bytes_read > max_file_size:
+            raise HTTPException(
+                status_code=413,
+                detail="File size exceeds the 10 MB limit",
+            )
+        chunks.append(chunk)
+
+    if bytes_read == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty files cannot be uploaded",
+        )
+
+    # message_type = "image" if content_type starts with "image/", otherwise "document"
+    content_type = file.content_type or "application/octet-stream"
+    message_type = "image" if content_type.lower().startswith("image/") else "document"
+
+    # Save to backend/uploads/messages/ with server-generated name (uuid + sanitized original extension)
+    MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    raw_suffix = Path(base_name).suffix.lower()
+    clean_suffix_ext = re.sub(r"[^a-zA-Z0-9]", "", raw_suffix)
+    sanitized_ext = f".{clean_suffix_ext}" if clean_suffix_ext else ""
+    server_filename = f"{uuid.uuid4().hex}{sanitized_ext}"
+
+    dest = MESSAGES_UPLOAD_DIR / server_filename
+    with open(dest, "wb") as f:
+        f.write(b"".join(chunks))
+
+    relative_path = f"messages/{server_filename}"
+
+    msg = MessageDB(
+        sender_email=s_email,
+        sender_role=sender_role,
+        recipient_email=r_email,
+        recipient_role=recipient_role,
+        message_type=message_type,
+        body=clean_caption,
+        file_path=relative_path,
+        file_name=base_name,
+        file_size=bytes_read,
+        mime_type=content_type,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=msg.body,
+        file_path=None,
+        file_name=msg.file_name,
+        file_size=msg.file_size,
+        mime_type=msg.mime_type,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+        file_url=f"/messages/files/{msg.id}",
+    )
+
+
+# ─── POST /messages/location ──────────────────────────────────────
+@app.post("/messages/location", response_model=MessageResponse, status_code=201)
+def send_location_message(
+    payload: LocationMessageSend,
+    db: Session = Depends(get_db),
+):
+    """Send a location message between a volunteer and an NGO."""
+    sender_role, recipient_role = _validate_pair(
+        payload.sender_email,
+        payload.recipient_email,
+        db,
+    )
+
+    msg = MessageDB(
+        sender_email=payload.sender_email,
+        sender_role=sender_role,
+        recipient_email=payload.recipient_email,
+        recipient_role=recipient_role,
+        message_type="location",
+        body=None,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=None,
+        file_path=None,
+        file_name=None,
+        file_size=None,
+        mime_type=None,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+        file_url=None,
+    )
+
+
+# ─── GET /messages/files/{message_id} ─────────────────────────────
+@app.get("/messages/files/{message_id}")
+def get_message_file(
+    message_id: int,
+    email: str = Query(..., description="Requester email"),
+    db: Session = Depends(get_db),
+):
+    """Download or view a message attachment securely."""
+    msg = db.query(MessageDB).filter(MessageDB.id == message_id).first()
+    if not msg or not msg.file_path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    req_email = email.strip().lower()
+    if req_email not in (msg.sender_email.lower(), msg.recipient_email.lower()):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this conversation's files",
+        )
+
+    file_path = (UPLOAD_DIR / msg.file_path).resolve()
+    messages_root = MESSAGES_UPLOAD_DIR.resolve()
+
+    try:
+        file_path.relative_to(messages_root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on server")
+
+    is_image = msg.message_type == "image" or (
+        msg.mime_type and msg.mime_type.lower().startswith("image/")
+    )
+    disposition = "inline" if is_image else "attachment"
+
+    return FileResponse(
+        path=file_path,
+        media_type=msg.mime_type,
+        filename=msg.file_name or file_path.name,
+        content_disposition_type=disposition,
     )
 
 
@@ -1747,7 +2012,7 @@ def get_thread(
             recipient_role=m.recipient_role,
             message_type=m.message_type,
             body=m.body,
-            file_path=m.file_path,
+            file_path=None,
             file_name=m.file_name,
             file_size=m.file_size,
             mime_type=m.mime_type,
@@ -1756,6 +2021,7 @@ def get_thread(
             created_at=_fmt_dt(m.created_at),
             read_at=_fmt_dt(m.read_at),
             is_mine=(m.sender_email == email_lower),
+            file_url=f"/messages/files/{m.id}" if m.file_path else None,
         )
         for m in msgs
     ]

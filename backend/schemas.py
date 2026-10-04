@@ -248,6 +248,18 @@ class MessageSend(BaseModel):
         return value.strip().lower()
 
 
+class LocationMessageSend(BaseModel):
+    sender_email: str = Field(..., min_length=1)
+    recipient_email: str = Field(..., min_length=1)
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+
+    @field_validator("sender_email", "recipient_email")
+    @classmethod
+    def email_trimmed(cls, value: str) -> str:
+        return value.strip().lower()
+
+
 class MessageResponse(BaseModel):
     id: int
     sender_email: str
@@ -265,6 +277,7 @@ class MessageResponse(BaseModel):
     created_at: str          # ISO-8601 with trailing Z
     read_at: Optional[str]   # ISO-8601 with trailing Z or null
     is_mine: bool = False
+    file_url: Optional[str] = None
 
 
 class ConversationEntry(BaseModel):
