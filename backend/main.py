@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +14,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -30,12 +31,14 @@ try:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        MessageSend, MessageResponse, ConversationEntry,
+        MarkReadRequest, MarkReadResponse,
     )
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -52,6 +55,8 @@ except ImportError:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        MessageSend, MessageResponse, ConversationEntry,
+        MarkReadRequest, MarkReadResponse,
     )
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -1511,3 +1516,274 @@ def get_stats(
             CATEGORY_KEYWORDS.keys()
         ),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  MESSAGING
+# ═══════════════════════════════════════════════════════════════════
+
+def _resolve_role(email: str, db: Session) -> tuple[str, str]:
+    """Return (role, display_name) for an email, or raise 404."""
+    email_lower = email.strip().lower()
+
+    vol = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email_lower,
+    ).first()
+    if vol:
+        return "volunteer", vol.name
+
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == email_lower,
+    ).first()
+    if ngo:
+        return "ngo", ngo.name
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No volunteer or NGO account found for '{email}'",
+    )
+
+
+def _fmt_dt(dt) -> str | None:
+    """Format a datetime as ISO-8601 with trailing Z, or None."""
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ─── POST /messages ───────────────────────────────────────────────
+@app.post("/messages", response_model=MessageResponse, status_code=201)
+def send_message(
+    payload: MessageSend,
+    db: Session = Depends(get_db),
+):
+    """Send a text message between a volunteer and an NGO."""
+
+    if payload.sender_email == payload.recipient_email:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+
+    sender_role, sender_name = _resolve_role(payload.sender_email, db)
+    recipient_role, recipient_name = _resolve_role(payload.recipient_email, db)
+
+    # Same-role check
+    if sender_role == recipient_role:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Both parties are {sender_role}s. "
+                "Only volunteer ↔ NGO conversations are allowed."
+            ),
+        )
+
+    # NGO cannot start a conversation
+    if sender_role == "ngo":
+        prior = db.query(MessageDB.id).filter(
+            MessageDB.sender_email == payload.recipient_email,
+            MessageDB.recipient_email == payload.sender_email,
+        ).first()
+
+        if not prior:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "NGOs cannot start a conversation. "
+                    "A volunteer must send the first message."
+                ),
+            )
+
+    msg = MessageDB(
+        sender_email=payload.sender_email,
+        sender_role=sender_role,
+        recipient_email=payload.recipient_email,
+        recipient_role=recipient_role,
+        message_type="text",
+        body=payload.body,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=msg.body,
+        file_path=msg.file_path,
+        file_name=msg.file_name,
+        file_size=msg.file_size,
+        mime_type=msg.mime_type,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+    )
+
+
+# ─── GET /conversations/{email} ───────────────────────────────────
+@app.get("/conversations/{email}", response_model=list[ConversationEntry])
+def list_conversations(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """List all conversations for a user, newest first."""
+
+    my_role, _ = _resolve_role(email, db)
+    email_lower = email.strip().lower()
+
+    # All messages this user is involved in
+    msgs = (
+        db.query(MessageDB)
+        .filter(
+            (MessageDB.sender_email == email_lower)
+            | (MessageDB.recipient_email == email_lower)
+        )
+        .order_by(MessageDB.created_at.asc())
+        .all()
+    )
+
+    # Group by the "other" email
+    convos: dict[str, dict] = {}
+
+    for m in msgs:
+        is_mine = m.sender_email == email_lower
+        other_email = m.recipient_email if is_mine else m.sender_email
+
+        if other_email not in convos:
+            convos[other_email] = {
+                "last_msg": m,
+                "last_is_mine": is_mine,
+                "unread": 0,
+            }
+        else:
+            convos[other_email]["last_msg"] = m
+            convos[other_email]["last_is_mine"] = is_mine
+
+        # Unread = messages sent TO me that I haven't read
+        if not is_mine and m.read_at is None:
+            convos[other_email]["unread"] = convos[other_email].get("unread", 0) + 1
+
+    # Build response with display names
+    result: list[ConversationEntry] = []
+
+    for other_email, info in convos.items():
+        try:
+            other_role, other_name = _resolve_role(other_email, db)
+        except HTTPException:
+            other_role, other_name = "unknown", other_email
+
+        last_msg = info["last_msg"]
+        if last_msg.message_type == "text":
+            preview = (last_msg.body or "")[:80]
+        elif last_msg.message_type == "image":
+            preview = "Photo"
+        elif last_msg.message_type == "document":
+            preview = "Document"
+        elif last_msg.message_type == "location":
+            preview = "Location"
+        else:
+            preview = last_msg.message_type.capitalize()
+
+        result.append(ConversationEntry(
+            other_email=other_email,
+            other_name=other_name,
+            other_role=other_role,
+            last_message_preview=preview,
+            last_message_time=_fmt_dt(last_msg.created_at),
+            last_message_from_me=info["last_is_mine"],
+            unread_count=info["unread"],
+        ))
+
+    # Sort newest conversation first
+    result.sort(key=lambda c: c.last_message_time, reverse=True)
+
+    return result
+
+
+# ─── GET /messages/{email}/with/{other_email} ─────────────────────
+@app.get(
+    "/messages/{email}/with/{other_email}",
+    response_model=list[MessageResponse],
+)
+def get_thread(
+    email: str,
+    other_email: str,
+    db: Session = Depends(get_db),
+):
+    """Return the full message thread between two users, oldest first."""
+
+    _resolve_role(email, db)       # 404 if unknown
+    _resolve_role(other_email, db)
+
+    email_lower = email.strip().lower()
+    other_lower = other_email.strip().lower()
+
+    msgs = (
+        db.query(MessageDB)
+        .filter(
+            (
+                (MessageDB.sender_email == email_lower)
+                & (MessageDB.recipient_email == other_lower)
+            )
+            | (
+                (MessageDB.sender_email == other_lower)
+                & (MessageDB.recipient_email == email_lower)
+            )
+        )
+        .order_by(MessageDB.created_at.asc(), MessageDB.id.asc())
+        .all()
+    )
+
+    return [
+        MessageResponse(
+            id=m.id,
+            sender_email=m.sender_email,
+            sender_role=m.sender_role,
+            recipient_email=m.recipient_email,
+            recipient_role=m.recipient_role,
+            message_type=m.message_type,
+            body=m.body,
+            file_path=m.file_path,
+            file_name=m.file_name,
+            file_size=m.file_size,
+            mime_type=m.mime_type,
+            latitude=m.latitude,
+            longitude=m.longitude,
+            created_at=_fmt_dt(m.created_at),
+            read_at=_fmt_dt(m.read_at),
+            is_mine=(m.sender_email == email_lower),
+        )
+        for m in msgs
+    ]
+
+
+# ─── PATCH /messages/read ─────────────────────────────────────────
+@app.patch("/messages/read", response_model=MarkReadResponse)
+def mark_messages_read(
+    payload: MarkReadRequest,
+    db: Session = Depends(get_db),
+):
+    """Mark all unread messages from other_email→reader_email as read."""
+
+    _resolve_role(payload.reader_email, db)
+    _resolve_role(payload.other_email, db)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC for SQLite
+
+    count = (
+        db.query(MessageDB)
+        .filter(
+            MessageDB.sender_email == payload.other_email,
+            MessageDB.recipient_email == payload.reader_email,
+            MessageDB.read_at.is_(None),
+        )
+        .update({"read_at": now})
+    )
+
+    db.commit()
+
+    return MarkReadResponse(updated=count)

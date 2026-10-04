@@ -225,3 +225,67 @@ class VolunteerMatchEntry(BaseModel):
 class VolunteerMatchesResponse(BaseModel):
     volunteer_name: str
     matches: list[VolunteerMatchEntry]
+
+
+# ─── Messaging Schemas ─────────────────────────────────────────────
+
+class MessageSend(BaseModel):
+    sender_email: str = Field(..., min_length=1)
+    recipient_email: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("body")
+    @classmethod
+    def body_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("body must not be empty or whitespace only")
+        return value
+
+    @field_validator("sender_email", "recipient_email")
+    @classmethod
+    def email_trimmed(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class MessageResponse(BaseModel):
+    id: int
+    sender_email: str
+    sender_role: str
+    recipient_email: str
+    recipient_role: str
+    message_type: str
+    body: Optional[str]
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    created_at: str          # ISO-8601 with trailing Z
+    read_at: Optional[str]   # ISO-8601 with trailing Z or null
+    is_mine: bool = False
+
+
+class ConversationEntry(BaseModel):
+    other_email: str
+    other_name: str
+    other_role: str
+    last_message_preview: str
+    last_message_time: str   # ISO-8601 with trailing Z
+    last_message_from_me: bool
+    unread_count: int
+
+
+class MarkReadRequest(BaseModel):
+    reader_email: str = Field(..., min_length=1)
+    other_email: str = Field(..., min_length=1)
+
+    @field_validator("reader_email", "other_email")
+    @classmethod
+    def email_trimmed(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class MarkReadResponse(BaseModel):
+    updated: int
