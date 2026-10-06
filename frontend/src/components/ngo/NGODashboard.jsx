@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Messages from "../messaging/Messages";
 import "./NGODashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -15,6 +16,48 @@ export default function NGODashboard({ email, showToast, setPage }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [activeTab, setActiveTab] = useState("profile");
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // ── Poll unread messages while not on Messages tab ───────────────
+  useEffect(() => {
+    if (!email || activeTab === "messages") {
+      return;
+    }
+
+    let isSubscribed = true;
+    let inFlight = false;
+
+    const fetchUnread = async () => {
+      if (inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        const res = await fetch(
+          `${API_BASE}/conversations/${encodeURIComponent(email)}`
+        );
+        if (!res.ok) return;
+        const convos = await res.json();
+        if (isSubscribed && Array.isArray(convos)) {
+          const total = convos.reduce(
+            (sum, c) => sum + (Number(c.unread_count) || 0),
+            0
+          );
+          setUnreadCount(total);
+        }
+      } catch {
+        // ignore errors silently
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    fetchUnread();
+    const intervalId = setInterval(fetchUnread, 8000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(intervalId);
+    };
+  }, [email, activeTab]);
 
   // Events tab state
   const [events, setEvents] = useState([]);
@@ -329,7 +372,6 @@ export default function NGODashboard({ email, showToast, setPage }) {
         <div className="dashboard-subnav">
           <div className="dashboard-subnav-tabs">
             {["profile", "events", "problems", "messages", "settings"].map((tab) => (
-
               <button
                 key={tab}
                 type="button"
@@ -337,21 +379,32 @@ export default function NGODashboard({ email, showToast, setPage }) {
                 onClick={() => setActiveTab(tab)}
               >
                 {tab === "problems" ? "Reported Problems" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === "messages" && unreadCount > 0 && (
+                  <span className="dashboard-subnav-badge">{unreadCount}</span>
+                )}
               </button>
             ))}
           </div>
         </div>
 
-        {/* ── Messages / Settings placeholders ────────────────── */}
-        {(activeTab === "messages" || activeTab === "settings") && (
+        {/* ── Messages tab ─────────────────────────────────────── */}
+        {activeTab === "messages" && (
+          <div className="msg-tab-wrapper">
+            <Messages
+              email={email}
+              role="ngo"
+              showToast={showToast}
+              onUnreadChange={setUnreadCount}
+            />
+          </div>
+        )}
+
+        {/* ── Settings placeholder ─────────────────────────────── */}
+        {activeTab === "settings" && (
           <div className="dashboard-placeholder-card">
-            <p className="dashboard-placeholder-title">
-              {activeTab === "messages" ? "Messages" : "Settings"}
-            </p>
+            <p className="dashboard-placeholder-title">Settings</p>
             <p className="dashboard-placeholder-text">
-              {activeTab === "messages"
-                ? "Direct messaging with volunteers is coming soon."
-                : "Account settings are coming soon."}
+              Account settings are coming soon.
             </p>
           </div>
         )}
@@ -450,10 +503,25 @@ export default function NGODashboard({ email, showToast, setPage }) {
                 </div>
 
                 <div className="dashboard-placeholder-card">
-                  <p className="dashboard-placeholder-title">Messages</p>
-                  <p className="dashboard-placeholder-text">
-                    Direct messaging with volunteers is coming soon.
+                  <p className="dashboard-placeholder-title">
+                    Messages
+                    {unreadCount > 0 && (
+                      <span className="dashboard-sidebar-unread-badge">
+                        {unreadCount} unread
+                      </span>
+                    )}
                   </p>
+                  <p className="dashboard-placeholder-text">
+                    Chat directly with volunteers and answer inquiries.
+                  </p>
+                  <button
+                    type="button"
+                    className="dashboard-sidebar-msg-btn"
+                    onClick={() => setActiveTab("messages")}
+                  >
+                    Open Messages
+                    {unreadCount > 0 && ` (${unreadCount})`}
+                  </button>
                 </div>
               </div>
             </div>

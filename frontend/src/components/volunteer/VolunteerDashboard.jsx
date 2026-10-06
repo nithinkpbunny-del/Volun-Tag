@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Messages from "../messaging/Messages";
 import "./VolunteerDashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -15,6 +16,48 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
   const [sectorFilter, setSectorFilter] = useState("");
   const [expandedNgo, setExpandedNgo] = useState(null);
   const [matches, setMatches] = useState([]);
+  const [chatTarget, setChatTarget] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!email || activeTab === "messages") {
+      return;
+    }
+
+    let isSubscribed = true;
+    let inFlight = false;
+
+    const fetchUnread = async () => {
+      if (inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        const res = await fetch(
+          `${API_BASE}/conversations/${encodeURIComponent(email)}`
+        );
+        if (!res.ok) return;
+        const convos = await res.json();
+        if (isSubscribed && Array.isArray(convos)) {
+          const total = convos.reduce(
+            (sum, c) => sum + (Number(c.unread_count) || 0),
+            0
+          );
+          setUnreadCount(total);
+        }
+      } catch {
+        // ignore errors silently
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    fetchUnread();
+    const intervalId = setInterval(fetchUnread, 8000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(intervalId);
+    };
+  }, [email, activeTab]);
 
   useEffect(() => {
     if (!email) {
@@ -201,9 +244,15 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
             <button
               type="button"
               className={`dashboard-subnav-tab ${activeTab === "messages" ? "active" : ""}`}
-              onClick={() => setActiveTab("messages")}
+              onClick={() => {
+                setChatTarget(null);
+                setActiveTab("messages");
+              }}
             >
               Messages
+              {unreadCount > 0 && (
+                <span className="dashboard-subnav-badge">{unreadCount}</span>
+              )}
             </button>
 
             <button
@@ -224,18 +273,28 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
           </button>
         </div>
 
-        {activeTab !== "profile" ? (
+        {activeTab === "messages" && (
+          <div className="msg-tab-wrapper">
+            <Messages
+              email={email}
+              role="volunteer"
+              showToast={showToast}
+              startWith={chatTarget}
+              onUnreadChange={setUnreadCount}
+            />
+          </div>
+        )}
+
+        {activeTab === "settings" && (
           <div className="dashboard-placeholder-card">
-            <p className="dashboard-placeholder-title">
-              {activeTab === "messages" ? "Messages" : "Settings"}
-            </p>
+            <p className="dashboard-placeholder-title">Settings</p>
             <p className="dashboard-placeholder-text">
-              {activeTab === "messages"
-                ? "Direct messaging with NGOs is coming soon."
-                : "Account settings are coming soon."}
+              Account settings are coming soon.
             </p>
           </div>
-        ) : (
+        )}
+
+        {activeTab === "profile" && (
           <>
             <div className="dashboard-profile-strip">
               <div className="dashboard-avatar-circle">
@@ -349,6 +408,38 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
                             >
                               {expandedNgo === ngo.name ? "Hide" : "View profile"}
                             </button>
+
+                            <button
+                              type="button"
+                              className="dashboard-connect-btn"
+                              disabled={!ngo.email}
+                              title={
+                                !ngo.email
+                                  ? "This NGO has no contact email"
+                                  : `Connect with ${ngo.name}`
+                              }
+                              onClick={() => {
+                                if (!ngo.email) return;
+                                setChatTarget({ email: ngo.email, name: ngo.name });
+                                setActiveTab("messages");
+                              }}
+                            >
+                              <svg
+                                className="dashboard-chat-icon"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                              </svg>
+                              Connect
+                            </button>
                           </div>
                         </div>
 
@@ -389,10 +480,28 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
                 </div>
 
                 <div className="dashboard-placeholder-card">
-                  <p className="dashboard-placeholder-title">Messages</p>
-                  <p className="dashboard-placeholder-text">
-                    Direct messaging with NGOs is coming soon.
+                  <p className="dashboard-placeholder-title">
+                    Messages
+                    {unreadCount > 0 && (
+                      <span className="dashboard-sidebar-unread-badge">
+                        {unreadCount} unread
+                      </span>
+                    )}
                   </p>
+                  <p className="dashboard-placeholder-text">
+                    Chat directly with NGOs and manage your conversations.
+                  </p>
+                  <button
+                    type="button"
+                    className="dashboard-sidebar-msg-btn"
+                    onClick={() => {
+                      setChatTarget(null);
+                      setActiveTab("messages");
+                    }}
+                  >
+                    Open Messages
+                    {unreadCount > 0 && ` (${unreadCount})`}
+                  </button>
                 </div>
               </div>
             </div>

@@ -1055,6 +1055,7 @@ def get_ngos(
     return [
         {
             "name": n.name,
+            "email": n.email,
             "motto": n.motto,
             "category": n.category,
             "location": n.location,
