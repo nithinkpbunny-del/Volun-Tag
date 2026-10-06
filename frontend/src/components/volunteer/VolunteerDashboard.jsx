@@ -5,7 +5,7 @@ import "./VolunteerDashboard.css";
 const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
 
-export default function VolunteerDashboard({ email, showToast, setPage }) {
+export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [ngos, setNgos] = useState([]);
@@ -267,7 +267,7 @@ export default function VolunteerDashboard({ email, showToast, setPage }) {
           <button
             type="button"
             className="dashboard-report-btn"
-            onClick={() => setPage("report")}
+            onClick={() => onReportProblem(email)}
           >
             Report a problem
           </button>
