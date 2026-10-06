@@ -35,6 +35,7 @@ class IssueCreate(BaseModel):
 
     reporter_name: Optional[str] = Field(default=None, max_length=100)
     contact_information: Optional[str] = Field(default=None, max_length=255)
+    reporter_email: Optional[str] = Field(default=None, max_length=255)
     user_description: str = Field(..., min_length=1, max_length=5000)
     location: str = Field(..., min_length=1, max_length=500)
     image_paths: Optional[list[str]] = Field(default=None, max_length=10)
@@ -99,6 +100,7 @@ class IssueResponse(BaseModel):
     complaint_id: str
     reporter_name: Optional[str]
     contact_information: Optional[str]
+    reporter_email: Optional[str] = None
     user_description: str
     location: str
     image_paths: Optional[list[str]]
@@ -207,6 +209,11 @@ class NGOIssueEntry(BaseModel):
     match_percentage: float
     confidence: str
     explanation: Optional[str] = None
+    reporter_name: Optional[str] = None
+    reporter_phone: Optional[str] = None
+    reporter_email: Optional[str] = None
+    ai_image_caption: Optional[str] = None
+    ai_scene_category: Optional[str] = None
 
 
 class NGOIssuesResponse(BaseModel):

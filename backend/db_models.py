@@ -111,6 +111,7 @@ class IssueDB(Base):
 
     reporter_name = Column(String(100), nullable=True)
     contact_information = Column(String(255), nullable=True)
+    reporter_email = Column(String(255), nullable=True)
 
     user_description = Column(Text, nullable=False)
     location = Column(String(500), nullable=False)

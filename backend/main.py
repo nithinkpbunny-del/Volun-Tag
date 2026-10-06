@@ -180,6 +180,7 @@ def home():
 def report_issue(
     user_description: str = Form(...),
     location: str = Form(...),
+    reporter_email: str = Form(...),
     reporter_name: Optional[str] = Form(default=None),
     contact_information: Optional[str] = Form(default=None),
     images: list[UploadFile] = File(default=[]),
@@ -202,13 +203,28 @@ def report_issue(
             detail="location must not be empty",
         )
 
-    if reporter_name is not None:
-        reporter_name = reporter_name.strip() or None
+    # ── Validate reporter via volunteer account ────────────────────
+    reporter_email = reporter_email.strip().lower()
 
-    if contact_information is not None:
-        contact_information = (
-            contact_information.strip() or None
+    if not reporter_email:
+        raise HTTPException(
+            status_code=403,
+            detail="Register as a volunteer to report a problem",
         )
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == reporter_email,
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=403,
+            detail="Register as a volunteer to report a problem",
+        )
+
+    # Volunteer account is the single source of truth for identity.
+    reporter_name = volunteer.name
+    contact_information = volunteer.contact_number
 
     if len(images) > MAX_IMAGES:
         raise HTTPException(
@@ -293,6 +309,7 @@ def report_issue(
         "location": location,
         "reporter_name": reporter_name,
         "contact_information": contact_information,
+        "reporter_email": reporter_email,
         "image_paths": saved_paths if saved_paths else None,
     }
 
@@ -936,6 +953,11 @@ def get_ngo_issues(
                     match_percentage=entry.get("percentage", 0.0),
                     confidence=entry.get("confidence", "Unknown"),
                     explanation=expls[idx] if idx < len(expls) else None,
+                    reporter_name=issue.reporter_name,
+                    reporter_phone=issue.contact_information,
+                    reporter_email=issue.reporter_email,
+                    ai_image_caption=issue.ai_image_caption,
+                    ai_scene_category=issue.ai_scene_category,
                 ))
                 break  # one match per issue is enough
 
@@ -1557,6 +1579,56 @@ def _fmt_dt(dt) -> str | None:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _ngo_may_message_volunteer(
+    ngo_email: str,
+    volunteer_email: str,
+    db: Session,
+) -> bool:
+    """Return True if the NGO is allowed to message the volunteer.
+
+    An NGO may message a volunteer if:
+    1. The volunteer has already sent a message to this NGO, OR
+    2. An issue exists whose reporter_email matches the volunteer AND
+       whose recommended_ngos contains an entry with "ngo" equal to
+       this NGO's name.
+    """
+    ngo_lower = ngo_email.strip().lower()
+    vol_lower = volunteer_email.strip().lower()
+
+    # Check 1: prior message from volunteer → NGO
+    prior = db.query(MessageDB.id).filter(
+        MessageDB.sender_email == vol_lower,
+        MessageDB.recipient_email == ngo_lower,
+    ).first()
+    if prior:
+        return True
+
+    # Check 2: matched issue
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == ngo_lower,
+    ).first()
+    if not ngo:
+        return False
+
+    issues = (
+        db.query(IssueDB)
+        .filter(
+            func.lower(IssueDB.reporter_email) == vol_lower,
+        )
+        .all()
+    )
+    for issue in issues:
+        recs = issue.recommended_ngos
+        if not recs or not isinstance(recs, list):
+            continue
+        for entry in recs:
+            if isinstance(entry, dict) and entry.get("ngo") == ngo.name:
+                return True
+
+    return False
+
+
 def _validate_pair(
     sender_email: str,
     recipient_email: str,
@@ -1569,7 +1641,8 @@ def _validate_pair(
     - 400 if sender == recipient (self)
     - 404 if either email is unknown (server-side role lookup)
     - 400 if both parties have the same role
-    - 403 if an NGO tries to start a conversation without prior message
+    - 403 if an NGO tries to message a volunteer without prior message
+      or matched issue
     """
     s_email = sender_email.strip().lower()
     r_email = recipient_email.strip().lower()
@@ -1590,19 +1663,14 @@ def _validate_pair(
             ),
         )
 
-    # NGO cannot start a conversation
+    # NGO can only message volunteers who messaged them or reported a matched issue
     if sender_role == "ngo":
-        prior = db.query(MessageDB.id).filter(
-            MessageDB.sender_email == r_email,
-            MessageDB.recipient_email == s_email,
-        ).first()
-
-        if not prior:
+        if not _ngo_may_message_volunteer(s_email, r_email, db):
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    "NGOs cannot start a conversation. "
-                    "A volunteer must send the first message."
+                    "NGOs can only message volunteers who have "
+                    "messaged them or reported a problem matched to them."
                 ),
             )
 
@@ -1633,19 +1701,16 @@ def send_message(
             ),
         )
 
-    # NGO cannot start a conversation
+    # NGO can only message volunteers who messaged them or reported a matched issue
     if sender_role == "ngo":
-        prior = db.query(MessageDB.id).filter(
-            MessageDB.sender_email == payload.recipient_email,
-            MessageDB.recipient_email == payload.sender_email,
-        ).first()
-
-        if not prior:
+        if not _ngo_may_message_volunteer(
+            payload.sender_email, payload.recipient_email, db,
+        ):
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    "NGOs cannot start a conversation. "
-                    "A volunteer must send the first message."
+                    "NGOs can only message volunteers who have "
+                    "messaged them or reported a problem matched to them."
                 ),
             )
 
