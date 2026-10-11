@@ -372,7 +372,7 @@ export default function NGODashboard({ email, showToast, setPage }) {
         {/* ── Subnav ──────────────────────────────────────────── */}
         <div className="dashboard-subnav">
           <div className="dashboard-subnav-tabs">
-            {["profile", "events", "problems", "messages", "settings"].map((tab) => (
+            {["profile", "events", "problems", "messages", "activity", "settings"].map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -384,7 +384,11 @@ export default function NGODashboard({ email, showToast, setPage }) {
                   setActiveTab(tab);
                 }}
               >
-                {tab === "problems" ? "Reported Problems" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === "problems"
+                  ? "Reported Problems"
+                  : tab === "activity"
+                  ? "My Activity"
+                  : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 {tab === "messages" && unreadCount > 0 && (
                   <span className="dashboard-subnav-badge">{unreadCount}</span>
                 )}
@@ -403,6 +407,16 @@ export default function NGODashboard({ email, showToast, setPage }) {
               startWith={chatTarget}
               onUnreadChange={setUnreadCount}
             />
+          </div>
+        )}
+
+        {/* ── My Activity placeholder ─────────────────────────── */}
+        {activeTab === "activity" && (
+          <div className="dashboard-placeholder-card">
+            <p className="dashboard-placeholder-title">My Activity</p>
+            <p className="dashboard-placeholder-text">
+              Your activity will appear here soon.
+            </p>
           </div>
         )}
 

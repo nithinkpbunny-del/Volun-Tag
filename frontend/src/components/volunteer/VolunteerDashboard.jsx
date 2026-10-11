@@ -257,6 +257,14 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
 
             <button
               type="button"
+              className={`dashboard-subnav-tab ${activeTab === "activity" ? "active" : ""}`}
+              onClick={() => setActiveTab("activity")}
+            >
+              My Activity
+            </button>
+
+            <button
+              type="button"
               className={`dashboard-subnav-tab ${activeTab === "settings" ? "active" : ""}`}
               onClick={() => setActiveTab("settings")}
             >
@@ -282,6 +290,15 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
               startWith={chatTarget}
               onUnreadChange={setUnreadCount}
             />
+          </div>
+        )}
+
+        {activeTab === "activity" && (
+          <div className="dashboard-placeholder-card">
+            <p className="dashboard-placeholder-title">My Activity</p>
+            <p className="dashboard-placeholder-text">
+              Your activity will appear here soon.
+            </p>
           </div>
         )}
 
