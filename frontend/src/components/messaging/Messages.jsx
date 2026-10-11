@@ -452,7 +452,7 @@ export default function Messages({
 
   // ─── Handle startWith Prop ───────────────────────────────────────
   useEffect(() => {
-    if (!startWith?.email || role !== "volunteer" || loadingConvos) return;
+    if (!startWith?.email || loadingConvos) return;
 
     const targetEmail = startWith.email.trim().toLowerCase();
     if (lastHandledStartWithRef.current === targetEmail) return;
@@ -478,7 +478,7 @@ export default function Messages({
       const virtualConvo = {
         other_email: targetEmail,
         other_name: startWith.name || startWith.email,
-        other_role: "ngo",
+        other_role: role === "ngo" ? "volunteer" : "ngo",
         isVirtual: true,
       };
       setMessages([]);

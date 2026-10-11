@@ -17,6 +17,7 @@ export default function NGODashboard({ email, showToast, setPage }) {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [activeTab, setActiveTab] = useState("profile");
   const [unreadCount, setUnreadCount] = useState(0);
+  const [chatTarget, setChatTarget] = useState(null);
 
   // ── Poll unread messages while not on Messages tab ───────────────
   useEffect(() => {
@@ -376,7 +377,12 @@ export default function NGODashboard({ email, showToast, setPage }) {
                 key={tab}
                 type="button"
                 className={`dashboard-subnav-tab ${activeTab === tab ? "active" : ""}`}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => {
+                  if (tab === "messages") {
+                    setChatTarget(null);
+                  }
+                  setActiveTab(tab);
+                }}
               >
                 {tab === "problems" ? "Reported Problems" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 {tab === "messages" && unreadCount > 0 && (
@@ -394,6 +400,7 @@ export default function NGODashboard({ email, showToast, setPage }) {
               email={email}
               role="ngo"
               showToast={showToast}
+              startWith={chatTarget}
               onUnreadChange={setUnreadCount}
             />
           </div>
@@ -517,7 +524,10 @@ export default function NGODashboard({ email, showToast, setPage }) {
                   <button
                     type="button"
                     className="dashboard-sidebar-msg-btn"
-                    onClick={() => setActiveTab("messages")}
+                    onClick={() => {
+                      setChatTarget(null);
+                      setActiveTab("messages");
+                    }}
                   >
                     Open Messages
                     {unreadCount > 0 && ` (${unreadCount})`}
@@ -799,6 +809,7 @@ export default function NGODashboard({ email, showToast, setPage }) {
                         <p className="dashboard-ngo-name">{iss.location}</p>
                         <p className="dashboard-ngo-meta">
                           {formatDate(iss.created_at)} · {iss.complaint_id}
+                          {iss.reporter_name ? ` · Reported by ${iss.reporter_name}` : ""}
                         </p>
                       </div>
 
@@ -833,6 +844,27 @@ export default function NGODashboard({ email, showToast, setPage }) {
                           <strong>Description:</strong> {iss.user_description}
                         </p>
 
+                        <p>
+                          <strong>Reporter:</strong>{" "}
+                          {[iss.reporter_name, iss.reporter_phone, iss.reporter_email]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}
+                        </p>
+
+                        <p>
+                          <strong>Problem location:</strong> {iss.location}
+                        </p>
+
+                        <p>
+                          <strong>AI image caption:</strong>{" "}
+                          {iss.ai_image_caption || "No image provided"}
+                        </p>
+
+                        <p>
+                          <strong>Detected category:</strong>{" "}
+                          {iss.ai_scene_category || "—"}
+                        </p>
+
                         {iss.explanation && (
                           <div className="ngo-issue-explanation">
                             <p className="ngo-issue-explanation-label">AI Explanation</p>
@@ -843,6 +875,43 @@ export default function NGODashboard({ email, showToast, setPage }) {
                         <p className="ngo-issue-confidence">
                           <strong>Confidence:</strong> {iss.confidence}
                         </p>
+
+                        <div className="ngo-issue-connect-row">
+                          <button
+                            type="button"
+                            className="dashboard-connect-btn"
+                            disabled={!iss.reporter_email}
+                            title={
+                              !iss.reporter_email
+                                ? "This report has no linked volunteer account"
+                                : (iss.reporter_name ? `Connect with ${iss.reporter_name}` : "Connect with volunteer")
+                            }
+                            onClick={() => {
+                              if (!iss.reporter_email) return;
+                              setChatTarget({
+                                email: iss.reporter_email,
+                                name: iss.reporter_name,
+                              });
+                              setActiveTab("messages");
+                            }}
+                          >
+                            <svg
+                              className="dashboard-chat-icon"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            Connect
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

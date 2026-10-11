@@ -275,3 +275,42 @@
   width: 100%;
 }
 
+/* ─── Connect button ─────────────────────────────────────────────── */
+
+.dashboard-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--sage, #2d7a5e);
+  border: 1px solid var(--sage, #2d7a5e);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.dashboard-connect-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.dashboard-connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--border, #dde5e2);
+  border-color: var(--border, #dde5e2);
+  color: var(--ink-soft, #667085);
+}
+
+.dashboard-connect-btn .dashboard-chat-icon {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+}
+
+.ngo-issue-connect-row {
+  margin-top: 0.75rem;
+}
+
