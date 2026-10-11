@@ -3,12 +3,10 @@ import ImagePreviewCard from "./ImagePreviewCard";
 
 const API_BASE = "http://127.0.0.1:8000";
 
-export default function IssueReportForm({ showToast, onReportSuccess }) {
+export default function IssueReportForm({ showToast, onReportSuccess, reporterEmail }) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    reporter_name: "",
-    contact_information: "",
     user_description: "",
     location: "",
   });
@@ -55,13 +53,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
     const formData = new FormData();
     formData.append("user_description", form.user_description.trim());
     formData.append("location", form.location.trim());
-
-    if (form.reporter_name.trim()) {
-      formData.append("reporter_name", form.reporter_name.trim());
-    }
-    if (form.contact_information.trim()) {
-      formData.append("contact_information", form.contact_information.trim());
-    }
+    formData.append("reporter_email", reporterEmail);
     images.forEach((img) => {
       formData.append("images", img.file);
     });
@@ -112,6 +104,9 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
         <p className="form-subtitle">
           {step === 1 ? "Tell us what happened" : "Add photos and review your report"}
         </p>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
+          Reporting as <strong>{reporterEmail}</strong>
+        </p>
       </div>
 
       {step === 1 && (
@@ -140,28 +135,6 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
               className={errors.location ? "input-error" : ""}
             />
             {errors.location && <span className="error-text">{errors.location}</span>}
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="reporter-name">Your Name</label>
-            <input
-              id="reporter-name"
-              type="text"
-              placeholder="Optional"
-              value={form.reporter_name}
-              onChange={(e) => setForm({ ...form, reporter_name: e.target.value })}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="contact-info">Contact Info</label>
-            <input
-              id="contact-info"
-              type="text"
-              placeholder="Optional — email or phone"
-              value={form.contact_information}
-              onChange={(e) => setForm({ ...form, contact_information: e.target.value })}
-            />
           </div>
 
           <button
@@ -200,6 +173,16 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
               ))}
             </div>
           )}
+
+          <p style={{
+            fontSize: "0.82rem",
+            color: "var(--text-muted)",
+            textAlign: "center",
+            margin: "1rem 0 0.5rem",
+            lineHeight: 1.45,
+          }}>
+            Your name and mobile number will be shared with the NGOs matched to this report.
+          </p>
 
           <div className="form-actions">
             <button className="form-back-btn" onClick={() => setStep(1)}>

@@ -1,11 +1,14 @@
 import logging
 import os
+import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -13,7 +16,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -30,12 +33,14 @@ try:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
+        MarkReadRequest, MarkReadResponse,
     )
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -52,6 +57,8 @@ except ImportError:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
+        MarkReadRequest, MarkReadResponse,
     )
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -61,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
+MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -171,6 +180,7 @@ def home():
 def report_issue(
     user_description: str = Form(...),
     location: str = Form(...),
+    reporter_email: str = Form(...),
     reporter_name: Optional[str] = Form(default=None),
     contact_information: Optional[str] = Form(default=None),
     images: list[UploadFile] = File(default=[]),
@@ -193,13 +203,28 @@ def report_issue(
             detail="location must not be empty",
         )
 
-    if reporter_name is not None:
-        reporter_name = reporter_name.strip() or None
+    # ── Validate reporter via volunteer account ────────────────────
+    reporter_email = reporter_email.strip().lower()
 
-    if contact_information is not None:
-        contact_information = (
-            contact_information.strip() or None
+    if not reporter_email:
+        raise HTTPException(
+            status_code=403,
+            detail="Register as a volunteer to report a problem",
         )
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == reporter_email,
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=403,
+            detail="Register as a volunteer to report a problem",
+        )
+
+    # Volunteer account is the single source of truth for identity.
+    reporter_name = volunteer.name
+    contact_information = volunteer.contact_number
 
     if len(images) > MAX_IMAGES:
         raise HTTPException(
@@ -284,6 +309,7 @@ def report_issue(
         "location": location,
         "reporter_name": reporter_name,
         "contact_information": contact_information,
+        "reporter_email": reporter_email,
         "image_paths": saved_paths if saved_paths else None,
     }
 
@@ -927,6 +953,11 @@ def get_ngo_issues(
                     match_percentage=entry.get("percentage", 0.0),
                     confidence=entry.get("confidence", "Unknown"),
                     explanation=expls[idx] if idx < len(expls) else None,
+                    reporter_name=issue.reporter_name,
+                    reporter_phone=issue.contact_information,
+                    reporter_email=issue.reporter_email,
+                    ai_image_caption=issue.ai_image_caption,
+                    ai_scene_category=issue.ai_scene_category,
                 ))
                 break  # one match per issue is enough
 
@@ -1046,6 +1077,7 @@ def get_ngos(
     return [
         {
             "name": n.name,
+            "email": n.email,
             "motto": n.motto,
             "category": n.category,
             "location": n.location,
@@ -1511,3 +1543,579 @@ def get_stats(
             CATEGORY_KEYWORDS.keys()
         ),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  MESSAGING
+# ═══════════════════════════════════════════════════════════════════
+
+def _resolve_role(email: str, db: Session) -> tuple[str, str]:
+    """Return (role, display_name) for an email, or raise 404."""
+    email_lower = email.strip().lower()
+
+    vol = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email_lower,
+    ).first()
+    if vol:
+        return "volunteer", vol.name
+
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == email_lower,
+    ).first()
+    if ngo:
+        return "ngo", ngo.name
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No volunteer or NGO account found for '{email}'",
+    )
+
+
+def _fmt_dt(dt) -> str | None:
+    """Format a datetime as ISO-8601 with trailing Z, or None."""
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ngo_may_message_volunteer(
+    ngo_email: str,
+    volunteer_email: str,
+    db: Session,
+) -> bool:
+    """Return True if the NGO is allowed to message the volunteer.
+
+    An NGO may message a volunteer if:
+    1. The volunteer has already sent a message to this NGO, OR
+    2. An issue exists whose reporter_email matches the volunteer AND
+       whose recommended_ngos contains an entry with "ngo" equal to
+       this NGO's name.
+    """
+    ngo_lower = ngo_email.strip().lower()
+    vol_lower = volunteer_email.strip().lower()
+
+    # Check 1: prior message from volunteer → NGO
+    prior = db.query(MessageDB.id).filter(
+        MessageDB.sender_email == vol_lower,
+        MessageDB.recipient_email == ngo_lower,
+    ).first()
+    if prior:
+        return True
+
+    # Check 2: matched issue
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == ngo_lower,
+    ).first()
+    if not ngo:
+        return False
+
+    issues = (
+        db.query(IssueDB)
+        .filter(
+            func.lower(IssueDB.reporter_email) == vol_lower,
+        )
+        .all()
+    )
+    for issue in issues:
+        recs = issue.recommended_ngos
+        if not recs or not isinstance(recs, list):
+            continue
+        for entry in recs:
+            if isinstance(entry, dict) and entry.get("ngo") == ngo.name:
+                return True
+
+    return False
+
+
+def _validate_pair(
+    sender_email: str,
+    recipient_email: str,
+    db: Session,
+) -> tuple[str, str]:
+    """Validate messaging rules between sender and recipient.
+
+    Returns (sender_role, recipient_role).
+    Applies the same rules as POST /messages:
+    - 400 if sender == recipient (self)
+    - 404 if either email is unknown (server-side role lookup)
+    - 400 if both parties have the same role
+    - 403 if an NGO tries to message a volunteer without prior message
+      or matched issue
+    """
+    s_email = sender_email.strip().lower()
+    r_email = recipient_email.strip().lower()
+
+    if s_email == r_email:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+
+    sender_role, _ = _resolve_role(s_email, db)
+    recipient_role, _ = _resolve_role(r_email, db)
+
+    # Same-role check
+    if sender_role == recipient_role:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Both parties are {sender_role}s. "
+                "Only volunteer ↔ NGO conversations are allowed."
+            ),
+        )
+
+    # NGO can only message volunteers who messaged them or reported a matched issue
+    if sender_role == "ngo":
+        if not _ngo_may_message_volunteer(s_email, r_email, db):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "NGOs can only message volunteers who have "
+                    "messaged them or reported a problem matched to them."
+                ),
+            )
+
+    return sender_role, recipient_role
+
+
+# ─── POST /messages ───────────────────────────────────────────────
+@app.post("/messages", response_model=MessageResponse, status_code=201)
+def send_message(
+    payload: MessageSend,
+    db: Session = Depends(get_db),
+):
+    """Send a text message between a volunteer and an NGO."""
+
+    if payload.sender_email == payload.recipient_email:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+
+    sender_role, sender_name = _resolve_role(payload.sender_email, db)
+    recipient_role, recipient_name = _resolve_role(payload.recipient_email, db)
+
+    # Same-role check
+    if sender_role == recipient_role:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Both parties are {sender_role}s. "
+                "Only volunteer ↔ NGO conversations are allowed."
+            ),
+        )
+
+    # NGO can only message volunteers who messaged them or reported a matched issue
+    if sender_role == "ngo":
+        if not _ngo_may_message_volunteer(
+            payload.sender_email, payload.recipient_email, db,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "NGOs can only message volunteers who have "
+                    "messaged them or reported a problem matched to them."
+                ),
+            )
+
+    msg = MessageDB(
+        sender_email=payload.sender_email,
+        sender_role=sender_role,
+        recipient_email=payload.recipient_email,
+        recipient_role=recipient_role,
+        message_type="text",
+        body=payload.body,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=msg.body,
+        file_path=None,
+        file_name=msg.file_name,
+        file_size=msg.file_size,
+        mime_type=msg.mime_type,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+        file_url=f"/messages/files/{msg.id}" if msg.file_path else None,
+    )
+
+
+# ─── POST /messages/file ──────────────────────────────────────────
+@app.post("/messages/file", response_model=MessageResponse, status_code=201)
+async def send_file_message(
+    sender_email: str = Form(...),
+    recipient_email: str = Form(...),
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    """Send an image or document attachment between a volunteer and an NGO."""
+    s_email = sender_email.strip().lower()
+    r_email = recipient_email.strip().lower()
+    sender_role, recipient_role = _validate_pair(s_email, r_email, db)
+
+    # Validate caption
+    clean_caption = caption.strip() if caption is not None else None
+    if clean_caption:
+        if len(clean_caption) > 2000:
+            raise HTTPException(
+                status_code=400,
+                detail="Caption cannot exceed 2000 characters",
+            )
+    else:
+        clean_caption = None
+
+    # Block dangerous types by extension (case-insensitive)
+    base_name = Path(file.filename or "file").name.strip() or "file"
+    file_ext = Path(base_name).suffix.lower().lstrip(".")
+
+    dangerous_extensions = {
+        "exe", "bat", "cmd", "com", "msi", "scr", "sh",
+        "app", "apk", "jar", "dmg", "pkg", "vbs", "ps1",
+    }
+    if file_ext in dangerous_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension '.{file_ext}' is not allowed for security reasons",
+        )
+
+    # Max 10 MB: enforce by reading in chunks, stop and return 413 when exceeded. Reject empty files (400).
+    chunk_size = 64 * 1024  # 64 KB
+    max_file_size = 10 * 1024 * 1024  # 10 MB
+    bytes_read = 0
+    chunks = []
+
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        bytes_read += len(chunk)
+        if bytes_read > max_file_size:
+            raise HTTPException(
+                status_code=413,
+                detail="File size exceeds the 10 MB limit",
+            )
+        chunks.append(chunk)
+
+    if bytes_read == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty files cannot be uploaded",
+        )
+
+    # message_type = "image" if content_type starts with "image/", otherwise "document"
+    content_type = file.content_type or "application/octet-stream"
+    message_type = "image" if content_type.lower().startswith("image/") else "document"
+
+    # Save to backend/uploads/messages/ with server-generated name (uuid + sanitized original extension)
+    MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    raw_suffix = Path(base_name).suffix.lower()
+    clean_suffix_ext = re.sub(r"[^a-zA-Z0-9]", "", raw_suffix)
+    sanitized_ext = f".{clean_suffix_ext}" if clean_suffix_ext else ""
+    server_filename = f"{uuid.uuid4().hex}{sanitized_ext}"
+
+    dest = MESSAGES_UPLOAD_DIR / server_filename
+    with open(dest, "wb") as f:
+        f.write(b"".join(chunks))
+
+    relative_path = f"messages/{server_filename}"
+
+    msg = MessageDB(
+        sender_email=s_email,
+        sender_role=sender_role,
+        recipient_email=r_email,
+        recipient_role=recipient_role,
+        message_type=message_type,
+        body=clean_caption,
+        file_path=relative_path,
+        file_name=base_name,
+        file_size=bytes_read,
+        mime_type=content_type,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=msg.body,
+        file_path=None,
+        file_name=msg.file_name,
+        file_size=msg.file_size,
+        mime_type=msg.mime_type,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+        file_url=f"/messages/files/{msg.id}",
+    )
+
+
+# ─── POST /messages/location ──────────────────────────────────────
+@app.post("/messages/location", response_model=MessageResponse, status_code=201)
+def send_location_message(
+    payload: LocationMessageSend,
+    db: Session = Depends(get_db),
+):
+    """Send a location message between a volunteer and an NGO."""
+    sender_role, recipient_role = _validate_pair(
+        payload.sender_email,
+        payload.recipient_email,
+        db,
+    )
+
+    msg = MessageDB(
+        sender_email=payload.sender_email,
+        sender_role=sender_role,
+        recipient_email=payload.recipient_email,
+        recipient_role=recipient_role,
+        message_type="location",
+        body=None,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return MessageResponse(
+        id=msg.id,
+        sender_email=msg.sender_email,
+        sender_role=msg.sender_role,
+        recipient_email=msg.recipient_email,
+        recipient_role=msg.recipient_role,
+        message_type=msg.message_type,
+        body=None,
+        file_path=None,
+        file_name=None,
+        file_size=None,
+        mime_type=None,
+        latitude=msg.latitude,
+        longitude=msg.longitude,
+        created_at=_fmt_dt(msg.created_at),
+        read_at=_fmt_dt(msg.read_at),
+        is_mine=True,
+        file_url=None,
+    )
+
+
+# ─── GET /messages/files/{message_id} ─────────────────────────────
+@app.get("/messages/files/{message_id}")
+def get_message_file(
+    message_id: int,
+    email: str = Query(..., description="Requester email"),
+    db: Session = Depends(get_db),
+):
+    """Download or view a message attachment securely."""
+    msg = db.query(MessageDB).filter(MessageDB.id == message_id).first()
+    if not msg or not msg.file_path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    req_email = email.strip().lower()
+    if req_email not in (msg.sender_email.lower(), msg.recipient_email.lower()):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this conversation's files",
+        )
+
+    file_path = (UPLOAD_DIR / msg.file_path).resolve()
+    messages_root = MESSAGES_UPLOAD_DIR.resolve()
+
+    try:
+        file_path.relative_to(messages_root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on server")
+
+    is_image = msg.message_type == "image" or (
+        msg.mime_type and msg.mime_type.lower().startswith("image/")
+    )
+    disposition = "inline" if is_image else "attachment"
+
+    return FileResponse(
+        path=file_path,
+        media_type=msg.mime_type,
+        filename=msg.file_name or file_path.name,
+        content_disposition_type=disposition,
+    )
+
+
+# ─── GET /conversations/{email} ───────────────────────────────────
+@app.get("/conversations/{email}", response_model=list[ConversationEntry])
+def list_conversations(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """List all conversations for a user, newest first."""
+
+    my_role, _ = _resolve_role(email, db)
+    email_lower = email.strip().lower()
+
+    # All messages this user is involved in
+    msgs = (
+        db.query(MessageDB)
+        .filter(
+            (MessageDB.sender_email == email_lower)
+            | (MessageDB.recipient_email == email_lower)
+        )
+        .order_by(MessageDB.created_at.asc())
+        .all()
+    )
+
+    # Group by the "other" email
+    convos: dict[str, dict] = {}
+
+    for m in msgs:
+        is_mine = m.sender_email == email_lower
+        other_email = m.recipient_email if is_mine else m.sender_email
+
+        if other_email not in convos:
+            convos[other_email] = {
+                "last_msg": m,
+                "last_is_mine": is_mine,
+                "unread": 0,
+            }
+        else:
+            convos[other_email]["last_msg"] = m
+            convos[other_email]["last_is_mine"] = is_mine
+
+        # Unread = messages sent TO me that I haven't read
+        if not is_mine and m.read_at is None:
+            convos[other_email]["unread"] = convos[other_email].get("unread", 0) + 1
+
+    # Build response with display names
+    result: list[ConversationEntry] = []
+
+    for other_email, info in convos.items():
+        try:
+            other_role, other_name = _resolve_role(other_email, db)
+        except HTTPException:
+            other_role, other_name = "unknown", other_email
+
+        last_msg = info["last_msg"]
+        if last_msg.message_type == "text":
+            preview = (last_msg.body or "")[:80]
+        elif last_msg.message_type == "image":
+            preview = "Photo"
+        elif last_msg.message_type == "document":
+            preview = "Document"
+        elif last_msg.message_type == "location":
+            preview = "Location"
+        else:
+            preview = last_msg.message_type.capitalize()
+
+        result.append(ConversationEntry(
+            other_email=other_email,
+            other_name=other_name,
+            other_role=other_role,
+            last_message_preview=preview,
+            last_message_time=_fmt_dt(last_msg.created_at),
+            last_message_from_me=info["last_is_mine"],
+            unread_count=info["unread"],
+        ))
+
+    # Sort newest conversation first
+    result.sort(key=lambda c: c.last_message_time, reverse=True)
+
+    return result
+
+
+# ─── GET /messages/{email}/with/{other_email} ─────────────────────
+@app.get(
+    "/messages/{email}/with/{other_email}",
+    response_model=list[MessageResponse],
+)
+def get_thread(
+    email: str,
+    other_email: str,
+    db: Session = Depends(get_db),
+):
+    """Return the full message thread between two users, oldest first."""
+
+    _resolve_role(email, db)       # 404 if unknown
+    _resolve_role(other_email, db)
+
+    email_lower = email.strip().lower()
+    other_lower = other_email.strip().lower()
+
+    msgs = (
+        db.query(MessageDB)
+        .filter(
+            (
+                (MessageDB.sender_email == email_lower)
+                & (MessageDB.recipient_email == other_lower)
+            )
+            | (
+                (MessageDB.sender_email == other_lower)
+                & (MessageDB.recipient_email == email_lower)
+            )
+        )
+        .order_by(MessageDB.created_at.asc(), MessageDB.id.asc())
+        .all()
+    )
+
+    return [
+        MessageResponse(
+            id=m.id,
+            sender_email=m.sender_email,
+            sender_role=m.sender_role,
+            recipient_email=m.recipient_email,
+            recipient_role=m.recipient_role,
+            message_type=m.message_type,
+            body=m.body,
+            file_path=None,
+            file_name=m.file_name,
+            file_size=m.file_size,
+            mime_type=m.mime_type,
+            latitude=m.latitude,
+            longitude=m.longitude,
+            created_at=_fmt_dt(m.created_at),
+            read_at=_fmt_dt(m.read_at),
+            is_mine=(m.sender_email == email_lower),
+            file_url=f"/messages/files/{m.id}" if m.file_path else None,
+        )
+        for m in msgs
+    ]
+
+
+# ─── PATCH /messages/read ─────────────────────────────────────────
+@app.patch("/messages/read", response_model=MarkReadResponse)
+def mark_messages_read(
+    payload: MarkReadRequest,
+    db: Session = Depends(get_db),
+):
+    """Mark all unread messages from other_email→reader_email as read."""
+
+    _resolve_role(payload.reader_email, db)
+    _resolve_role(payload.other_email, db)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC for SQLite
+
+    count = (
+        db.query(MessageDB)
+        .filter(
+            MessageDB.sender_email == payload.other_email,
+            MessageDB.recipient_email == payload.reader_email,
+            MessageDB.read_at.is_(None),
+        )
+        .update({"read_at": now})
+    )
+
+    db.commit()
+
+    return MarkReadResponse(updated=count)

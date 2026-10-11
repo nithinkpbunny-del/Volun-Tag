@@ -28,6 +28,9 @@
   cursor: pointer;
   padding: 0 0 10px;
   border-bottom: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .dashboard-subnav-tab.active {
@@ -391,3 +394,103 @@
     gap: 0.75rem;
   }
 }
+
+/* ─── Messaging tab wrapper and badges ───────────────────────────── */
+
+.msg-tab-wrapper {
+  width: 100%;
+  height: 70vh;
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.msg-tab-wrapper .msg-shell {
+  height: 100%;
+  max-height: 100%;
+  min-height: 100%;
+  width: 100%;
+}
+
+.dashboard-subnav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background-color: #22c55e;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dashboard-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--sage, #2d7a5e);
+  border: 1px solid var(--sage, #2d7a5e);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.dashboard-connect-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.dashboard-connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--border, #dde5e2);
+  border-color: var(--border, #dde5e2);
+  color: var(--ink-soft, #667085);
+}
+
+.dashboard-connect-btn .dashboard-chat-icon {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+}
+
+.dashboard-sidebar-msg-btn {
+  margin-top: 0.65rem;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--sage, #2d7a5e);
+  background: #ffffff;
+  border: 1px solid var(--border, #dde5e2);
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dashboard-sidebar-msg-btn:hover {
+  background: var(--sage-light, #eaf4ef);
+  border-color: var(--sage, #2d7a5e);
+}
+
+.dashboard-sidebar-unread-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+

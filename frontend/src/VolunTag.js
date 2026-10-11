@@ -20,9 +20,17 @@ export default function VolunTag() {
   const { toast, showToast } = useToast();
   const [issueResult, setIssueResult] = useState(null);
   const [dashboardEmail, setDashboardEmail] = useState("");
+  const [reporterEmail, setReporterEmail] = useState("");
  
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
+  }, [page]);
+
+  // Clear reporter identity when navigating back to landing (acts like logout).
+  useEffect(() => {
+    if (page === "landing") {
+      setReporterEmail("");
+    }
   }, [page]);
  
   const handleReportSuccess = (payload) => {
@@ -32,6 +40,11 @@ export default function VolunTag() {
  
   const handleReportRestart = () => {
     setIssueResult(null);
+    setPage("report");
+  };
+
+  const handleReportProblem = (email) => {
+    setReporterEmail(email);
     setPage("report");
   };
  
@@ -80,6 +93,7 @@ export default function VolunTag() {
               email={dashboardEmail}
               showToast={showToast}
               setPage={setPage}
+              onReportProblem={handleReportProblem}
             />
           )}
 
@@ -102,6 +116,8 @@ export default function VolunTag() {
             <ReportIssue
               showToast={showToast}
               onReportSuccess={handleReportSuccess}
+              reporterEmail={reporterEmail}
+              setPage={setPage}
             />
           )}
  
@@ -110,6 +126,8 @@ export default function VolunTag() {
               result={issueResult}
               showToast={showToast}
               onRestart={handleReportRestart}
+              reporterEmail={reporterEmail}
+              setPage={setPage}
             />
           )}
         </div>
