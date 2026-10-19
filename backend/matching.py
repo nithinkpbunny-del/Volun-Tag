@@ -1,3 +1,5 @@
+import re
+
 from sentence_transformers import SentenceTransformer
 
 
@@ -11,7 +13,6 @@ CATEGORY_KEYWORDS = {
         "teaching",
         "tutoring",
         "mentoring",
-        "training",
         "curriculum",
         "literacy",
         "school",
@@ -34,6 +35,9 @@ CATEGORY_KEYWORDS = {
         "clinical",
         "nutrition",
         "fitness",
+        "paramedic",
+        "emergency medical",
+        "public health",
     ],
     "Environment": [
         "conservation",
@@ -52,9 +56,7 @@ CATEGORY_KEYWORDS = {
     "Animal Welfare": [
         "animal",
         "pet",
-        "shelter",
         "veterinary",
-        "rescue",
         "wildlife",
         "adoption",
         "foster",
@@ -64,9 +66,7 @@ CATEGORY_KEYWORDS = {
         "species",
     ],
     "Social Services": [
-        "community",
         "outreach",
-        "support",
         "welfare",
         "advocacy",
         "housing",
@@ -74,8 +74,15 @@ CATEGORY_KEYWORDS = {
         "poverty",
         "homeless",
         "elderly",
-        "youth",
         "disability",
+        "disaster",
+        "relief",
+        "crisis",
+        "emergency",
+        "flood",
+        "displaced",
+        "humanitarian",
+        "refugee",
     ],
 }
 
@@ -98,7 +105,7 @@ def compute_category_boost(
     matches = sum(
         1
         for kw in keywords
-        if kw in skills_lower
+        if re.search(r"\b" + re.escape(kw) + r"\b", skills_lower)
     )
 
     if matches == 0:
