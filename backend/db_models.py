@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+    UniqueConstraint,
 )
 
 try:
@@ -100,6 +101,18 @@ class ActivityDB(Base):
     spots_available = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     status = Column(String(20), nullable=False, default="Active")
+
+class ActivitySignupDB(Base):
+    __tablename__ = "activity_signups"
+
+    __table_args__ = (
+        UniqueConstraint("activity_id", "volunteer_id", name="uq_signup_activity_volunteer"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False)
+    volunteer_id = Column(Integer, ForeignKey("volunteers.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 class IssueDB(Base):
     """Public issue reports, kept separate from volunteer-to-NGO matching data."""

@@ -16,7 +16,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -33,6 +33,7 @@ try:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        VolunteerEventEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
@@ -40,7 +41,7 @@ try:
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -57,6 +58,7 @@ except ImportError:
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        VolunteerEventEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
@@ -88,6 +90,8 @@ ALLOWED_DOCUMENT_TYPES = {
 
 MAX_IMAGES = 6
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+
+MIN_EVENT_MATCH = 0.30  # minimum cosine score to include an event
 
 
 app = FastAPI(
@@ -1314,6 +1318,177 @@ def get_volunteer_matches(
         volunteer_name=volunteer.name,
         matches=matches,
     )
+
+
+# ─── Volunteer ↔ Event Matching ────────────────────────────────────
+@app.get(
+    "/volunteer-events/{email}",
+    response_model=list[VolunteerEventEntry],
+)
+def get_volunteer_events(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """Return scored & filtered events for a volunteer, sorted by match."""
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    if not volunteer.skills:
+        return []
+
+    # Active events whose date hasn't passed, from Approved/Pending NGOs.
+    now = datetime.utcnow()
+
+    events = (
+        db.query(ActivityDB, NGODB)
+        .join(NGODB, ActivityDB.ngo_id == NGODB.id)
+        .filter(
+            ActivityDB.status == "Active",
+            NGODB.verification_status.in_(["Approved", "Pending"]),
+        )
+        .filter(
+            (ActivityDB.event_date.is_(None))
+            | (ActivityDB.event_date > now)
+        )
+        .all()
+    )
+
+    if not events:
+        return []
+
+    # Batch-encode all event required_skills texts.
+    event_texts = [
+        ev.required_skills.strip() for ev, _ in events
+    ]
+
+    vol_embedding = model.encode([volunteer.skills])
+    event_embeddings = model.encode(event_texts)
+
+    scores = cosine_similarity(
+        vol_embedding,
+        event_embeddings,
+    )[0]
+
+    # Pre-fetch signup rows for this volunteer so the "joined" flag is O(1).
+    joined_ids = set(
+        row.activity_id
+        for row in db.query(ActivitySignupDB.activity_id).filter(
+            ActivitySignupDB.volunteer_id == volunteer.id,
+        ).all()
+    )
+
+    results: list[VolunteerEventEntry] = []
+
+    for idx, (ev, ngo) in enumerate(events):
+        score = float(scores[idx])
+
+        boost = compute_category_boost(
+            volunteer.skills or "",
+            ngo.category or "",
+        )
+
+        final_score = min(score + boost, 1.0)
+
+        if final_score < MIN_EVENT_MATCH:
+            continue
+
+        results.append(
+            VolunteerEventEntry(
+                activity_id=ev.id,
+                title=ev.title,
+                description=ev.description,
+                location=ev.location,
+                event_date=ev.event_date,
+                required_skills=ev.required_skills,
+                ngo_name=ngo.name,
+                ngo_category=ngo.category,
+                ngo_location=ngo.location,
+                ngo_email=ngo.email,
+                match_percentage=round(final_score * 100, 1),
+                joined=ev.id in joined_ids,
+            )
+        )
+
+    results.sort(
+        key=lambda m: m.match_percentage,
+        reverse=True,
+    )
+
+    return results
+
+
+# ─── Join Activity ─────────────────────────────────────────────────
+@app.post(
+    "/activities/{activity_id}/join",
+    response_model=JoinResponse,
+)
+def join_activity(
+    activity_id: int,
+    body: JoinRequest,
+    db: Session = Depends(get_db),
+):
+    """Let a volunteer sign up for an activity."""
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == body.volunteer_email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{body.volunteer_email}'",
+        )
+
+    activity = db.query(ActivityDB).filter(
+        ActivityDB.id == activity_id,
+    ).first()
+
+    if not activity:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Activity {activity_id} not found",
+        )
+
+    if activity.status != "Active":
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is no longer active",
+        )
+
+    if activity.event_date and activity.event_date <= datetime.utcnow():
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already passed",
+        )
+
+    # Idempotent: if already joined, return success without duplicating.
+    existing = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == activity_id,
+        ActivitySignupDB.volunteer_id == volunteer.id,
+    ).first()
+
+    if existing:
+        return JoinResponse(joined=True, activity_id=activity_id)
+
+    db.add(
+        ActivitySignupDB(
+            activity_id=activity_id,
+            volunteer_id=volunteer.id,
+        )
+    )
+    db.commit()
+
+    return JoinResponse(joined=True, activity_id=activity_id)
 
 
 # ─── Volunteer ↔ NGO Matching ─────────────────────────────────────

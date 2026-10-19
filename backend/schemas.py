@@ -234,6 +234,32 @@ class VolunteerMatchesResponse(BaseModel):
     matches: list[VolunteerMatchEntry]
 
 
+# ─── Volunteer ↔ Event Matching Schemas ────────────────────────────
+
+class VolunteerEventEntry(BaseModel):
+    activity_id: int
+    title: str
+    description: Optional[str]
+    location: Optional[str]
+    event_date: Optional[datetime]
+    required_skills: str
+    ngo_name: str
+    ngo_category: Optional[str]
+    ngo_location: Optional[str]
+    ngo_email: Optional[str]
+    match_percentage: float
+    joined: bool
+
+
+class JoinRequest(BaseModel):
+    volunteer_email: str = Field(..., min_length=1)
+
+
+class JoinResponse(BaseModel):
+    joined: bool
+    activity_id: int
+
+
 # ─── Messaging Schemas ─────────────────────────────────────────────
 
 class MessageSend(BaseModel):
