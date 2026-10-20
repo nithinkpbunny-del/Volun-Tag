@@ -266,6 +266,37 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     }
   };
 
+  const leaveActivity = async (ev) => {
+    if (joiningId !== null) return;
+    if (!window.confirm("Leave this activity?")) return;
+    setJoiningId(ev.activity_id);
+    try {
+      const res = await fetch(
+        `${API_BASE}/activities/${ev.activity_id}/join?volunteer_email=${encodeURIComponent(email)}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        showToast(`You left ${ev.title}`);
+        await loadEvents();
+      } else {
+        let message = "Could not leave this activity";
+        try {
+          const data = await res.json();
+          if (data && typeof data.detail === "string") {
+            message = data.detail;
+          }
+        } catch {
+          // keep the default message
+        }
+        showToast(message);
+      }
+    } catch {
+      showToast("Could not leave this activity");
+    } finally {
+      setJoiningId(null);
+    }
+  };
+
   const locations = Array.from(
     new Set(ngos.map((n) => n.location).filter(Boolean))
   ).sort();
@@ -559,6 +590,24 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                                   </p>
                                 </div>
 
+                                {ev.joined && (
+                                  <div className="dashboard-event-actions">
+                                    <span className="dashboard-joined-label">
+                                      Joined
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="dashboard-leave-btn"
+                                      disabled={joiningId !== null}
+                                      onClick={() => leaveActivity(ev)}
+                                    >
+                                      {joiningId === ev.activity_id
+                                        ? "Leaving..."
+                                        : "Leave activity"}
+                                    </button>
+                                  </div>
+                                )}
+                                {!ev.joined && (
                                 <button
                                   type="button"
                                   className="dashboard-join-btn"
@@ -571,6 +620,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                                     ? "Joining..."
                                     : "Join activity"}
                                 </button>
+                                )}
                               </div>
                             ))}
                           </div>

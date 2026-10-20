@@ -576,3 +576,36 @@
   }
 }
 
+
+.dashboard-event-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.dashboard-joined-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #2d7a5e;
+}
+
+.dashboard-leave-btn {
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: #ffffff;
+  border: 1px solid #c0392b;
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  color: #c0392b;
+  cursor: pointer;
+}
+
+.dashboard-leave-btn:hover:not(:disabled) {
+  background: #fdecea;
+}
+
+.dashboard-leave-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
