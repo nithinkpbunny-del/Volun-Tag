@@ -12,12 +12,30 @@ const EMPTY_EVENT = {
   spots_available: "",
 };
 
-export default function NGODashboard({ email, showToast, setPage, onViewVolunteers }) {
+export default function NGODashboard({
+  email,
+  showToast,
+  setPage,
+  onViewVolunteers,
+  initialTab,
+  initialChat,
+  onInitialConsumed,
+}) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [activeTab, setActiveTab] = useState("profile");
+  // The dashboard remounts on every page change, so these props only seed the initial state.
+  const [activeTab, setActiveTab] = useState(
+    initialChat ? "messages" : initialTab || "profile"
+  );
   const [unreadCount, setUnreadCount] = useState(0);
-  const [chatTarget, setChatTarget] = useState(null);
+  const [chatTarget, setChatTarget] = useState(initialChat || null);
+
+  useEffect(() => {
+    if (initialTab || initialChat) {
+      onInitialConsumed && onInitialConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Poll unread messages while not on Messages tab ───────────────
   useEffect(() => {

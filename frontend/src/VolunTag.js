@@ -13,6 +13,7 @@ import Toast, { useToast } from "./components/Toast";
 import DashboardLogin from "./components/DashboardLogin";
 import VolunteerDashboard from "./components/volunteer/VolunteerDashboard";
 import NGODashboard from "./components/ngo/NGODashboard";
+import EventVolunteers from "./components/ngo/EventVolunteers";
 import "./VolunTag.css";
  
 export default function VolunTag() {
@@ -21,10 +22,20 @@ export default function VolunTag() {
   const [issueResult, setIssueResult] = useState(null);
   const [dashboardEmail, setDashboardEmail] = useState("");
   const [reporterEmail, setReporterEmail] = useState("");
- 
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [ngoChatTarget, setNgoChatTarget] = useState(null);
+  const [ngoReturnTab, setNgoReturnTab] = useState(null);
+
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [page]);
+
+  // The event-volunteers screen needs an event and an NGO login; otherwise go back.
+  useEffect(() => {
+    if (page === "event-volunteers" && (!selectedEvent || !dashboardEmail)) {
+      setPage("ngo-dashboard");
+    }
+  }, [page, selectedEvent, dashboardEmail]);
 
   // Clear reporter identity when navigating back to landing (acts like logout).
   useEffect(() => {
@@ -102,9 +113,35 @@ export default function VolunTag() {
               email={dashboardEmail}
               showToast={showToast}
               setPage={setPage}
+              onViewVolunteers={(ev) => {
+                setSelectedEvent(ev);
+                setPage("event-volunteers");
+              }}
+              initialTab={ngoReturnTab}
+              initialChat={ngoChatTarget}
+              onInitialConsumed={() => {
+                setNgoReturnTab(null);
+                setNgoChatTarget(null);
+              }}
             />
           )}
- 
+
+          {page === "event-volunteers" && selectedEvent && dashboardEmail && (
+            <EventVolunteers
+              event={selectedEvent}
+              ngoEmail={dashboardEmail}
+              showToast={showToast}
+              onBack={() => {
+                setNgoReturnTab("events");
+                setPage("ngo-dashboard");
+              }}
+              onConnect={(target) => {
+                setNgoChatTarget(target);
+                setPage("ngo-dashboard");
+              }}
+            />
+          )}
+
           {page === "volunteer" && (
             <VolunteerForm showToast={showToast} />
           )} 

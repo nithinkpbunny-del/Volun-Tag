@@ -1,0 +1,165 @@
+/* ─── Event volunteers screen ────────────────────────────────────── */
+
+.ev-vol-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  color: var(--ink, #1f2f3d);
+}
+
+.ev-vol-back-btn {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--sage, #2d7a5e);
+  background: none;
+  border: none;
+  padding: 0.25rem 0;
+  cursor: pointer;
+}
+
+.ev-vol-back-btn:hover {
+  text-decoration: underline;
+}
+
+.ev-vol-header {
+  margin: 0.9rem 0 1.25rem;
+}
+
+.ev-vol-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.ev-vol-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--ink, #1f2f3d);
+  overflow-wrap: anywhere;
+}
+
+.ev-vol-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 100px;
+  color: var(--ink-soft, #667085);
+  background: #eef2f1;
+}
+
+.ev-vol-count {
+  margin: 0.4rem 0 0;
+  font-size: 0.88rem;
+  color: var(--ink-soft, #667085);
+}
+
+.ev-vol-message {
+  font-size: 0.9rem;
+  color: var(--ink-soft, #667085);
+}
+
+.ev-vol-error {
+  color: #c0392b;
+}
+
+.ev-vol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ev-vol-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 0.9rem 1rem;
+  background: #ffffff;
+  border: 1px solid var(--border, #dde5e2);
+  border-radius: 12px;
+}
+
+.ev-vol-avatar {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e6f4ef;
+  color: var(--sage, #2d7a5e);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.ev-vol-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ev-vol-name {
+  margin: 0 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink, #1f2f3d);
+}
+
+.ev-vol-meta {
+  margin: 0.1rem 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft, #667085);
+  overflow-wrap: anywhere;
+}
+
+.ev-vol-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.4rem 0;
+}
+
+.ev-vol-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  border-radius: 100px;
+  color: var(--sage, #2d7a5e);
+  background: #e6f4ef;
+}
+
+.ev-vol-connect-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--sage, #2d7a5e);
+  border: 1px solid var(--sage, #2d7a5e);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.ev-vol-connect-btn:hover {
+  opacity: 0.9;
+}
+
+@media (max-width: 520px) {
+  .ev-vol-card {
+    flex-wrap: wrap;
+  }
+
+  .ev-vol-info {
+    flex-basis: calc(100% - 44px - 0.9rem);
+  }
+
+  .ev-vol-connect-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
