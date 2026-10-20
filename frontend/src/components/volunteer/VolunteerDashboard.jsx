@@ -206,6 +206,32 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     matches.map((m) => [m.ngo_name, m])
   );
 
+  const eventNgoGroups = (() => {
+    const groups = new Map();
+    events.forEach((ev) => {
+      if (!groups.has(ev.ngo_name)) {
+        groups.set(ev.ngo_name, {
+          ngo_name: ev.ngo_name,
+          ngo_category: ev.ngo_category,
+          ngo_location: ev.ngo_location,
+          ngo_email: ev.ngo_email,
+          bestMatch: ev.match_percentage,
+          events: [],
+        });
+      }
+      const group = groups.get(ev.ngo_name);
+      group.events.push(ev);
+      if (ev.match_percentage > group.bestMatch) {
+        group.bestMatch = ev.match_percentage;
+      }
+    });
+    return Array.from(groups.values()).sort(
+      (a, b) => b.bestMatch - a.bestMatch
+    );
+  })();
+
+  const eventNgoNames = new Set(eventNgoGroups.map((g) => g.ngo_name));
+
   const locations = Array.from(
     new Set(ngos.map((n) => n.location).filter(Boolean))
   ).sort();
@@ -216,6 +242,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     )
     .filter((n) => !locationFilter || n.location === locationFilter)
     .filter((n) => !sectorFilter || n.category === sectorFilter)
+    .filter((n) => !eventNgoNames.has(n.name))
     .sort((a, b) => a.name.localeCompare(b.name));
 
 
@@ -394,6 +421,81 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                     ))}
                   </select>
                 </div>
+
+                {eventNgoGroups.length > 0 && (
+                  <>
+                    <div className="dashboard-section-header">
+                      <span className="dashboard-section-title">
+                        NGOs with active events
+                      </span>
+                      <span className="dashboard-section-sub">
+                        {eventNgoGroups.length} matching your skills
+                      </span>
+                    </div>
+
+                    <div className="dashboard-ngo-list">
+                      {eventNgoGroups.map((group) => (
+                        <div
+                          className="dashboard-ngo-row"
+                          key={`event-${group.ngo_name}`}
+                        >
+                          <div className="dashboard-ngo-row-main">
+                            <div className="dashboard-ngo-info">
+                              <p className="dashboard-ngo-name">
+                                {group.ngo_name}
+                              </p>
+                              <p className="dashboard-ngo-meta">
+                                {group.ngo_category || "Uncategorized"} ·{" "}
+                                {group.ngo_location || "—"}
+                              </p>
+                            </div>
+
+                            <div className="dashboard-ngo-actions">
+                              <span className="dashboard-match-badge">
+                                {group.bestMatch}% match
+                              </span>
+
+                              <button
+                                type="button"
+                                className="dashboard-connect-btn"
+                                disabled={!group.ngo_email}
+                                title={
+                                  !group.ngo_email
+                                    ? "This NGO has no contact email"
+                                    : `Connect with ${group.ngo_name}`
+                                }
+                                onClick={() => {
+                                  if (!group.ngo_email) return;
+                                  setChatTarget({
+                                    email: group.ngo_email,
+                                    name: group.ngo_name,
+                                  });
+                                  setActiveTab("messages");
+                                }}
+                              >
+                                <svg
+                                  className="dashboard-chat-icon"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
+                                Connect
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
 
                 <div className="dashboard-section-header">
                   <span className="dashboard-section-title">NGOs on VolunTag</span>
