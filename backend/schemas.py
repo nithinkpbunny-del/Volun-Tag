@@ -199,6 +199,26 @@ class NGOEventsResponse(BaseModel):
     events: list[EventResponse]
 
 
+class EventVolunteerEntry(BaseModel):
+    volunteer_id: int
+    name: str
+    email: str
+    skills: Optional[str]
+    experience: Optional[str]
+    location: Optional[str]
+    events_attended: int
+    joined_at: datetime
+
+
+class EventVolunteersResponse(BaseModel):
+    event_id: int
+    title: str
+    status: str
+    spots_available: Optional[int]
+    joined_count: int
+    volunteers: list[EventVolunteerEntry]
+
+
 class NGOIssueEntry(BaseModel):
     complaint_id: str
     location: str

@@ -32,6 +32,7 @@ try:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        EventVolunteerEntry, EventVolunteersResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
         VolunteerEventEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
@@ -57,6 +58,7 @@ except ImportError:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        EventVolunteerEntry, EventVolunteersResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
         VolunteerEventEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
@@ -924,6 +926,77 @@ def get_ngo_events(
         ngo_name=ngo.name,
         total_events=len(events),
         events=event_responses,
+    )
+
+
+# ─── Event Volunteers (joined list for an NGO's event) ─────────────
+@app.get(
+    "/event-volunteers/{event_id}",
+    response_model=EventVolunteersResponse,
+)
+def get_event_volunteers(
+    event_id: int,
+    ngo_email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    ngo = db.query(NGODB).filter(
+        NGODB.id == event.ngo_id,
+    ).first()
+
+    # Email-only ownership check; real authentication is on the roadmap.
+    if (
+        not ngo
+        or not ngo.email
+        or ngo.email.strip().lower() != ngo_email.strip().lower()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This event does not belong to your NGO",
+        )
+
+    rows = (
+        db.query(ActivitySignupDB, VolunteerDB)
+        .join(
+            VolunteerDB,
+            ActivitySignupDB.volunteer_id == VolunteerDB.id,
+        )
+        .filter(ActivitySignupDB.activity_id == event.id)
+        .order_by(ActivitySignupDB.created_at.asc())
+        .all()
+    )
+
+    volunteers = [
+        EventVolunteerEntry(
+            volunteer_id=vol.id,
+            name=vol.name,
+            email=vol.email,
+            skills=vol.skills,
+            experience=vol.experience,
+            location=vol.location,
+            # Attendance tracking is not built yet.
+            events_attended=0,
+            joined_at=signup.created_at,
+        )
+        for signup, vol in rows
+    ]
+
+    return EventVolunteersResponse(
+        event_id=event.id,
+        title=event.title,
+        status=event.status,
+        spots_available=event.spots_available,
+        joined_count=len(volunteers),
+        volunteers=volunteers,
     )
 
 
@@ -1864,6 +1937,26 @@ def _ngo_may_message_volunteer(
         for entry in recs:
             if isinstance(entry, dict) and entry.get("ngo") == ngo.name:
                 return True
+
+    # Check 3: volunteer signed up for any of this NGO's activities
+    signed_up = (
+        db.query(ActivitySignupDB.id)
+        .join(
+            ActivityDB,
+            ActivitySignupDB.activity_id == ActivityDB.id,
+        )
+        .join(
+            VolunteerDB,
+            ActivitySignupDB.volunteer_id == VolunteerDB.id,
+        )
+        .filter(
+            ActivityDB.ngo_id == ngo.id,
+            func.lower(VolunteerDB.email) == vol_lower,
+        )
+        .first()
+    )
+    if signed_up:
+        return True
 
     return False
 
