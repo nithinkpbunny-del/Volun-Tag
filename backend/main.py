@@ -37,7 +37,7 @@ try:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, model
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
@@ -62,7 +62,7 @@ except ImportError:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, model
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 
 
@@ -1294,7 +1294,12 @@ def get_volunteer_matches(
             ngo.category or "",
         )
 
-        final_score = min(score + boost, 1.0)
+        location_boost = compute_location_boost(
+            volunteer.location or "",
+            ngo.location or "",
+        )
+
+        final_score = min(score + boost + location_boost, 1.0)
 
         matches.append(
             VolunteerMatchEntry(
@@ -1305,6 +1310,7 @@ def get_volunteer_matches(
                 match_percentage=round(
                     final_score * 100, 1
                 ),
+                level=compute_match_level(final_score, boost),
             )
         )
 
@@ -1395,7 +1401,12 @@ def get_volunteer_events(
             ngo.category or "",
         )
 
-        final_score = min(score + boost, 1.0)
+        location_boost = compute_location_boost(
+            volunteer.location or "",
+            ngo.location or "",
+        )
+
+        final_score = min(score + boost + location_boost, 1.0)
 
         if final_score < MIN_EVENT_MATCH:
             continue

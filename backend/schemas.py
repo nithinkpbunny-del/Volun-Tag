@@ -225,6 +225,7 @@ class VolunteerMatchEntry(BaseModel):
     ngo_location: Optional[str]
     event_title: Optional[str]
     match_percentage: Optional[float]
+    level: Optional[str] = None
 
 
 class VolunteerMatchesResponse(BaseModel):
