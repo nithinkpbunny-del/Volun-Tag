@@ -1353,6 +1353,8 @@ def get_volunteer_matches(
             .filter(
                 ActivityDB.ngo_id == ngo.id,
                 ActivityDB.status == "Active",
+                (ActivityDB.event_date.is_(None))
+                | (ActivityDB.event_date > datetime.utcnow()),
             )
             .order_by(
                 ActivityDB.created_at.desc()
