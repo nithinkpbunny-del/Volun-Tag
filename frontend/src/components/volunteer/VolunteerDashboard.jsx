@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Messages from "../messaging/Messages";
 import "./VolunteerDashboard.css";
 
@@ -17,6 +17,8 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   const [matches, setMatches] = useState([]);
   const [chatTarget, setChatTarget] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [events, setEvents] = useState([]);
+  const [joiningId, setJoiningId] = useState(null);
 
   useEffect(() => {
     if (!email || activeTab === "messages") {
@@ -57,6 +59,38 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       clearInterval(intervalId);
     };
   }, [email, activeTab]);
+
+  const loadEvents = useCallback(async () => {
+    if (!email) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/volunteer-events/${encodeURIComponent(email)}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setEvents(data);
+      }
+    } catch {
+      // ignore errors silently so polling never shows a toast
+    }
+  }, [email]);
+
+  useEffect(() => {
+    if (!email) {
+      return;
+    }
+
+    loadEvents();
+    const eventsIntervalId = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      loadEvents();
+    }, 10000);
+
+    return () => {
+      clearInterval(eventsIntervalId);
+    };
+  }, [email, loadEvents]);
 
   useEffect(() => {
     if (!email) {
