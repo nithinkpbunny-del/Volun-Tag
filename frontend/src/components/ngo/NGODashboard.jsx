@@ -12,7 +12,7 @@ const EMPTY_EVENT = {
   spots_available: "",
 };
 
-export default function NGODashboard({ email, showToast, setPage }) {
+export default function NGODashboard({ email, showToast, setPage, onViewVolunteers }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [activeTab, setActiveTab] = useState("profile");
@@ -176,6 +176,43 @@ export default function NGODashboard({ email, showToast, setPage }) {
     };
   }, [email]);
 
+  // Silent refresh so joined counts stay live (no loading flicker, no toasts).
+  // editingEventId is a dependency so the tick can skip while the Edit form is open.
+  useEffect(() => {
+    if (!email) return;
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      if (editingEventId !== null) return;
+      if (document.visibilityState === "hidden") return;
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/ngo-events/${encodeURIComponent(email)}?include_cancelled=true`
+        );
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        if (!cancelled) {
+          setEvents(data.events || []);
+          setTotalEvents(data.total_events ?? 0);
+        }
+      } catch {
+        // silent
+      }
+    };
+
+    const timer = setInterval(refresh, 10000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [email, editingEventId]);
+
   // ── Fetch reported problems ─────────────────────────────────────
   useEffect(() => {
     if (!email) return;
@@ -316,6 +353,32 @@ export default function NGODashboard({ email, showToast, setPage }) {
       await fetchEvents();
     } catch (err) {
       showToast(err.message || "Failed to cancel event", "error");
+    }
+  };
+
+  // ── Mark event filled / reopen event ────────────────────────────
+  const handleSetEventStatus = async (eventId, status, successMessage) => {
+    try {
+      const res = await fetch(`${API_BASE}/event-status/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof err.detail === "string" && err.detail
+            ? err.detail
+            : "Could not update the event"
+        );
+      }
+
+      showToast(successMessage, "success");
+      // PATCH replies carry no correct joined_count, so always refetch.
+      await fetchEvents();
+    } catch (err) {
+      showToast(err.message || "Could not update the event", "error");
     }
   };
 
@@ -753,9 +816,15 @@ export default function NGODashboard({ email, showToast, setPage }) {
                               <strong>Spots Available:</strong>{" "}
                               {ev.spots_available ?? "Unlimited"}
                             </p>
+                            <p>
+                              <strong>Volunteers joined:</strong>{" "}
+                              {ev.spots_available != null
+                                ? `${ev.joined_count} of ${ev.spots_available}`
+                                : ev.joined_count}
+                            </p>
 
-                            {ev.status === "Active" && (
-                              <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+                            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+                              {ev.status === "Active" && (
                                 <button
                                   type="button"
                                   className="dashboard-view-btn"
@@ -772,6 +841,31 @@ export default function NGODashboard({ email, showToast, setPage }) {
                                 >
                                   Edit
                                 </button>
+                              )}
+                              {ev.status === "Active" && (
+                                <button
+                                  type="button"
+                                  className="dashboard-view-btn"
+                                  disabled={
+                                    ev.spots_available == null ||
+                                    ev.joined_count < ev.spots_available
+                                  }
+                                  title={
+                                    ev.spots_available == null ||
+                                    ev.joined_count < ev.spots_available
+                                      ? "Waiting for more volunteers to join"
+                                      : undefined
+                                  }
+                                  onClick={() => {
+                                    if (window.confirm("Stop showing this event to volunteers?")) {
+                                      handleSetEventStatus(ev.id, "Filled", "Event marked as filled");
+                                    }
+                                  }}
+                                >
+                                  Volunteers filled
+                                </button>
+                              )}
+                              {ev.status === "Active" && (
                                 <button
                                   type="button"
                                   className="ngo-cancel-event-btn"
@@ -779,8 +873,24 @@ export default function NGODashboard({ email, showToast, setPage }) {
                                 >
                                   Cancel event
                                 </button>
-                              </div>
-                            )}
+                              )}
+                              {ev.status === "Filled" && (
+                                <button
+                                  type="button"
+                                  className="dashboard-view-btn"
+                                  onClick={() => handleSetEventStatus(ev.id, "Active", "Event reopened")}
+                                >
+                                  Reopen
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="dashboard-view-btn"
+                                onClick={() => onViewVolunteers && onViewVolunteers(ev)}
+                              >
+                                View joined volunteers
+                              </button>
+                            </div>
                           </>
                         )}
                       </div>

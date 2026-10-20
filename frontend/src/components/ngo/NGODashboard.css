@@ -144,6 +144,11 @@
   color: #2d7a5e;
 }
 
+.status-filled {
+  background: #e8f1fb;
+  color: #2563a8;
+}
+
 .status-cancelled {
   background: #fdecea;
   color: #c0392b;
@@ -314,3 +319,12 @@
   margin-top: 0.75rem;
 }
 
+
+.dashboard-view-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dashboard-view-btn:disabled:hover {
+  border-color: var(--border);
+}
