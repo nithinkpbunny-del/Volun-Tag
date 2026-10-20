@@ -232,6 +232,40 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
 
   const eventNgoNames = new Set(eventNgoGroups.map((g) => g.ngo_name));
 
+  const joinActivity = async (ev) => {
+    if (joiningId !== null || ev.joined) return;
+    setJoiningId(ev.activity_id);
+    try {
+      const res = await fetch(
+        `${API_BASE}/activities/${ev.activity_id}/join`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ volunteer_email: email }),
+        }
+      );
+      if (res.ok) {
+        showToast(`You joined ${ev.title}`);
+        await loadEvents();
+      } else {
+        let message = "Could not join this activity";
+        try {
+          const data = await res.json();
+          if (data && typeof data.detail === "string") {
+            message = data.detail;
+          }
+        } catch {
+          // keep the default message
+        }
+        showToast(message);
+      }
+    } catch {
+      showToast("Could not join this activity");
+    } finally {
+      setJoiningId(null);
+    }
+  };
+
   const locations = Array.from(
     new Set(ngos.map((n) => n.location).filter(Boolean))
   ).sort();
@@ -490,6 +524,55 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                                 Connect
                               </button>
                             </div>
+                          </div>
+
+                          <div className="dashboard-event-list">
+                            {group.events.map((ev) => (
+                              <div
+                                className="dashboard-event-item"
+                                key={ev.activity_id}
+                              >
+                                <div className="dashboard-event-info">
+                                  <p className="dashboard-event-title">
+                                    {ev.title}
+                                  </p>
+                                  <p className="dashboard-event-meta">
+                                    {ev.event_date
+                                      ? new Date(ev.event_date).toLocaleDateString(
+                                          "en-IN",
+                                          {
+                                            day: "numeric",
+                                            month: "short",
+                                            year: "numeric",
+                                          }
+                                        )
+                                      : "Date to be announced"}
+                                    {ev.location ? ` · ${ev.location}` : ""}
+                                  </p>
+                                  {ev.description && (
+                                    <p className="dashboard-event-desc">
+                                      {ev.description}
+                                    </p>
+                                  )}
+                                  <p className="dashboard-event-skills">
+                                    Skills: {ev.required_skills}
+                                  </p>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  className="dashboard-join-btn"
+                                  disabled={ev.joined || joiningId !== null}
+                                  onClick={() => joinActivity(ev)}
+                                >
+                                  {ev.joined
+                                    ? "Joined"
+                                    : joiningId === ev.activity_id
+                                    ? "Joining..."
+                                    : "Join activity"}
+                                </button>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       ))}
