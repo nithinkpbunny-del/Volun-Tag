@@ -898,10 +898,32 @@ def get_ngo_events(
         .all()
     )
 
+    joined_counts: dict[int, int] = {}
+    if events:
+        joined_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
+
+    event_responses = []
+    for ev in events:
+        item = EventResponse.model_validate(ev)
+        item.joined_count = joined_counts.get(ev.id, 0)
+        event_responses.append(item)
+
     return NGOEventsResponse(
         ngo_name=ngo.name,
         total_events=len(events),
-        events=events,
+        events=event_responses,
     )
 
 
@@ -987,6 +1009,32 @@ def update_event_status(
             status_code=404,
             detail=f"Event '{event_id}' not found",
         )
+
+    if status_update.status == "Filled":
+        if event.status != "Active":
+            raise HTTPException(
+                status_code=400,
+                detail="Only an active event can be marked as filled",
+            )
+
+        if event.spots_available is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Set the number of volunteers needed "
+                    "before marking the event as filled"
+                ),
+            )
+
+        joined = db.query(func.count(ActivitySignupDB.id)).filter(
+            ActivitySignupDB.activity_id == event.id,
+        ).scalar()
+
+        if joined < event.spots_available:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough volunteers have joined yet",
+            )
 
     event.status = status_update.status
     db.commit()
@@ -1467,6 +1515,12 @@ def join_activity(
         raise HTTPException(
             status_code=404,
             detail=f"Activity {activity_id} not found",
+        )
+
+    if activity.status == "Filled":
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is already full",
         )
 
     if activity.status != "Active":

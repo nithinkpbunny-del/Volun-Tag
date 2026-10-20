@@ -177,10 +177,11 @@ class EventResponse(BaseModel):
     spots_available: Optional[int]
     created_at: datetime
     status: str
+    joined_count: int = 0
 
 
 class EventStatusUpdate(BaseModel):
-    status: Literal["Active", "Cancelled"]
+    status: Literal["Active", "Cancelled", "Filled"]
 
 
 class EventUpdate(BaseModel):
