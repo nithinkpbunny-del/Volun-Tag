@@ -4,6 +4,14 @@ import "./VolunteerDashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
+const MATCH_HIGH_MIN = 45;
+const MATCH_MEDIUM_MIN = 30;
+
+const matchLevel = (percentage) => {
+  if (percentage >= MATCH_HIGH_MIN) return "high";
+  if (percentage >= MATCH_MEDIUM_MIN) return "medium";
+  return "low";
+};
 
 export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem }) {
   const [profile, setProfile] = useState(null);
@@ -185,16 +193,6 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     .filter((n) => !sectorFilter || n.category === sectorFilter)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const urgencyClass = (urgency) => {
-    if (urgency === "high") return "dashboard-urgency-badge urgency-high";
-    if (urgency === "low") return "dashboard-urgency-badge urgency-low";
-    return "dashboard-urgency-badge urgency-medium";
-  };
-
-  const urgencyLabel = (urgency) => {
-    if (!urgency) return "Medium";
-    return urgency.charAt(0).toUpperCase() + urgency.slice(1);
-  };
 
   const initials = (name) =>
     name
@@ -403,9 +401,23 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                           </div>
 
                           <div className="dashboard-ngo-actions">
-                            <span className={urgencyClass(ngo.urgency)}>
-                              {urgencyLabel(ngo.urgency)}
-                            </span>
+                            {matchMap.has(ngo.name) && (
+                              <span
+                                className={`dashboard-level-badge level-${matchLevel(
+                                  matchMap.get(ngo.name).match_percentage
+                                )}`}
+                              >
+                                {matchLevel(
+                                  matchMap.get(ngo.name).match_percentage
+                                ) === "high"
+                                  ? "High"
+                                  : matchLevel(
+                                      matchMap.get(ngo.name).match_percentage
+                                    ) === "medium"
+                                  ? "Medium"
+                                  : "Low"}
+                              </span>
+                            )}
 
                             {matchMap.has(ngo.name) && (
                               <span className="dashboard-match-badge">

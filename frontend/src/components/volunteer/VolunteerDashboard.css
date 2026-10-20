@@ -221,26 +221,26 @@
   flex-shrink: 0;
 }
 
-.dashboard-urgency-badge {
+.dashboard-level-badge {
   font-size: 0.72rem;
   font-weight: 600;
   padding: 0.25rem 0.65rem;
   border-radius: 100px;
 }
 
-.urgency-high {
-  background: #fdecea;
-  color: #c0392b;
+.level-high {
+  background: #e6f4ef;
+  color: #2d7a5e;
 }
 
-.urgency-medium {
+.level-medium {
   background: #fef7e6;
   color: #9a6d1a;
 }
 
-.urgency-low {
-  background: #e6f4ef;
-  color: #2d7a5e;
+.level-low {
+  background: #fdecea;
+  color: #c0392b;
 }
 
 .dashboard-match-badge {
