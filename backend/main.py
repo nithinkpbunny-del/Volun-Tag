@@ -1628,6 +1628,65 @@ def join_activity(
     return JoinResponse(joined=True, activity_id=activity_id)
 
 
+# ─── Leave Activity ────────────────────────────────────────────────
+@app.delete(
+    "/activities/{activity_id}/join",
+    response_model=JoinResponse,
+)
+def leave_activity(
+    activity_id: int,
+    volunteer_email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Let a volunteer withdraw their signup from an activity."""
+
+    # The email is trusted from the request; real authentication is on the roadmap.
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == volunteer_email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{volunteer_email}'",
+        )
+
+    activity = db.query(ActivityDB).filter(
+        ActivityDB.id == activity_id,
+    ).first()
+
+    if not activity:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Activity {activity_id} not found",
+        )
+
+    if activity.event_date and activity.event_date <= datetime.utcnow():
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == activity_id,
+        ActivitySignupDB.volunteer_id == volunteer.id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="You have not joined this activity",
+        )
+
+    # The activity's status is intentionally left untouched: a Filled
+    # event stays Filled and the NGO reopens it manually.
+    db.delete(signup)
+    db.commit()
+
+    return JoinResponse(joined=False, activity_id=activity_id)
+
+
 # ─── Volunteer ↔ NGO Matching ─────────────────────────────────────
 @app.get("/match")
 def match_volunteers(
@@ -2002,7 +2061,7 @@ def _validate_pair(
                 status_code=403,
                 detail=(
                     "NGOs can only message volunteers who have "
-                    "messaged them or reported a problem matched to them."
+                    "messaged them, joined one of their events, or reported a problem matched to them."
                 ),
             )
 
@@ -2042,7 +2101,7 @@ def send_message(
                 status_code=403,
                 detail=(
                     "NGOs can only message volunteers who have "
-                    "messaged them or reported a problem matched to them."
+                    "messaged them, joined one of their events, or reported a problem matched to them."
                 ),
             )
 
