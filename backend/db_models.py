@@ -45,7 +45,6 @@ class NGODB(Base):
     name = Column(String, unique=True, nullable=False)
     category = Column(String, nullable=True)
     location = Column(String, nullable=True)
-    urgency = Column(String, nullable=True, default="medium")
 
     # ── NGO account / registration details ─────────────────────────
     email = Column(String, unique=True, nullable=True)

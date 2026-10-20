@@ -1085,7 +1085,6 @@ def get_ngos(
             "motto": n.motto,
             "category": n.category,
             "location": n.location,
-            "urgency": n.urgency,
             "verification_status": (
                 n.verification_status
             ),

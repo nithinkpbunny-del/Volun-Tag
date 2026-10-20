@@ -25,7 +25,6 @@ class NGO(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     category: Optional[str] = ""
     location: Optional[str] = ""
-    urgency: Optional[str] = "medium"
     motto: str = Field(..., min_length=1)
     legal_structure: str = Field(..., min_length=1)
 
@@ -147,7 +146,6 @@ class NGODashboardResponse(BaseModel):
     contact_number: Optional[str]
     category: Optional[str]
     location: Optional[str]
-    urgency: Optional[str]
     year_founded: Optional[int]
     website_url: Optional[str]
     motto: Optional[str]
