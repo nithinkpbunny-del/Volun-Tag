@@ -4,15 +4,6 @@ import "./VolunteerDashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
-const MATCH_HIGH_MIN = 45;
-const MATCH_MEDIUM_MIN = 30;
-
-const matchLevel = (percentage) => {
-  if (percentage >= MATCH_HIGH_MIN) return "high";
-  if (percentage >= MATCH_MEDIUM_MIN) return "medium";
-  return "low";
-};
-
 export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -401,27 +392,26 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                           </div>
 
                           <div className="dashboard-ngo-actions">
-                            {matchMap.has(ngo.name) && (
-                              <span
-                                className={`dashboard-level-badge level-${matchLevel(
-                                  matchMap.get(ngo.name).match_percentage
-                                )}`}
-                              >
-                                {matchLevel(
-                                  matchMap.get(ngo.name).match_percentage
-                                ) === "high"
-                                  ? "High"
-                                  : matchLevel(
-                                      matchMap.get(ngo.name).match_percentage
-                                    ) === "medium"
-                                  ? "Medium"
-                                  : "Low"}
-                              </span>
-                            )}
+                            {matchMap.has(ngo.name) &&
+                              matchMap.get(ngo.name).level && (
+                                <span
+                                  className={`dashboard-level-badge level-${
+                                    matchMap.get(ngo.name).level
+                                  }`}
+                                >
+                                  {matchMap.get(ngo.name).level === "high"
+                                    ? "High"
+                                    : matchMap.get(ngo.name).level === "medium"
+                                    ? "Medium"
+                                    : "Low"}
+                                </span>
+                              )}
 
                             {matchMap.has(ngo.name) && (
                               <span className="dashboard-match-badge">
-                                {matchMap.get(ngo.name).event_title} ·{" "}
+                                {matchMap.get(ngo.name).event_title
+                                  ? `${matchMap.get(ngo.name).event_title} · `
+                                  : ""}
                                 {matchMap.get(ngo.name).match_percentage}% match
                               </span>
                             )}
