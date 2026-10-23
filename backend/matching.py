@@ -27,8 +27,6 @@ CATEGORY_KEYWORDS = {
         "nursing",
         "health",
         "wellness",
-        "therapy",
-        "first aid",
         "mental health",
         "counseling",
         "healthcare",
