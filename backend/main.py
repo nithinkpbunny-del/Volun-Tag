@@ -93,7 +93,7 @@ ALLOWED_DOCUMENT_TYPES = {
 MAX_IMAGES = 6
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB per file
 
-MIN_EVENT_MATCH = 0.30  # minimum cosine score to include an event
+MIN_EVENT_MATCH = 0.45  # minimum final score for an event to be shown
 
 
 app = FastAPI(
@@ -1531,7 +1531,8 @@ def get_volunteer_events(
 
         final_score = min(score + boost + location_boost, 1.0)
 
-        if final_score < MIN_EVENT_MATCH:
+        # An event is shown only when the score is high enough AND the volunteer's skills hit a keyword of the NGO's category.
+        if final_score < MIN_EVENT_MATCH or boost <= 0:
             continue
 
         results.append(
