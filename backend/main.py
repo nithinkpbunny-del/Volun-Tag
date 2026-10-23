@@ -1422,7 +1422,7 @@ def get_volunteer_matches(
             ngo.location or "",
         )
 
-        final_score = min(score + boost + location_boost, 1.0)
+        final_score = max(0.0, min(score + boost + location_boost, 1.0))
 
         matches.append(
             VolunteerMatchEntry(
@@ -1529,7 +1529,7 @@ def get_volunteer_events(
             ngo.location or "",
         )
 
-        final_score = min(score + boost + location_boost, 1.0)
+        final_score = max(0.0, min(score + boost + location_boost, 1.0))
 
         # An event is shown only when the score is high enough AND the volunteer's skills hit a keyword of the NGO's category.
         if final_score < MIN_EVENT_MATCH or boost <= 0:
