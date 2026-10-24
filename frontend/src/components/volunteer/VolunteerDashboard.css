@@ -609,3 +609,98 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.dashboard-approved-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+}
+
+/* ─── My Activity tab ─────────────────────────────────────────────── */
+
+.dashboard-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dashboard-activity-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  background: #ffffff;
+  border: 1px solid var(--border, #dde5e2);
+  border-radius: 12px;
+}
+
+.dashboard-activity-info {
+  min-width: 0;
+}
+
+.dashboard-activity-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.dashboard-activity-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.dashboard-activity-pill.activity-waiting-for-approval {
+  color: #a16207;
+  background: #fef9c3;
+}
+
+.dashboard-activity-pill.activity-approved {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.dashboard-activity-pill.activity-awaiting-ngo-feedback {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.dashboard-activity-pill.activity-attended {
+  color: #ffffff;
+  background: #166534;
+}
+
+.dashboard-activity-pill.activity-not-selected {
+  color: #4b5563;
+  background: #e5e7eb;
+}
+
+.dashboard-activity-pill.activity-cancelled {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.dashboard-activity-msg-btn {
+  margin-top: 0;
+  width: auto;
+}
+
+@media (max-width: 600px) {
+  .dashboard-activity-item {
+    flex-direction: column;
+  }
+
+  .dashboard-activity-side {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+}

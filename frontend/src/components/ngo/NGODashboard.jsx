@@ -836,9 +836,13 @@ export default function NGODashboard({
                             </p>
                             <p>
                               <strong>Volunteers joined:</strong>{" "}
+                              {ev.joined_count}
+                            </p>
+                            <p>
+                              <strong>Volunteers approved:</strong>{" "}
                               {ev.spots_available != null
-                                ? `${ev.joined_count} of ${ev.spots_available}`
-                                : ev.joined_count}
+                                ? `${ev.approved_count} of ${ev.spots_available}`
+                                : ev.approved_count}
                             </p>
 
                             <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
@@ -866,12 +870,12 @@ export default function NGODashboard({
                                   className="dashboard-view-btn"
                                   disabled={
                                     ev.spots_available == null ||
-                                    ev.joined_count < ev.spots_available
+                                    ev.approved_count < ev.spots_available
                                   }
                                   title={
                                     ev.spots_available == null ||
-                                    ev.joined_count < ev.spots_available
-                                      ? "Waiting for more volunteers to join"
+                                    ev.approved_count < ev.spots_available
+                                      ? "Waiting for more volunteers to be approved"
                                       : undefined
                                   }
                                   onClick={() => {
@@ -906,7 +910,7 @@ export default function NGODashboard({
                                 className="dashboard-view-btn"
                                 onClick={() => onViewVolunteers && onViewVolunteers(ev)}
                               >
-                                View joined volunteers
+                                Manage volunteers
                               </button>
                             </div>
                           </>

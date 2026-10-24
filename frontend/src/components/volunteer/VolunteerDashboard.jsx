@@ -19,6 +19,8 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   const [unreadCount, setUnreadCount] = useState(0);
   const [events, setEvents] = useState([]);
   const [joiningId, setJoiningId] = useState(null);
+  const [activityItems, setActivityItems] = useState([]);
+  const [loadingActivity, setLoadingActivity] = useState(true);
 
   useEffect(() => {
     if (!email || activeTab === "messages") {
@@ -91,6 +93,42 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       clearInterval(eventsIntervalId);
     };
   }, [email, loadEvents]);
+
+  useEffect(() => {
+    if (!email || activeTab !== "activity") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchActivity = async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/volunteer-activity/${encodeURIComponent(email)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) {
+          setActivityItems(data);
+        }
+      } catch {
+        // ignore errors silently so polling never shows a toast
+      } finally {
+        if (!cancelled) setLoadingActivity(false);
+      }
+    };
+
+    fetchActivity();
+    const activityIntervalId = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      fetchActivity();
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(activityIntervalId);
+    };
+  }, [email, activeTab]);
 
   useEffect(() => {
     if (!email) {
@@ -409,11 +447,62 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
         )}
 
         {activeTab === "activity" && (
-          <div className="dashboard-placeholder-card">
-            <p className="dashboard-placeholder-title">My Activity</p>
-            <p className="dashboard-placeholder-text">
-              Your activity will appear here soon.
-            </p>
+          <div className="dashboard-activity-list">
+            {loadingActivity && (
+              <p className="dashboard-placeholder-text">Loading your activity...</p>
+            )}
+
+            {!loadingActivity && activityItems.length === 0 && (
+              <p className="dashboard-placeholder-text">
+                You haven't joined any events yet.
+              </p>
+            )}
+
+            {!loadingActivity &&
+              activityItems.map((item) => (
+                <div className="dashboard-activity-item" key={item.activity_id}>
+                  <div className="dashboard-activity-info">
+                    <p className="dashboard-event-title">{item.title}</p>
+                    <p className="dashboard-event-meta">{item.ngo_name}</p>
+                    <p className="dashboard-event-meta">
+                      {item.event_date
+                        ? new Date(item.event_date).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : "Date to be announced"}
+                      {item.location ? ` · ${item.location}` : ""}
+                    </p>
+                  </div>
+
+                  <div className="dashboard-activity-side">
+                    <span
+                      className={`dashboard-activity-pill activity-${item.status_label
+                        .toLowerCase()
+                        .replace(/ /g, "-")}`}
+                    >
+                      {item.status_label}
+                    </span>
+
+                    {item.ngo_email && (
+                      <button
+                        type="button"
+                        className="dashboard-sidebar-msg-btn dashboard-activity-msg-btn"
+                        onClick={() => {
+                          setChatTarget({
+                            email: item.ngo_email,
+                            name: item.ngo_name,
+                          });
+                          setActiveTab("messages");
+                        }}
+                      >
+                        Message NGO
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
           </div>
         )}
 
@@ -590,7 +679,14 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                                   </p>
                                 </div>
 
-                                {ev.joined && (
+                                {ev.approved && (
+                                  <div className="dashboard-event-actions">
+                                    <span className="dashboard-approved-label">
+                                      Approved
+                                    </span>
+                                  </div>
+                                )}
+                                {ev.joined && !ev.approved && (
                                   <div className="dashboard-event-actions">
                                     <span className="dashboard-joined-label">
                                       Joined
