@@ -23,6 +23,7 @@ import numpy as np
 try:
     from .database import Base, SessionLocal, engine, get_db
     from .db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from .embedding_store import get_vectors, refresh_vector
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -44,11 +45,12 @@ try:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, encode_texts
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
     from db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from embedding_store import get_vectors, refresh_vector
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -70,7 +72,7 @@ except ImportError:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, encode_texts
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 
 
@@ -485,25 +487,37 @@ def add_volunteer(
                 ),
             )
 
-    db.add(
-        VolunteerDB(
-            name=volunteer.name,
-            email=volunteer.email or None,
-            contact_number=(
-                volunteer.contact_number or None
-            ),
-            password=volunteer.password or None,
-            age=volunteer.age,
-            designation=volunteer.designation or None,
-            gender=volunteer.gender or None,
-            skills=volunteer.skills or None,
-            location=volunteer.location or None,
-            availability=volunteer.availability or None,
-            experience=volunteer.experience or None,
-        )
+    new_volunteer = VolunteerDB(
+        name=volunteer.name,
+        email=volunteer.email or None,
+        contact_number=(
+            volunteer.contact_number or None
+        ),
+        password=volunteer.password or None,
+        age=volunteer.age,
+        designation=volunteer.designation or None,
+        gender=volunteer.gender or None,
+        skills=volunteer.skills or None,
+        location=volunteer.location or None,
+        availability=volunteer.availability or None,
+        experience=volunteer.experience or None,
     )
 
+    db.add(new_volunteer)
+
     db.commit()
+
+    # Pre-compute the skills vector so the first dashboard load is fast.
+    if new_volunteer.skills:
+        try:
+            refresh_vector(
+                db,
+                "volunteer_skills",
+                new_volunteer.id,
+                new_volunteer.skills,
+            )
+        except Exception:
+            logger.exception("Could not store volunteer skills embedding")
 
     total_volunteers = db.query(
         func.count(VolunteerDB.id)
@@ -867,6 +881,17 @@ def organize_event(
     db.commit()
     db.refresh(activity)
 
+    if activity.required_skills and activity.required_skills.strip():
+        try:
+            refresh_vector(
+                db,
+                "event_skills",
+                activity.id,
+                activity.required_skills.strip(),
+            )
+        except Exception:
+            logger.exception("Could not store event skills embedding")
+
     return activity
 
 
@@ -1145,6 +1170,17 @@ def update_event(
     db.commit()
     db.refresh(event)
 
+    if event.required_skills and event.required_skills.strip():
+        try:
+            refresh_vector(
+                db,
+                "event_skills",
+                event.id,
+                event.required_skills.strip(),
+            )
+        except Exception:
+            logger.exception("Could not store event skills embedding")
+
     return event
 
 
@@ -1393,17 +1429,21 @@ def get_volunteer_matches(
 
     # Compute cosine similarity between volunteer skills
     # and each candidate's match text (event required_skills or NGO motto).
-    match_texts = [
-        c["match_text"]
-        for c in candidates
-    ]
-
-    vol_embedding = encode_texts(
-        [volunteer.skills]
+    vol_embedding = get_vectors(
+        db,
+        [("volunteer_skills", volunteer.id, volunteer.skills)],
     )
 
-    candidate_embeddings = encode_texts(
-        match_texts
+    candidate_embeddings = get_vectors(
+        db,
+        [
+            (
+                "event_skills" if c["event"] else "ngo_motto",
+                c["event"].id if c["event"] else c["ngo"].id,
+                c["match_text"],
+            )
+            for c in candidates
+        ],
     )
 
     scores = cosine_similarity(
@@ -1499,13 +1539,18 @@ def get_volunteer_events(
     if not events:
         return []
 
-    # Batch-encode all event required_skills texts.
-    event_texts = [
-        ev.required_skills.strip() for ev, _ in events
-    ]
-
-    vol_embedding = encode_texts([volunteer.skills])
-    event_embeddings = encode_texts(event_texts)
+    # Stored vectors for the volunteer and every event's required_skills text.
+    vol_embedding = get_vectors(
+        db,
+        [("volunteer_skills", volunteer.id, volunteer.skills)],
+    )
+    event_embeddings = get_vectors(
+        db,
+        [
+            ("event_skills", ev.id, ev.required_skills.strip())
+            for ev, _ in events
+        ],
+    )
 
     scores = cosine_similarity(
         vol_embedding,
@@ -1768,22 +1813,20 @@ def match_volunteers(
                 "matches": [],
             }
 
-    volunteer_texts = [
-        v.skills
-        for v in volunteers
-    ]
-
-    ngo_texts = [
-        n.motto or ""
-        for n in filtered_ngos
-    ]
-
-    vol_embeddings = encode_texts(
-        volunteer_texts
+    vol_embeddings = get_vectors(
+        db,
+        [
+            ("volunteer_skills", v.id, v.skills)
+            for v in volunteers
+        ],
     )
 
-    ngo_embeddings = encode_texts(
-        ngo_texts
+    ngo_embeddings = get_vectors(
+        db,
+        [
+            ("ngo_motto_raw", n.id, n.motto or "")
+            for n in filtered_ngos
+        ],
     )
 
     similarity_matrix = cosine_similarity(

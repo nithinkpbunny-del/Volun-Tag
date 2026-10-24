@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session
 
 try:
     from .db_models import IssueDB, NGODB
+    from .embedding_store import get_vectors
     from .matching import MODEL_LOCK, encode_texts
 except ImportError:
     from db_models import IssueDB, NGODB
+    from embedding_store import get_vectors
     from matching import MODEL_LOCK, encode_texts
 
 
@@ -386,10 +388,11 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         }
 
     # 4. Generate embeddings
-    ngo_texts = [ngo.motto or "" for ngo in ngos]
-
     issue_embedding = encode_texts([issue_text])       # shape (1, dim)
-    ngo_embeddings = encode_texts(ngo_texts)            # shape (N, dim)
+    ngo_embeddings = get_vectors(                       # shape (N, dim)
+        db,
+        [("ngo_motto_raw", ngo.id, ngo.motto or "") for ngo in ngos],
+    )
 
     # 5. Cosine similarity → 1-D array of scores
     raw_scores = cosine_similarity(issue_embedding, ngo_embeddings)[0]

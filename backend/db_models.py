@@ -1,8 +1,8 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-    UniqueConstraint,
+    JSON, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary,
+    String, Text, UniqueConstraint,
 )
 
 try:
@@ -196,3 +196,31 @@ class MessageDB(Base):
     )
 
     read_at = Column(DateTime, nullable=True)
+
+
+class EmbeddingDB(Base):
+    """Cached sentence-transformer vectors so matching does not re-encode text."""
+
+    __tablename__ = "embeddings"
+
+    __table_args__ = (
+        UniqueConstraint("owner_type", "owner_id", name="uq_embeddings_owner"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # "volunteer_skills" | "ngo_motto" | "ngo_motto_raw" | "event_skills"
+    owner_type = Column(String, nullable=False)
+    owner_id = Column(Integer, nullable=False)
+
+    # sha256 hex of the exact text that was encoded
+    text_hash = Column(String(64), nullable=False)
+
+    # numpy float32 bytes
+    vector = Column(LargeBinary, nullable=False)
+    dim = Column(Integer, nullable=False)
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
