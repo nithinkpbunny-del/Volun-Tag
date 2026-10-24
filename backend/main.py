@@ -39,12 +39,13 @@ try:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
-        EventVolunteerEntry, EventVolunteersResponse,
+        EventVolunteerEntry, EventVolunteersResponse, ApprovalResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
-        VolunteerEventEntry, JoinRequest, JoinResponse,
+        VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
+    from .migrations import ensure_signup_columns
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
@@ -66,12 +67,13 @@ except ImportError:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
-        EventVolunteerEntry, EventVolunteersResponse,
+        EventVolunteerEntry, EventVolunteersResponse, ApprovalResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
-        VolunteerEventEntry, JoinRequest, JoinResponse,
+        VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
+    from migrations import ensure_signup_columns
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 
@@ -125,6 +127,7 @@ app.add_middleware(
 def seed_data():
     """Load sample data on server startup."""
     run_seed()
+    ensure_signup_columns(engine)
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
@@ -174,6 +177,55 @@ async def save_ngo_file(
         file.write(contents)
 
     return safe_name
+
+
+def get_owned_event(db: Session, event_id: int, ngo_email: str) -> ActivityDB:
+    """Return the event, or raise 404 / 403 if it is missing or not this NGO's."""
+
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    ngo = db.query(NGODB).filter(
+        NGODB.id == event.ngo_id,
+    ).first()
+
+    # Email-only ownership check; real authentication is on the roadmap.
+    if (
+        not ngo
+        or not ngo.email
+        or ngo.email.strip().lower() != ngo_email.strip().lower()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This event does not belong to your NGO",
+        )
+
+    return event
+
+
+def count_approved(db: Session, event_id: int) -> int:
+    return db.query(func.count(ActivitySignupDB.id)).filter(
+        ActivitySignupDB.activity_id == event_id,
+        ActivitySignupDB.approved_at.isnot(None),
+    ).scalar()
+
+
+def is_past(event: ActivityDB) -> bool:
+    return bool(event.event_date and event.event_date <= datetime.utcnow())
+
+
+def is_full(event: ActivityDB, approved_count: int) -> bool:
+    return (
+        event.spots_available is not None
+        and approved_count >= event.spots_available
+    )
 
 
 # ─── Root ──────────────────────────────────────────────────────────
@@ -932,6 +984,7 @@ def get_ngo_events(
     )
 
     joined_counts: dict[int, int] = {}
+    approved_counts: dict[int, int] = {}
     if events:
         joined_counts = dict(
             db.query(
@@ -946,11 +999,26 @@ def get_ngo_events(
             .group_by(ActivitySignupDB.activity_id)
             .all()
         )
+        approved_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+                ActivitySignupDB.approved_at.isnot(None),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
 
     event_responses = []
     for ev in events:
         item = EventResponse.model_validate(ev)
         item.joined_count = joined_counts.get(ev.id, 0)
+        item.approved_count = approved_counts.get(ev.id, 0)
         event_responses.append(item)
 
     return NGOEventsResponse(
@@ -970,30 +1038,7 @@ def get_event_volunteers(
     ngo_email: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    event = db.query(ActivityDB).filter(
-        ActivityDB.id == event_id,
-    ).first()
-
-    if not event:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Event '{event_id}' not found",
-        )
-
-    ngo = db.query(NGODB).filter(
-        NGODB.id == event.ngo_id,
-    ).first()
-
-    # Email-only ownership check; real authentication is on the roadmap.
-    if (
-        not ngo
-        or not ngo.email
-        or ngo.email.strip().lower() != ngo_email.strip().lower()
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="This event does not belong to your NGO",
-        )
+    event = get_owned_event(db, event_id, ngo_email)
 
     rows = (
         db.query(ActivitySignupDB, VolunteerDB)
@@ -1002,7 +1047,10 @@ def get_event_volunteers(
             ActivitySignupDB.volunteer_id == VolunteerDB.id,
         )
         .filter(ActivitySignupDB.activity_id == event.id)
-        .order_by(ActivitySignupDB.created_at.asc())
+        .order_by(
+            ActivitySignupDB.approved_at.is_(None),
+            ActivitySignupDB.created_at.asc(),
+        )
         .all()
     )
 
@@ -1017,6 +1065,8 @@ def get_event_volunteers(
             # Attendance tracking is not built yet.
             events_attended=0,
             joined_at=signup.created_at,
+            approved=signup.approved_at is not None,
+            approved_at=signup.approved_at,
         )
         for signup, vol in rows
     ]
@@ -1027,7 +1077,111 @@ def get_event_volunteers(
         status=event.status,
         spots_available=event.spots_available,
         joined_count=len(volunteers),
+        approved_count=sum(1 for v in volunteers if v.approved),
         volunteers=volunteers,
+    )
+
+
+# ─── Approve / Unapprove a joined volunteer ────────────────────────
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/approve",
+    response_model=ApprovalResponse,
+)
+def approve_event_volunteer(
+    event_id: int,
+    volunteer_id: int,
+    ngo_email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, ngo_email)
+
+    if event.status != "Active":
+        raise HTTPException(
+            status_code=400,
+            detail="Only an active event can have volunteers approved",
+        )
+
+    if is_past(event):
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    approved_count = count_approved(db, event.id)
+
+    # Idempotent: already approved.
+    if signup.approved_at is not None:
+        return ApprovalResponse(
+            volunteer_id=volunteer_id,
+            approved=True,
+            approved_count=approved_count,
+        )
+
+    if is_full(event, approved_count):
+        raise HTTPException(
+            status_code=400,
+            detail="All spots for this event are already filled",
+        )
+
+    signup.approved_at = datetime.utcnow()
+    db.commit()
+
+    return ApprovalResponse(
+        volunteer_id=volunteer_id,
+        approved=True,
+        approved_count=approved_count + 1,
+    )
+
+
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/unapprove",
+    response_model=ApprovalResponse,
+)
+def unapprove_event_volunteer(
+    event_id: int,
+    volunteer_id: int,
+    ngo_email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, ngo_email)
+
+    if is_past(event):
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    # Idempotent: if not approved there is nothing to change.
+    if signup.approved_at is not None:
+        signup.approved_at = None
+        db.commit()
+
+    return ApprovalResponse(
+        volunteer_id=volunteer_id,
+        approved=False,
+        approved_count=count_approved(db, event.id),
     )
 
 
@@ -1130,14 +1284,12 @@ def update_event_status(
                 ),
             )
 
-        joined = db.query(func.count(ActivitySignupDB.id)).filter(
-            ActivitySignupDB.activity_id == event.id,
-        ).scalar()
+        approved = count_approved(db, event.id)
 
-        if joined < event.spots_available:
+        if approved < event.spots_available:
             raise HTTPException(
                 status_code=400,
-                detail="Not enough volunteers have joined yet",
+                detail="Not enough volunteers have been approved yet",
             )
 
     event.status = status_update.status
@@ -1557,12 +1709,27 @@ def get_volunteer_events(
         event_embeddings,
     )[0]
 
-    # Pre-fetch signup rows for this volunteer so the "joined" flag is O(1).
-    joined_ids = set(
-        row.activity_id
-        for row in db.query(ActivitySignupDB.activity_id).filter(
+    # This volunteer's signups as {activity_id: approved_at}, fetched once.
+    my_signups = dict(
+        db.query(
+            ActivitySignupDB.activity_id,
+            ActivitySignupDB.approved_at,
+        ).filter(
             ActivitySignupDB.volunteer_id == volunteer.id,
         ).all()
+    )
+
+    approved_counts = dict(
+        db.query(
+            ActivitySignupDB.activity_id,
+            func.count(ActivitySignupDB.id),
+        )
+        .filter(
+            ActivitySignupDB.activity_id.in_([ev.id for ev, _ in events]),
+            ActivitySignupDB.approved_at.isnot(None),
+        )
+        .group_by(ActivitySignupDB.activity_id)
+        .all()
     )
 
     results: list[VolunteerEventEntry] = []
@@ -1586,6 +1753,12 @@ def get_volunteer_events(
         if final_score < MIN_EVENT_MATCH or boost <= 0:
             continue
 
+        # Hide full events from volunteers who have not joined them.
+        if ev.id not in my_signups and is_full(
+            ev, approved_counts.get(ev.id, 0)
+        ):
+            continue
+
         results.append(
             VolunteerEventEntry(
                 activity_id=ev.id,
@@ -1599,7 +1772,8 @@ def get_volunteer_events(
                 ngo_location=ngo.location,
                 ngo_email=ngo.email,
                 match_percentage=round(final_score * 100, 1),
-                joined=ev.id in joined_ids,
+                joined=ev.id in my_signups,
+                approved=my_signups.get(ev.id) is not None,
             )
         )
 
@@ -1609,6 +1783,81 @@ def get_volunteer_events(
     )
 
     return results
+
+
+# ─── Volunteer Activity (every event the volunteer has joined) ─────
+@app.get(
+    "/volunteer-activity/{email}",
+    response_model=list[VolunteerActivityEntry],
+)
+def get_volunteer_activity(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    rows = (
+        db.query(ActivitySignupDB, ActivityDB, NGODB)
+        .join(ActivityDB, ActivitySignupDB.activity_id == ActivityDB.id)
+        .join(NGODB, ActivityDB.ngo_id == NGODB.id)
+        .filter(ActivitySignupDB.volunteer_id == volunteer.id)
+        .all()
+    )
+
+    entries: list[VolunteerActivityEntry] = []
+
+    for signup, ev, ngo in rows:
+        approved = signup.approved_at is not None
+        past = is_past(ev)
+
+        if ev.status == "Cancelled":
+            label = "Cancelled"
+        elif signup.attended_at is not None:
+            label = "Attended"
+        elif approved and past:
+            label = "Awaiting NGO feedback"
+        elif approved:
+            label = "Approved"
+        elif past:
+            label = "Not selected"
+        else:
+            label = "Waiting for approval"
+
+        entries.append(
+            VolunteerActivityEntry(
+                activity_id=ev.id,
+                title=ev.title,
+                ngo_name=ngo.name,
+                ngo_email=ngo.email,
+                location=ev.location,
+                event_date=ev.event_date,
+                event_status=ev.status,
+                joined_at=signup.created_at,
+                approved=approved,
+                approved_at=signup.approved_at,
+                attended=signup.attended_at is not None,
+                status_label=label,
+            )
+        )
+
+    # Dated events newest first, undated events last.
+    dated = sorted(
+        (e for e in entries if e.event_date is not None),
+        key=lambda e: e.event_date,
+        reverse=True,
+    )
+    undated = [e for e in entries if e.event_date is None]
+
+    return dated + undated
 
 
 # ─── Join Activity ─────────────────────────────────────────────────
@@ -1671,6 +1920,12 @@ def join_activity(
     if existing:
         return JoinResponse(joined=True, activity_id=activity_id)
 
+    if is_full(activity, count_approved(db, activity_id)):
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is already full",
+        )
+
     db.add(
         ActivitySignupDB(
             activity_id=activity_id,
@@ -1731,6 +1986,15 @@ def leave_activity(
         raise HTTPException(
             status_code=404,
             detail="You have not joined this activity",
+        )
+
+    if signup.approved_at is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You have been approved for this event. "
+                "Please contact the NGO to withdraw."
+            ),
         )
 
     # The activity's status is intentionally left untouched: a Filled

@@ -113,6 +113,14 @@ class ActivitySignupDB(Base):
     volunteer_id = Column(Integer, ForeignKey("volunteers.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    # Set when the NGO approves the volunteer for the event.
+    approved_at = Column(DateTime, nullable=True)
+
+    # Reserved for the attendance / feedback phase.
+    attended_at = Column(DateTime, nullable=True)
+    feedback = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)
+
 class IssueDB(Base):
     """Public issue reports, kept separate from volunteer-to-NGO matching data."""
 

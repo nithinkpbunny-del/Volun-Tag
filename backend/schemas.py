@@ -178,6 +178,7 @@ class EventResponse(BaseModel):
     created_at: datetime
     status: str
     joined_count: int = 0
+    approved_count: int = 0
 
 
 class EventStatusUpdate(BaseModel):
@@ -208,6 +209,8 @@ class EventVolunteerEntry(BaseModel):
     location: Optional[str]
     events_attended: int
     joined_at: datetime
+    approved: bool
+    approved_at: Optional[datetime] = None
 
 
 class EventVolunteersResponse(BaseModel):
@@ -216,7 +219,14 @@ class EventVolunteersResponse(BaseModel):
     status: str
     spots_available: Optional[int]
     joined_count: int
+    approved_count: int
     volunteers: list[EventVolunteerEntry]
+
+
+class ApprovalResponse(BaseModel):
+    volunteer_id: int
+    approved: bool
+    approved_count: int
 
 
 class NGOIssueEntry(BaseModel):
@@ -269,6 +279,22 @@ class VolunteerEventEntry(BaseModel):
     ngo_email: Optional[str]
     match_percentage: float
     joined: bool
+    approved: bool = False
+
+
+class VolunteerActivityEntry(BaseModel):
+    activity_id: int
+    title: str
+    ngo_name: str
+    ngo_email: Optional[str]
+    location: Optional[str]
+    event_date: Optional[datetime]
+    event_status: str
+    joined_at: datetime
+    approved: bool
+    approved_at: Optional[datetime]
+    attended: bool
+    status_label: str
 
 
 class JoinRequest(BaseModel):
