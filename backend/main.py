@@ -1,3 +1,9 @@
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import logging
 import os
 import re
@@ -38,7 +44,7 @@ try:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, model
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, encode_texts
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
@@ -64,7 +70,7 @@ except ImportError:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse,
     )
-    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, model
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, encode_texts
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 
 
@@ -1392,11 +1398,11 @@ def get_volunteer_matches(
         for c in candidates
     ]
 
-    vol_embedding = model.encode(
+    vol_embedding = encode_texts(
         [volunteer.skills]
     )
 
-    candidate_embeddings = model.encode(
+    candidate_embeddings = encode_texts(
         match_texts
     )
 
@@ -1498,8 +1504,8 @@ def get_volunteer_events(
         ev.required_skills.strip() for ev, _ in events
     ]
 
-    vol_embedding = model.encode([volunteer.skills])
-    event_embeddings = model.encode(event_texts)
+    vol_embedding = encode_texts([volunteer.skills])
+    event_embeddings = encode_texts(event_texts)
 
     scores = cosine_similarity(
         vol_embedding,
@@ -1772,11 +1778,11 @@ def match_volunteers(
         for n in filtered_ngos
     ]
 
-    vol_embeddings = model.encode(
+    vol_embeddings = encode_texts(
         volunteer_texts
     )
 
-    ngo_embeddings = model.encode(
+    ngo_embeddings = encode_texts(
         ngo_texts
     )
 

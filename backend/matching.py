@@ -1,10 +1,31 @@
 import re
+import threading
 
 from sentence_transformers import SentenceTransformer
 
 
 # ─── AI Matching Model ─────────────────────────────────────────────
-model = SentenceTransformer("all-MiniLM-L6-v2")
+_model = None
+_model_load_lock = threading.Lock()
+MODEL_LOCK = threading.Lock()
+
+
+def get_model():
+    """Return the shared CPU SentenceTransformer, loading it once on first call."""
+    global _model
+    if _model is None:
+        with _model_load_lock:
+            if _model is None:
+                _model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+                import torch
+                torch.set_num_threads(2)
+    return _model
+
+
+def encode_texts(texts):
+    """Encode texts with the shared model, one inference at a time."""
+    with MODEL_LOCK:
+        return get_model().encode(list(texts), show_progress_bar=False)
 
 
 # ─── Category keywords for weighted matching ───────────────────────

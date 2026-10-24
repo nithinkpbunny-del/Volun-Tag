@@ -22,18 +22,20 @@ Usage (by the caller)::
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy.orm import Session
 
 try:
     from .db_models import IssueDB, NGODB
+    from .matching import MODEL_LOCK, encode_texts
 except ImportError:
     from db_models import IssueDB, NGODB
+    from matching import MODEL_LOCK, encode_texts
 
 
 logger = logging.getLogger(__name__)
@@ -45,37 +47,33 @@ UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 
 # ─── Model singletons (lazy-loaded) ────────────────────────────────
 
-_model: Optional[SentenceTransformer] = None
-
-
-def _get_model() -> SentenceTransformer:
-    """Return the shared SentenceTransformer, loading it once on first call."""
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
-
-
 # BLIP and CLIP are loaded only when an issue actually has images.
 _blip_processor = None
 _blip_model = None
+_blip_load_lock = threading.Lock()
 _clip_processor = None
 _clip_model = None
+_clip_load_lock = threading.Lock()
 
 
 def _get_blip():
     """Return (processor, model) for BLIP image captioning, loading once."""
     global _blip_processor, _blip_model
     if _blip_processor is None:
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        logger.info("Loading BLIP model for image captioning...")
-        _blip_processor = BlipProcessor.from_pretrained(
-            "Salesforce/blip-image-captioning-base",
-        )
-        _blip_model = BlipForConditionalGeneration.from_pretrained(
-            "Salesforce/blip-image-captioning-base",
-        )
-        logger.info("BLIP model loaded.")
+        with _blip_load_lock:
+            if _blip_processor is None:
+                from transformers import BlipProcessor, BlipForConditionalGeneration
+                logger.info("Loading BLIP model for image captioning...")
+                processor = BlipProcessor.from_pretrained(
+                    "Salesforce/blip-image-captioning-base",
+                )
+                model = BlipForConditionalGeneration.from_pretrained(
+                    "Salesforce/blip-image-captioning-base",
+                ).to("cpu")
+                model.eval()
+                _blip_model = model
+                _blip_processor = processor
+                logger.info("BLIP model loaded.")
     return _blip_processor, _blip_model
 
 
@@ -83,15 +81,20 @@ def _get_clip():
     """Return (processor, model) for CLIP zero-shot classification, loading once."""
     global _clip_processor, _clip_model
     if _clip_processor is None:
-        from transformers import CLIPProcessor, CLIPModel
-        logger.info("Loading CLIP model for image classification...")
-        _clip_processor = CLIPProcessor.from_pretrained(
-            "openai/clip-vit-base-patch32",
-        )
-        _clip_model = CLIPModel.from_pretrained(
-            "openai/clip-vit-base-patch32",
-        )
-        logger.info("CLIP model loaded.")
+        with _clip_load_lock:
+            if _clip_processor is None:
+                from transformers import CLIPProcessor, CLIPModel
+                logger.info("Loading CLIP model for image classification...")
+                processor = CLIPProcessor.from_pretrained(
+                    "openai/clip-vit-base-patch32",
+                )
+                model = CLIPModel.from_pretrained(
+                    "openai/clip-vit-base-patch32",
+                ).to("cpu")
+                model.eval()
+                _clip_model = model
+                _clip_processor = processor
+                logger.info("CLIP model loaded.")
     return _clip_processor, _clip_model
 
 
@@ -160,7 +163,7 @@ def _caption_image(image) -> Optional[str]:
         import torch
         processor, model = _get_blip()
         inputs = processor(images=image, return_tensors="pt")
-        with torch.no_grad():
+        with MODEL_LOCK, torch.no_grad():
             output = model.generate(**inputs, max_new_tokens=50)
         caption = processor.decode(output[0], skip_special_tokens=True).strip()
         return caption if caption else None
@@ -178,7 +181,7 @@ def _classify_image_category(image) -> Optional[str]:
         inputs = processor(
             text=text_labels, images=image, return_tensors="pt", padding=True,
         )
-        with torch.no_grad():
+        with MODEL_LOCK, torch.no_grad():
             outputs = model(**inputs)
         # logits_per_image shape: (1, num_labels)
         probs = outputs.logits_per_image.softmax(dim=1)[0]
@@ -383,11 +386,10 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         }
 
     # 4. Generate embeddings
-    model = _get_model()
     ngo_texts = [ngo.motto or "" for ngo in ngos]
 
-    issue_embedding = model.encode([issue_text])       # shape (1, dim)
-    ngo_embeddings = model.encode(ngo_texts)            # shape (N, dim)
+    issue_embedding = encode_texts([issue_text])       # shape (1, dim)
+    ngo_embeddings = encode_texts(ngo_texts)            # shape (N, dim)
 
     # 5. Cosine similarity → 1-D array of scores
     raw_scores = cosine_similarity(issue_embedding, ngo_embeddings)[0]
