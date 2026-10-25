@@ -116,7 +116,9 @@ class ActivitySignupDB(Base):
     # Set when the NGO approves the volunteer for the event.
     approved_at = Column(DateTime, nullable=True)
 
-    # Reserved for the attendance / feedback phase.
+    # Attendance / feedback phase. attendance_status is NULL until the NGO
+    # submits feedback; attended_at is set only when it is "attended".
+    attendance_status = Column(String(20), nullable=True)  # "attended", "not_attended" or NULL
     attended_at = Column(DateTime, nullable=True)
     feedback = Column(Text, nullable=True)
     rating = Column(Integer, nullable=True)

@@ -10,6 +10,7 @@ SIGNUP_COLUMNS = {
     "attended_at": "DATETIME",
     "feedback": "TEXT",
     "rating": "INTEGER",
+    "attendance_status": "VARCHAR(20)",
 }
 
 

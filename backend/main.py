@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -43,7 +43,7 @@ try:
         VolunteerMatchEntry, VolunteerMatchesResponse,
         VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
-        MarkReadRequest, MarkReadResponse,
+        MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
     )
     from .migrations import ensure_signup_columns
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
@@ -71,7 +71,7 @@ except ImportError:
         VolunteerMatchEntry, VolunteerMatchesResponse,
         VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
-        MarkReadRequest, MarkReadResponse,
+        MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
     )
     from migrations import ensure_signup_columns
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
@@ -219,6 +219,14 @@ def count_approved(db: Session, event_id: int) -> int:
 
 def is_past(event: ActivityDB) -> bool:
     return bool(event.event_date and event.event_date <= datetime.utcnow())
+
+
+def is_completed(event: ActivityDB) -> bool:
+    """True from the day after the event date, using the IST calendar date."""
+    if not event.event_date:
+        return False
+    today_ist = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+    return event.event_date.date() < today_ist
 
 
 def is_full(event: ActivityDB, approved_count: int) -> bool:
@@ -985,6 +993,7 @@ def get_ngo_events(
 
     joined_counts: dict[int, int] = {}
     approved_counts: dict[int, int] = {}
+    feedback_counts: dict[int, int] = {}
     if events:
         joined_counts = dict(
             db.query(
@@ -1013,12 +1022,29 @@ def get_ngo_events(
             .group_by(ActivitySignupDB.activity_id)
             .all()
         )
+        feedback_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+                ActivitySignupDB.approved_at.isnot(None),
+                ActivitySignupDB.attendance_status.isnot(None),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
 
     event_responses = []
     for ev in events:
         item = EventResponse.model_validate(ev)
         item.joined_count = joined_counts.get(ev.id, 0)
         item.approved_count = approved_counts.get(ev.id, 0)
+        item.feedback_count = feedback_counts.get(ev.id, 0)
+        item.is_completed = is_completed(ev)
         event_responses.append(item)
 
     return NGOEventsResponse(
@@ -1054,6 +1080,23 @@ def get_event_volunteers(
         .all()
     )
 
+    attended_counts: dict[int, int] = {}
+    if rows:
+        attended_counts = dict(
+            db.query(
+                ActivitySignupDB.volunteer_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.volunteer_id.in_(
+                    [vol.id for _, vol in rows]
+                ),
+                ActivitySignupDB.attendance_status == "attended",
+            )
+            .group_by(ActivitySignupDB.volunteer_id)
+            .all()
+        )
+
     volunteers = [
         EventVolunteerEntry(
             volunteer_id=vol.id,
@@ -1062,11 +1105,21 @@ def get_event_volunteers(
             skills=vol.skills,
             experience=vol.experience,
             location=vol.location,
-            # Attendance tracking is not built yet.
-            events_attended=0,
+            events_attended=attended_counts.get(vol.id, 0),
             joined_at=signup.created_at,
             approved=signup.approved_at is not None,
             approved_at=signup.approved_at,
+            attendance_status=signup.attendance_status,
+            rating=(
+                signup.rating
+                if signup.attendance_status == "attended"
+                else None
+            ),
+            feedback=(
+                signup.feedback
+                if signup.attendance_status == "attended"
+                else None
+            ),
         )
         for signup, vol in rows
     ]
@@ -1079,6 +1132,7 @@ def get_event_volunteers(
         joined_count=len(volunteers),
         approved_count=sum(1 for v in volunteers if v.approved),
         volunteers=volunteers,
+        is_completed=is_completed(event),
     )
 
 
@@ -1185,6 +1239,105 @@ def unapprove_event_volunteer(
     )
 
 
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/feedback",
+    response_model=FeedbackResponse,
+)
+def submit_event_volunteer_feedback(
+    event_id: int,
+    volunteer_id: int,
+    body: FeedbackRequest,
+    ngo_email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, ngo_email)
+
+    if event.status == "Cancelled":
+        raise HTTPException(
+            status_code=400,
+            detail="Cancelled events cannot be rated",
+        )
+
+    if not is_completed(event):
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback can be given only after the event date has passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    if signup.approved_at is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Only approved volunteers can be rated",
+        )
+
+    if signup.attendance_status is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback has already been submitted for this volunteer",
+        )
+
+    if body.attendance == "attended":
+        rating = body.rating
+        if (
+            not isinstance(rating, int)
+            or isinstance(rating, bool)
+            or not 1 <= rating <= 5
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Rating must be between 1 and 5",
+            )
+
+        feedback = (body.feedback or "").strip()
+        if not feedback:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback text is required",
+            )
+        if len(feedback) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback must be 1000 characters or fewer",
+            )
+
+        signup.attendance_status = "attended"
+        signup.attended_at = datetime.utcnow()
+        signup.rating = rating
+        signup.feedback = feedback
+    else:
+        signup.attendance_status = "not_attended"
+        signup.attended_at = None
+        signup.rating = None
+        signup.feedback = None
+
+    db.commit()
+
+    feedback_count = db.query(func.count(ActivitySignupDB.id)).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.approved_at.isnot(None),
+        ActivitySignupDB.attendance_status.isnot(None),
+    ).scalar()
+
+    return FeedbackResponse(
+        volunteer_id=volunteer_id,
+        attendance_status=signup.attendance_status,
+        rating=signup.rating,
+        feedback=signup.feedback,
+        feedback_count=feedback_count,
+    )
+
+
 # ─── NGO Issues (reported problems matched to an NGO) ─────────────
 @app.get(
     "/ngo-issues/{email}",
@@ -1268,6 +1421,12 @@ def update_event_status(
             detail=f"Event '{event_id}' not found",
         )
 
+    if is_completed(event):
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already been completed and can no longer be changed",
+        )
+
     if status_update.status == "Filled":
         if event.status != "Active":
             raise HTTPException(
@@ -1314,6 +1473,12 @@ def update_event(
         raise HTTPException(
             status_code=404,
             detail=f"Event '{event_id}' not found",
+        )
+
+    if is_completed(event):
+        raise HTTPException(
+            status_code=400,
+            detail="This event has already been completed and can no longer be changed",
         )
 
     for field, value in event_update.model_dump(exclude_unset=True).items():
@@ -1817,17 +1982,19 @@ def get_volunteer_activity(
 
     for signup, ev, ngo in rows:
         approved = signup.approved_at is not None
-        past = is_past(ev)
+        attended = signup.attendance_status == "attended"
 
         if ev.status == "Cancelled":
             label = "Cancelled"
-        elif signup.attended_at is not None:
+        elif attended:
             label = "Attended"
-        elif approved and past:
+        elif signup.attendance_status == "not_attended":
+            label = "Not attended"
+        elif approved and is_completed(ev):
             label = "Awaiting NGO feedback"
         elif approved:
             label = "Approved"
-        elif past:
+        elif is_completed(ev):
             label = "Not selected"
         else:
             label = "Waiting for approval"
@@ -1844,8 +2011,11 @@ def get_volunteer_activity(
                 joined_at=signup.created_at,
                 approved=approved,
                 approved_at=signup.approved_at,
-                attended=signup.attended_at is not None,
+                attended=attended,
                 status_label=label,
+                attendance_status=signup.attendance_status,
+                rating=signup.rating if attended else None,
+                feedback=signup.feedback if attended else None,
             )
         )
 

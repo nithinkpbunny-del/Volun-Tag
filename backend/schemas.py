@@ -179,6 +179,8 @@ class EventResponse(BaseModel):
     status: str
     joined_count: int = 0
     approved_count: int = 0
+    is_completed: bool = False
+    feedback_count: int = 0
 
 
 class EventStatusUpdate(BaseModel):
@@ -211,6 +213,9 @@ class EventVolunteerEntry(BaseModel):
     joined_at: datetime
     approved: bool
     approved_at: Optional[datetime] = None
+    attendance_status: Optional[str] = None
+    rating: Optional[int] = None
+    feedback: Optional[str] = None
 
 
 class EventVolunteersResponse(BaseModel):
@@ -221,12 +226,27 @@ class EventVolunteersResponse(BaseModel):
     joined_count: int
     approved_count: int
     volunteers: list[EventVolunteerEntry]
+    is_completed: bool = False
 
 
 class ApprovalResponse(BaseModel):
     volunteer_id: int
     approved: bool
     approved_count: int
+
+
+class FeedbackRequest(BaseModel):
+    attendance: Literal["attended", "not_attended"]
+    rating: Optional[int] = None
+    feedback: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    volunteer_id: int
+    attendance_status: str
+    rating: Optional[int]
+    feedback: Optional[str]
+    feedback_count: int
 
 
 class NGOIssueEntry(BaseModel):
@@ -295,6 +315,9 @@ class VolunteerActivityEntry(BaseModel):
     approved_at: Optional[datetime]
     attended: bool
     status_label: str
+    attendance_status: Optional[str] = None
+    rating: Optional[int] = None
+    feedback: Optional[str] = None
 
 
 class JoinRequest(BaseModel):
