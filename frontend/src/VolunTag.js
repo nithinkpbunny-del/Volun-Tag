@@ -132,7 +132,13 @@ export default function VolunTag() {
               ngoEmail={dashboardEmail}
               showToast={showToast}
               onBack={() => {
-                setNgoReturnTab("events");
+                setNgoReturnTab(
+                  selectedEvent &&
+                    selectedEvent.is_completed &&
+                    selectedEvent.status !== "Cancelled"
+                    ? "activity"
+                    : "events"
+                );
                 setPage("ngo-dashboard");
               }}
               onConnect={(target) => {

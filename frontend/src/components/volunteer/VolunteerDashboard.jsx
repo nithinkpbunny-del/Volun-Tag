@@ -474,6 +474,24 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                         : "Date to be announced"}
                       {item.location ? ` · ${item.location}` : ""}
                     </p>
+
+                    {item.attendance_status === "attended" && (
+                      <>
+                        <p className="dashboard-activity-rating">
+                          Your rating:{" "}
+                          {"★".repeat(item.rating || 0) +
+                            "☆".repeat(5 - (item.rating || 0))}
+                        </p>
+                        {item.feedback && (
+                          <div className="dashboard-activity-feedback">
+                            <span className="dashboard-activity-feedback-label">
+                              NGO feedback:
+                            </span>
+                            <p>{item.feedback}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   <div className="dashboard-activity-side">

@@ -154,6 +154,11 @@
   color: #c0392b;
 }
 
+.ngo-event-status-badge.status-completed {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 
 /* ─── Cancel event button ────────────────────────────────────────── */
 

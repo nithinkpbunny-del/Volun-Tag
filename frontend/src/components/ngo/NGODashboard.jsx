@@ -447,6 +447,14 @@ export default function NGODashboard({
   // Count only active events for the stat card
   const activeEventCount = events.filter((ev) => ev.status === "Active").length;
 
+  // Completed (per the backend) events move to the Activities tab; cancelled ones stay in Events.
+  const completedEvents = events.filter(
+    (ev) => ev.is_completed && ev.status !== "Cancelled"
+  );
+  const listedEvents = events.filter(
+    (ev) => !(ev.is_completed && ev.status !== "Cancelled")
+  );
+
   return (
     <div className="page dashboard-page">
       <div className="dashboard-shell">
@@ -468,7 +476,7 @@ export default function NGODashboard({
                 {tab === "problems"
                   ? "Reported Problems"
                   : tab === "activity"
-                  ? "My Activity"
+                  ? "Activities"
                   : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 {tab === "messages" && unreadCount > 0 && (
                   <span className="dashboard-subnav-badge">{unreadCount}</span>
@@ -491,14 +499,70 @@ export default function NGODashboard({
           </div>
         )}
 
-        {/* ── My Activity placeholder ─────────────────────────── */}
+        {/* ── Activities tab (completed events) ───────────────── */}
         {activeTab === "activity" && (
-          <div className="dashboard-placeholder-card">
-            <p className="dashboard-placeholder-title">My Activity</p>
-            <p className="dashboard-placeholder-text">
-              Your activity will appear here soon.
-            </p>
-          </div>
+          <>
+            <div className="dashboard-section-header">
+              <span className="dashboard-section-title">Completed events</span>
+              <span className="dashboard-section-sub">
+                {completedEvents.length} total
+              </span>
+            </div>
+
+            <div className="dashboard-ngo-list">
+              {loadingEvents && (
+                <p className="dashboard-placeholder-text">Loading events...</p>
+              )}
+
+              {!loadingEvents && completedEvents.length === 0 && (
+                <div className="dashboard-placeholder-card" style={{ marginTop: "0.75rem" }}>
+                  <p className="dashboard-placeholder-title">No completed events yet</p>
+                  <p className="dashboard-placeholder-text">
+                    Events appear here the day after their date.
+                  </p>
+                </div>
+              )}
+
+              {!loadingEvents &&
+                [...completedEvents]
+                  .sort((a, b) => new Date(b.event_date) - new Date(a.event_date))
+                  .map((ev) => (
+                    <div className="dashboard-ngo-row" key={ev.id}>
+                      <div className="dashboard-ngo-row-main">
+                        <div className="dashboard-ngo-info">
+                          <p className="dashboard-ngo-name">{ev.title}</p>
+                          <p className="dashboard-ngo-meta">
+                            {ev.location || "No location"} · {formatDate(ev.event_date)}
+                          </p>
+                          <p className="dashboard-ngo-meta">
+                            {ev.approved_count === 0
+                              ? "No approved volunteers"
+                              : `Feedback given: ${ev.feedback_count} of ${ev.approved_count}`}
+                          </p>
+                        </div>
+
+                        <div className="dashboard-ngo-actions">
+                          <span className="ngo-event-status-badge status-completed">
+                            Completed
+                          </span>
+
+                          {ev.approved_count > 0 && (
+                            <button
+                              type="button"
+                              className="dashboard-view-btn"
+                              onClick={() => onViewVolunteers && onViewVolunteers(ev)}
+                            >
+                              {ev.feedback_count < ev.approved_count
+                                ? "Rate volunteers"
+                                : "View feedback"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+            </div>
+          </>
         )}
 
         {/* ── Settings placeholder ─────────────────────────────── */}
@@ -706,7 +770,7 @@ export default function NGODashboard({
             <div className="dashboard-section-header" style={{ marginTop: "1rem" }}>
               <span className="dashboard-section-title">Your Events</span>
               <span className="dashboard-section-sub">
-                {events.length} total
+                {listedEvents.length} total
               </span>
             </div>
 
@@ -715,7 +779,7 @@ export default function NGODashboard({
                 <p className="dashboard-placeholder-text">Loading events...</p>
               )}
 
-              {!loadingEvents && events.length === 0 && (
+              {!loadingEvents && listedEvents.length === 0 && (
                 <div className="dashboard-placeholder-card" style={{ marginTop: "0.75rem" }}>
                   <p className="dashboard-placeholder-title">No events yet</p>
                   <p className="dashboard-placeholder-text">
@@ -725,7 +789,7 @@ export default function NGODashboard({
               )}
 
               {!loadingEvents &&
-                events.map((ev) => (
+                listedEvents.map((ev) => (
                   <div className="dashboard-ngo-row" key={ev.id}>
                     <div className="dashboard-ngo-row-main">
                       <div className="dashboard-ngo-info">

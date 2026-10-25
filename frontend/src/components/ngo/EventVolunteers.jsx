@@ -37,6 +37,119 @@ const hasPassed = (iso) => {
   return new Date(withZone).getTime() <= Date.now();
 };
 
+const EMPTY_DRAFT = { attendance: "", rating: 0, feedback: "" };
+
+const FEEDBACK_MAX = 1000;
+
+const renderStars = (rating) =>
+  "★".repeat(rating || 0) + "☆".repeat(5 - (rating || 0));
+
+// Read-only result for a volunteer whose feedback has been submitted.
+function FeedbackResult({ volunteer }) {
+  if (volunteer.attendance_status === "attended") {
+    return (
+      <div className="ev-fb-result">
+        <span className="ev-fb-pill ev-fb-pill-attended">Attended</span>
+        <p className="ev-fb-stars" aria-label={`${volunteer.rating} out of 5 stars`}>
+          {renderStars(volunteer.rating)}
+        </p>
+        {volunteer.feedback && (
+          <p className="ev-fb-text">{volunteer.feedback}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="ev-fb-result">
+      <span className="ev-fb-pill ev-fb-pill-absent">Not attended</span>
+    </div>
+  );
+}
+
+// Controlled by the parent: drafts live in EventVolunteers state so they
+// survive the 10-second data refresh.
+function FeedbackForm({ volunteer, draft, busy, onChange, onSubmit }) {
+  const { attendance, rating, feedback } = draft;
+  const name = `attendance-${volunteer.volunteer_id}`;
+
+  const canSubmit =
+    !busy &&
+    (attendance === "not_attended" ||
+      (attendance === "attended" && rating >= 1 && feedback.trim() !== ""));
+
+  return (
+    <div className="ev-fb-form">
+      <div className="ev-fb-radios" role="radiogroup" aria-label="Attendance">
+        <label className="ev-fb-radio">
+          <input
+            type="radio"
+            name={name}
+            value="attended"
+            checked={attendance === "attended"}
+            onChange={() => onChange({ attendance: "attended" })}
+          />
+          Attended
+        </label>
+        <label className="ev-fb-radio">
+          <input
+            type="radio"
+            name={name}
+            value="not_attended"
+            checked={attendance === "not_attended"}
+            onChange={() => onChange({ attendance: "not_attended" })}
+          />
+          Not attended
+        </label>
+      </div>
+
+      {attendance === "attended" && (
+        <>
+          <div className="ev-fb-star-row">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`ev-fb-star ${n <= rating ? "filled" : ""}`}
+                aria-label={n === 1 ? "1 star" : `${n} stars`}
+                aria-pressed={n <= rating}
+                onClick={() => onChange({ rating: n })}
+              >
+                {n <= rating ? "★" : "☆"}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            className="ev-fb-textarea"
+            placeholder="Write feedback for this volunteer"
+            maxLength={FEEDBACK_MAX}
+            rows={3}
+            value={feedback}
+            onChange={(e) => onChange({ feedback: e.target.value })}
+          />
+          <p className="ev-fb-counter">
+            {feedback.length}/{FEEDBACK_MAX}
+          </p>
+        </>
+      )}
+
+      {attendance === "not_attended" && (
+        <p className="ev-fb-note">No rating or feedback is needed.</p>
+      )}
+
+      <button
+        type="button"
+        className="ev-fb-submit-btn"
+        disabled={!canSubmit}
+        onClick={onSubmit}
+      >
+        Submit feedback
+      </button>
+    </div>
+  );
+}
+
 export default function EventVolunteers({
   event,
   ngoEmail,
@@ -48,6 +161,8 @@ export default function EventVolunteers({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState(null);
+  // Feedback drafts keyed by volunteer_id. The refresh only replaces `data`.
+  const [drafts, setDrafts] = useState({});
 
   useEffect(() => {
     if (!event || !ngoEmail) return;
@@ -121,6 +236,9 @@ export default function EventVolunteers({
   const approvedVolunteers = volunteers.filter((v) => v.approved);
   const joinedVolunteers = volunteers.filter((v) => !v.approved);
 
+  const completed = data ? data.is_completed : !!event?.is_completed;
+  const ratedCount = approvedVolunteers.filter((v) => v.attendance_status).length;
+
   const isPast = hasPassed(event?.event_date);
   const allFilled = spots != null && approvedCount >= spots;
 
@@ -183,6 +301,69 @@ export default function EventVolunteers({
     }
   };
 
+  const updateDraft = (volunteerId, patch) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [volunteerId]: { ...(prev[volunteerId] || EMPTY_DRAFT), ...patch },
+    }));
+  };
+
+  const submitFeedback = async (v) => {
+    const draft = drafts[v.volunteer_id];
+
+    if (!draft || busyId !== null) return;
+
+    if (
+      !window.confirm(
+        `Submit feedback for ${v.name}? It cannot be changed afterwards.`
+      )
+    ) {
+      return;
+    }
+
+    const body =
+      draft.attendance === "attended"
+        ? {
+            attendance: "attended",
+            rating: draft.rating,
+            feedback: draft.feedback.trim(),
+          }
+        : { attendance: "not_attended" };
+
+    setBusyId(v.volunteer_id);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/event-volunteers/${event.id}/${v.volunteer_id}/feedback?ngo_email=${encodeURIComponent(ngoEmail)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof err.detail === "string" && err.detail
+            ? err.detail
+            : "Could not save feedback"
+        );
+      }
+
+      showToast("Feedback saved", "success");
+      setDrafts((prev) => {
+        const { [v.volunteer_id]: removed, ...rest } = prev;
+        return rest;
+      });
+      await reloadSilently();
+    } catch (err) {
+      showToast(err.message || "Could not save feedback", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleRemove = (v) => {
     if (!window.confirm(`Move ${v.name} back to joined volunteers?`)) return;
     changeApproval(v, "unapprove");
@@ -220,6 +401,20 @@ export default function EventVolunteers({
         <p className="ev-vol-meta">
           Joined on {formatDate(v.joined_at)}
         </p>
+
+        {completed && v.approved && (
+          v.attendance_status ? (
+            <FeedbackResult volunteer={v} />
+          ) : (
+            <FeedbackForm
+              volunteer={v}
+              draft={drafts[v.volunteer_id] || EMPTY_DRAFT}
+              busy={busyId !== null}
+              onChange={(patch) => updateDraft(v.volunteer_id, patch)}
+              onSubmit={() => submitFeedback(v)}
+            />
+          )
+        )}
       </div>
 
       <div className="ev-vol-actions">
@@ -231,7 +426,7 @@ export default function EventVolunteers({
           Connect
         </button>
 
-        {v.approved && !isPast && (
+        {v.approved && !isPast && !completed && (
           <button
             type="button"
             className="ev-vol-remove-btn"
@@ -271,7 +466,9 @@ export default function EventVolunteers({
 
         {data && (
           <p className="ev-vol-count">
-            {spots != null
+            {completed
+              ? `${approvedCount} approved · ${ratedCount} rated`
+              : spots != null
               ? `${approvedCount} of ${spots} approved · ${waitingCount} waiting`
               : `${approvedCount} approved · ${waitingCount} waiting`}
           </p>
@@ -286,24 +483,34 @@ export default function EventVolunteers({
 
       {data && (
         <>
-          <h3 className="ev-vol-section-title">Approved volunteers</h3>
+          <h3 className="ev-vol-section-title">
+            {completed ? "Volunteers to rate" : "Approved volunteers"}
+          </h3>
 
           {approvedVolunteers.length === 0 ? (
-            <p className="ev-vol-message">No volunteers approved yet</p>
+            <p className="ev-vol-message">
+              {completed
+                ? "No volunteers were approved for this event."
+                : "No volunteers approved yet"}
+            </p>
           ) : (
             <div className="ev-vol-list">
               {approvedVolunteers.map(renderCard)}
             </div>
           )}
 
-          <h3 className="ev-vol-section-title">Joined volunteers</h3>
+          {!completed && (
+            <>
+              <h3 className="ev-vol-section-title">Joined volunteers</h3>
 
-          {joinedVolunteers.length === 0 ? (
-            <p className="ev-vol-message">No volunteers waiting for approval</p>
-          ) : (
-            <div className="ev-vol-list">
-              {joinedVolunteers.map(renderCard)}
-            </div>
+              {joinedVolunteers.length === 0 ? (
+                <p className="ev-vol-message">No volunteers waiting for approval</p>
+              ) : (
+                <div className="ev-vol-list">
+                  {joinedVolunteers.map(renderCard)}
+                </div>
+              )}
+            </>
           )}
         </>
       )}

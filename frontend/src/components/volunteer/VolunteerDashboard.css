@@ -688,6 +688,33 @@
   background: #fee2e2;
 }
 
+.dashboard-activity-pill.activity-not-attended {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.dashboard-activity-rating {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft, #667085);
+}
+
+.dashboard-activity-feedback {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft, #667085);
+}
+
+.dashboard-activity-feedback p {
+  margin: 0.1rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-activity-feedback-label {
+  font-weight: 600;
+}
+
 .dashboard-activity-msg-btn {
   margin-top: 0;
   width: auto;
