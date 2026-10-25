@@ -241,6 +241,67 @@
   margin: 0;
 }
 
+/* ─── Thank-you Screen ───────────────────────────────────────────── */
+
+.report-thanks-title {
+  font-size: 1.6rem;
+}
+
+.report-thanks-card .pending-desc {
+  max-width: 480px;
+}
+
+.report-thanks-ref {
+  margin: 1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+
+.report-thanks-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.report-thanks-actions .form-back-btn {
+  padding: 0.65rem 1.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.report-thanks-link {
+  background: none;
+  border: none;
+  padding: 0.65rem 0.5rem;
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.report-thanks-link:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 520px) {
+  .report-thanks-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .report-thanks-link {
+    text-align: center;
+  }
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {

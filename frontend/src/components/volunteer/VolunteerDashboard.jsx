@@ -4,12 +4,12 @@ import "./VolunteerDashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
-export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem }) {
+export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem, initialTab, onInitialConsumed }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [ngos, setNgos] = useState([]);
   const [loadingNgos, setLoadingNgos] = useState(true);
-  const [activeTab, setActiveTab] = useState("profile");
+  const [activeTab, setActiveTab] = useState(initialTab || "profile");
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
@@ -21,6 +21,13 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   const [joiningId, setJoiningId] = useState(null);
   const [activityItems, setActivityItems] = useState([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
+
+  useEffect(() => {
+    if (initialTab) {
+      onInitialConsumed && onInitialConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!email || activeTab === "messages") {

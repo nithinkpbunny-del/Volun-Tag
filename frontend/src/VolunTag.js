@@ -25,6 +25,7 @@ export default function VolunTag() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
   const [ngoReturnTab, setNgoReturnTab] = useState(null);
+  const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -57,6 +58,12 @@ export default function VolunTag() {
   const handleReportProblem = (email) => {
     setReporterEmail(email);
     setPage("report");
+  };
+
+  const goToVolunteerDashboard = (tab) => {
+    setDashboardEmail(reporterEmail || dashboardEmail);
+    setVolunteerInitialTab(tab || null);
+    setPage("volunteer-dashboard");
   };
  
   return (
@@ -105,6 +112,8 @@ export default function VolunTag() {
               showToast={showToast}
               setPage={setPage}
               onReportProblem={handleReportProblem}
+              initialTab={volunteerInitialTab}
+              onInitialConsumed={() => setVolunteerInitialTab(null)}
             />
           )}
 
@@ -171,6 +180,8 @@ export default function VolunTag() {
               onRestart={handleReportRestart}
               reporterEmail={reporterEmail}
               setPage={setPage}
+              onGoToMessages={() => goToVolunteerDashboard("messages")}
+              onGoToDashboard={() => goToVolunteerDashboard(null)}
             />
           )}
         </div>
