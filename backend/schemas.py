@@ -308,6 +308,7 @@ class VolunteerIssueEntry(BaseModel):
 class AdminResolutionEntry(BaseModel):
     resolution_id: int
     complaint_id: str
+    ngo_id: int
     ngo_name: str
     location: Optional[str]
     description: Optional[str]
@@ -316,6 +317,64 @@ class AdminResolutionEntry(BaseModel):
     document_name: Optional[str]
     status: str
     submitted_at: datetime
+    image_count: int = 0
+
+
+# ─── Admin Console ────────────────────────────────────────────────
+class AdminLoginRequest(BaseModel):
+    password: str = Field(..., min_length=1, max_length=256)
+
+
+class AdminLoginResponse(BaseModel):
+    token: str
+    expires_at: str
+
+
+class AdminMeResponse(BaseModel):
+    ok: bool
+    expires_at: str
+
+
+class AdminResolutionNGO(BaseModel):
+    id: int
+    name: str
+    email: Optional[str]
+    location: Optional[str]
+    verification_status: str
+
+
+class AdminResolutionIssue(BaseModel):
+    complaint_id: str
+    reporter_name: Optional[str]
+    reporter_email: Optional[str]
+    location: str
+    user_description: str
+    status: str
+    created_at: datetime
+    image_count: int
+
+
+class AdminOtherResolution(BaseModel):
+    id: int
+    ngo_name: Optional[str]
+    status: str
+    submitted_at: datetime
+
+
+class AdminResolutionDetail(BaseModel):
+    id: int
+    complaint_id: str
+    ngo_id: int
+    solution_type: str
+    solution_text: Optional[str]
+    document_name: Optional[str]
+    status: str
+    reject_reason: Optional[str]
+    submitted_at: datetime
+    decided_at: Optional[datetime]
+    ngo: Optional[AdminResolutionNGO]
+    issue: Optional[AdminResolutionIssue]
+    other_resolutions: list[AdminOtherResolution]
 
 
 class RejectRequest(BaseModel):

@@ -261,3 +261,35 @@ class EmbeddingDB(Base):
         DateTime,
         default=datetime.utcnow,
     )
+
+
+class AdminSessionDB(Base):
+    """A logged-in admin console session. Only a hash of the token is stored."""
+
+    __tablename__ = "admin_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # sha256 hex of the bearer token handed to the browser
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+
+class AdminActionDB(Base):
+    """Audit log of actions taken in the admin console."""
+
+    __tablename__ = "admin_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    action = Column(String(50), nullable=False)       # e.g. "login", "approve_resolution"
+    target_type = Column(String(50), nullable=True)   # e.g. "resolution", "session"
+    target_id = Column(String(64), nullable=True)
+
+    # JSON-encoded dict of extra context; never contains passwords or tokens
+    details = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

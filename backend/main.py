@@ -8,13 +8,12 @@ import logging
 import mimetypes
 import os
 import re
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sklearn.metrics.pairwise import cosine_similarity
@@ -23,6 +22,8 @@ from sqlalchemy.orm import Session
 import numpy as np
 
 try:
+    from .admin import router as admin_router
+    from .admin_auth import is_admin_request, log_admin_action, require_admin
     from .database import Base, SessionLocal, engine, get_db
     from .db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from .embedding_store import get_vectors, refresh_vector
@@ -53,6 +54,8 @@ try:
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
+    from admin import router as admin_router
+    from admin_auth import is_admin_request, log_admin_action, require_admin
     from database import Base, SessionLocal, engine, get_db
     from db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from embedding_store import get_vectors, refresh_vector
@@ -92,8 +95,6 @@ MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
 MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESOLUTIONS_UPLOAD_DIR = UPLOAD_DIR / "resolutions"
 RESOLUTIONS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-ADMIN_KEY = os.environ.get("VOLUNTAG_ADMIN_KEY", "voluntag-demo-admin")
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -140,6 +141,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(admin_router)
 
 
 # ─── Startup / Seed Data ───────────────────────────────────────────
@@ -197,23 +200,6 @@ async def save_ngo_file(
         file.write(contents)
 
     return safe_name
-
-
-def is_admin_key(key: Optional[str]) -> bool:
-    return secrets.compare_digest(
-        (key or "").encode("utf-8"),
-        ADMIN_KEY.encode("utf-8"),
-    )
-
-
-def require_admin(x_admin_key: str = Header(default="")) -> None:
-    """Dependency: reject the request unless it carries the admin key."""
-
-    if not is_admin_key(x_admin_key):
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required",
-        )
 
 
 def safe_upload_path(base_dir: Path, stored_name) -> Optional[Path]:
@@ -1211,18 +1197,24 @@ def list_admin_resolutions(
     status: str = Query(default="Under evaluation"),
     db: Session = Depends(get_db),
 ):
-    """List submitted proofs, newest first, filtered by resolution status."""
+    """List submitted proofs, newest first, filtered by resolution status (or "all")."""
 
-    if status not in RESOLUTION_STATUSES:
+    if status != "all" and status not in RESOLUTION_STATUSES:
         raise HTTPException(
             status_code=422,
-            detail=f"status must be one of: {', '.join(RESOLUTION_STATUSES)}",
+            detail=f"status must be one of: all, {', '.join(RESOLUTION_STATUSES)}",
         )
 
-    rows = (
+    query = (
         db.query(IssueResolutionDB, NGODB.name)
         .join(NGODB, IssueResolutionDB.ngo_id == NGODB.id)
-        .filter(IssueResolutionDB.status == status)
+    )
+
+    if status != "all":
+        query = query.filter(IssueResolutionDB.status == status)
+
+    rows = (
+        query
         .order_by(
             IssueResolutionDB.submitted_at.desc(),
             IssueResolutionDB.id.desc(),
@@ -1249,6 +1241,7 @@ def list_admin_resolutions(
         entries.append(AdminResolutionEntry(
             resolution_id=res.id,
             complaint_id=res.complaint_id,
+            ngo_id=res.ngo_id,
             ngo_name=ngo_name,
             location=issue.location if issue else None,
             description=issue.user_description[:200] if issue else None,
@@ -1257,6 +1250,7 @@ def list_admin_resolutions(
             document_name=res.document_name,
             status=res.status,
             submitted_at=res.submitted_at,
+            image_count=len(issue.image_paths) if issue and issue.image_paths else 0,
         ))
 
     return entries
@@ -1330,11 +1324,12 @@ def approve_resolution(
         ).first()
 
     # Notify the reporter from the solving NGO (a message needs a sender email).
+    # Emails are lowercased so the message lands in the existing thread.
     if volunteer and ngo and ngo.email:
         db.add(MessageDB(
-            sender_email=ngo.email,
+            sender_email=ngo.email.strip().lower(),
             sender_role="ngo",
-            recipient_email=volunteer.email,
+            recipient_email=volunteer.email.strip().lower(),
             recipient_role="volunteer",
             message_type="text",
             body=(
@@ -1343,6 +1338,12 @@ def approve_resolution(
                 f"Thank you for reporting it."
             ),
         ))
+
+    log_admin_action(db, "approve_resolution", "resolution", resolution.id, {
+        "complaint_id": resolution.complaint_id,
+        "ngo_name": ngo.name if ngo else None,
+        "closed_resolution_ids": [other.id for other in competing],
+    })
 
     db.commit()
 
@@ -1395,6 +1396,16 @@ def reject_resolution(
     if issue and not still_pending and issue.status == "Under evaluation":
         issue.status = "Reported"
 
+    ngo_name = db.query(NGODB.name).filter(
+        NGODB.id == resolution.ngo_id,
+    ).scalar()
+
+    log_admin_action(db, "reject_resolution", "resolution", resolution.id, {
+        "complaint_id": resolution.complaint_id,
+        "ngo_name": ngo_name,
+        "reason": payload.reason,
+    })
+
     db.commit()
 
     return {
@@ -1430,7 +1441,7 @@ def get_issue_photo(
     complaint_id: str,
     index: int,
     email: str = Query(default=""),
-    admin_key: str = Query(default=""),
+    is_admin: bool = Depends(is_admin_request),
     db: Session = Depends(get_db),
 ):
     """Serve one photo of a reported issue to its reporter, a matched NGO, or an admin."""
@@ -1443,7 +1454,7 @@ def get_issue_photo(
             detail=f"Issue '{complaint_id}' not found",
         )
 
-    allowed = is_admin_key(admin_key) or is_issue_reporter(issue, email)
+    allowed = is_admin or is_issue_reporter(issue, email)
 
     if not allowed and email.strip():
         ngo = db.query(NGODB).filter(
@@ -1471,7 +1482,7 @@ def get_resolution_file(
     resolution_id: int,
     kind: str,
     email: str = Query(default=""),
-    admin_key: str = Query(default=""),
+    is_admin: bool = Depends(is_admin_request),
     db: Session = Depends(get_db),
 ):
     """Serve a proof file to the submitting NGO, the issue's reporter, or an admin."""
@@ -1486,7 +1497,7 @@ def get_resolution_file(
     if kind not in ("before", "after", "document"):
         raise HTTPException(status_code=404, detail="File not found")
 
-    allowed = is_admin_key(admin_key)
+    allowed = is_admin
 
     if not allowed and email.strip():
         email_lower = email.strip().lower()
