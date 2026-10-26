@@ -14,6 +14,7 @@ import DashboardLogin from "./components/DashboardLogin";
 import VolunteerDashboard from "./components/volunteer/VolunteerDashboard";
 import NGODashboard from "./components/ngo/NGODashboard";
 import EventVolunteers from "./components/ngo/EventVolunteers";
+import ResolveIssue from "./components/ngo/ResolveIssue";
 import "./VolunTag.css";
  
 export default function VolunTag() {
@@ -23,6 +24,7 @@ export default function VolunTag() {
   const [dashboardEmail, setDashboardEmail] = useState("");
   const [reporterEmail, setReporterEmail] = useState("");
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [selectedIssue, setSelectedIssue] = useState(null);
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
   const [ngoReturnTab, setNgoReturnTab] = useState(null);
   const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
@@ -37,6 +39,13 @@ export default function VolunTag() {
       setPage("ngo-dashboard");
     }
   }, [page, selectedEvent, dashboardEmail]);
+
+  // The resolve-issue screen needs an issue and an NGO login; otherwise go back.
+  useEffect(() => {
+    if (page === "resolve-issue" && (!selectedIssue || !dashboardEmail)) {
+      setPage("ngo-dashboard");
+    }
+  }, [page, selectedIssue, dashboardEmail]);
 
   // Clear reporter identity when navigating back to landing (acts like logout).
   useEffect(() => {
@@ -126,6 +135,10 @@ export default function VolunTag() {
                 setSelectedEvent(ev);
                 setPage("event-volunteers");
               }}
+              onMarkSolved={(iss) => {
+                setSelectedIssue(iss);
+                setPage("resolve-issue");
+              }}
               initialTab={ngoReturnTab}
               initialChat={ngoChatTarget}
               onInitialConsumed={() => {
@@ -152,6 +165,18 @@ export default function VolunTag() {
               }}
               onConnect={(target) => {
                 setNgoChatTarget(target);
+                setPage("ngo-dashboard");
+              }}
+            />
+          )}
+
+          {page === "resolve-issue" && selectedIssue && dashboardEmail && (
+            <ResolveIssue
+              issue={selectedIssue}
+              ngoEmail={dashboardEmail}
+              showToast={showToast}
+              onBack={() => {
+                setNgoReturnTab("problems");
                 setPage("ngo-dashboard");
               }}
             />

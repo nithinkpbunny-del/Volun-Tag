@@ -4,6 +4,27 @@ import "./NGODashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 
+// One clickable thumbnail; hidden entirely if the image cannot be loaded.
+function PhotoThumb({ src, alt, caption }) {
+  return (
+    <div className="ngo-photo-item">
+      <a href={src} target="_blank" rel="noreferrer">
+        <img
+          className="ngo-photo-thumb"
+          src={src}
+          alt={alt}
+          loading="lazy"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+            e.currentTarget.closest(".ngo-photo-item").style.display = "none";
+          }}
+        />
+      </a>
+      {caption && <span className="ngo-photo-caption">{caption}</span>}
+    </div>
+  );
+}
+
 const EMPTY_EVENT = {
   title: "",
   required_skills: "",
@@ -17,6 +38,7 @@ export default function NGODashboard({
   showToast,
   setPage,
   onViewVolunteers,
+  onMarkSolved,
   initialTab,
   initialChat,
   onInitialConsumed,
@@ -92,6 +114,7 @@ export default function NGODashboard({
   const [issues, setIssues] = useState([]);
   const [loadingIssues, setLoadingIssues] = useState(true);
   const [expandedIssue, setExpandedIssue] = useState(null);
+  const [expandedSolved, setExpandedSolved] = useState(null);
 
   // ── Fetch profile ───────────────────────────────────────────────
   useEffect(() => {
@@ -237,8 +260,9 @@ export default function NGODashboard({
 
     let cancelled = false;
 
-    const loadIssues = async () => {
-      setLoadingIssues(true);
+    // The first call shows the loading state; later (silent) calls do not.
+    const loadIssues = async (silent) => {
+      if (!silent) setLoadingIssues(true);
 
       try {
         const res = await fetch(
@@ -255,14 +279,21 @@ export default function NGODashboard({
       } catch {
         // silent
       } finally {
-        if (!cancelled) setLoadingIssues(false);
+        if (!silent && !cancelled) setLoadingIssues(false);
       }
     };
 
-    loadIssues();
+    loadIssues(false);
+
+    // Silent refresh so proof statuses stay live (no loading flicker, no toasts).
+    const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      loadIssues(true);
+    }, 10000);
 
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [email]);
 
@@ -426,6 +457,19 @@ export default function NGODashboard({
     });
   };
 
+  // The pill reflects this NGO's own proof, never the shared issue status.
+  const issuePillLabel = (iss) => {
+    if (iss.resolution_status === "Under evaluation") return "Under evaluation";
+    if (iss.resolution_status === "Rejected") return "Proof rejected";
+    return "Reported";
+  };
+
+  const issuePhotoUrl = (complaintId, index) =>
+    `${API_BASE}/issue-files/issue/${complaintId}/${index}?email=${encodeURIComponent(email)}`;
+
+  const resolutionFileUrl = (resolutionId, kind) =>
+    `${API_BASE}/issue-files/resolution/${resolutionId}/${kind}?email=${encodeURIComponent(email)}`;
+
   const onField = (field) => (e) =>
     setFormData((prev) => ({ ...prev, [field]: e.target.value }));
 
@@ -454,6 +498,10 @@ export default function NGODashboard({
   const listedEvents = events.filter(
     (ev) => !(ev.is_completed && ev.status !== "Cancelled")
   );
+
+  // Open problems stay in Reported Problems; problems this NGO solved move to Activities.
+  const openIssues = issues.filter((iss) => !iss.solved);
+  const solvedIssues = issues.filter((iss) => iss.solved && iss.solved_by_me);
 
   return (
     <div className="page dashboard-page">
@@ -561,6 +609,100 @@ export default function NGODashboard({
                       </div>
                     </div>
                   ))}
+            </div>
+
+            {/* ── Solved problems ─────────────────────────────── */}
+            <div className="dashboard-section-header ngo-solved-section">
+              <span className="dashboard-section-title">Solved problems</span>
+              <span className="dashboard-section-sub">
+                {solvedIssues.length} total
+              </span>
+            </div>
+
+            <div className="dashboard-ngo-list">
+              {loadingIssues && (
+                <p className="dashboard-placeholder-text">Loading solved problems...</p>
+              )}
+
+              {!loadingIssues && solvedIssues.length === 0 && (
+                <div className="dashboard-placeholder-card" style={{ marginTop: "0.75rem" }}>
+                  <p className="dashboard-placeholder-title">No solved problems yet</p>
+                  <p className="dashboard-placeholder-text">
+                    Problems you solve appear here once your proof is verified.
+                  </p>
+                </div>
+              )}
+
+              {!loadingIssues &&
+                solvedIssues.map((iss) => (
+                  <div className="dashboard-ngo-row" key={iss.complaint_id}>
+                    <div className="dashboard-ngo-row-main">
+                      <div className="dashboard-ngo-info">
+                        <p className="dashboard-ngo-name">{iss.location}</p>
+                        <p className="dashboard-ngo-meta">
+                          Solved on {formatDate(iss.solved_at)} · {iss.complaint_id}
+                          {iss.reporter_name ? ` · Reported by ${iss.reporter_name}` : ""}
+                        </p>
+                      </div>
+
+                      <div className="dashboard-ngo-actions">
+                        <span className="ngo-event-status-badge status-solved">
+                          Solved
+                        </span>
+
+                        <button
+                          type="button"
+                          className="dashboard-view-btn"
+                          onClick={() =>
+                            setExpandedSolved(
+                              expandedSolved === iss.complaint_id ? null : iss.complaint_id
+                            )
+                          }
+                        >
+                          {expandedSolved === iss.complaint_id ? "Hide" : "Details"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {expandedSolved === iss.complaint_id && (
+                      <div className="dashboard-ngo-detail">
+                        <p>
+                          <strong>Description:</strong> {iss.user_description}
+                        </p>
+
+                        <p className="ngo-solution-block">
+                          <strong>Solution:</strong>{" "}
+                          {iss.solution_type === "document" ? (
+                            <a
+                              href={resolutionFileUrl(iss.resolution_id, "document")}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open document ({iss.document_name})
+                            </a>
+                          ) : (
+                            iss.solution_text
+                          )}
+                        </p>
+
+                        {iss.resolution_id && (
+                          <div className="ngo-photo-list">
+                            <PhotoThumb
+                              src={resolutionFileUrl(iss.resolution_id, "before")}
+                              alt="Before photo"
+                              caption="Your before photo"
+                            />
+                            <PhotoThumb
+                              src={resolutionFileUrl(iss.resolution_id, "after")}
+                              alt="After photo"
+                              caption="Your after photo"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           </>
         )}
@@ -993,7 +1135,7 @@ export default function NGODashboard({
             <div className="dashboard-section-header">
               <span className="dashboard-section-title">Reported Problems</span>
               <span className="dashboard-section-sub">
-                {issues.length} matched
+                {openIssues.length} matched
               </span>
             </div>
 
@@ -1002,7 +1144,7 @@ export default function NGODashboard({
                 <p className="dashboard-placeholder-text">Loading reported problems...</p>
               )}
 
-              {!loadingIssues && issues.length === 0 && (
+              {!loadingIssues && openIssues.length === 0 && (
                 <div className="dashboard-placeholder-card" style={{ marginTop: "0.75rem" }}>
                   <p className="dashboard-placeholder-title">No reported problems yet</p>
                   <p className="dashboard-placeholder-text">
@@ -1012,7 +1154,7 @@ export default function NGODashboard({
               )}
 
               {!loadingIssues &&
-                issues.map((iss) => (
+                openIssues.map((iss) => (
                   <div className="dashboard-ngo-row" key={iss.complaint_id}>
                     <div className="dashboard-ngo-row-main">
                       <div className="dashboard-ngo-info">
@@ -1025,9 +1167,9 @@ export default function NGODashboard({
 
                       <div className="dashboard-ngo-actions">
                         <span
-                          className={`ngo-event-status-badge issue-status-${(iss.status || "reported").toLowerCase().replace(/ /g, "-")}`}
+                          className={`ngo-event-status-badge issue-status-${issuePillLabel(iss).toLowerCase().replace(/ /g, "-")}`}
                         >
-                          {iss.status || "Reported"}
+                          {issuePillLabel(iss)}
                         </span>
 
                         <span className="ngo-issue-match-pct">
@@ -1122,6 +1264,62 @@ export default function NGODashboard({
                             Connect
                           </button>
                         </div>
+
+                        {iss.image_count > 0 && (
+                          <div className="ngo-photo-row">
+                            <p className="ngo-photo-row-label">
+                              <strong>Photos:</strong>
+                            </p>
+                            <div className="ngo-photo-list">
+                              {Array.from({ length: iss.image_count }, (_, index) => (
+                                <PhotoThumb
+                                  key={index}
+                                  src={issuePhotoUrl(iss.complaint_id, index)}
+                                  alt={`Reported photo ${index + 1}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {iss.resolution_id && (
+                          <div className="ngo-photo-list">
+                            <PhotoThumb
+                              src={resolutionFileUrl(iss.resolution_id, "before")}
+                              alt="Before photo"
+                              caption="Your before photo"
+                            />
+                            <PhotoThumb
+                              src={resolutionFileUrl(iss.resolution_id, "after")}
+                              alt="After photo"
+                              caption="Your after photo"
+                            />
+                          </div>
+                        )}
+
+                        {!iss.resolution_status && (
+                          <div className="ngo-issue-connect-row">
+                            <button
+                              type="button"
+                              className="dashboard-view-btn"
+                              onClick={() => onMarkSolved && onMarkSolved(iss)}
+                            >
+                              Mark as solved
+                            </button>
+                          </div>
+                        )}
+
+                        {iss.resolution_status === "Under evaluation" && (
+                          <p className="ngo-issue-note">
+                            Your proof has been submitted for evaluation. If it is verified and the issue is solved, it will be listed in your Activities section.
+                          </p>
+                        )}
+
+                        {iss.resolution_status === "Rejected" && (
+                          <p className="ngo-issue-note">
+                            Your proof was not accepted: {iss.reject_reason}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
