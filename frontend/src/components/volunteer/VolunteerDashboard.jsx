@@ -1,9 +1,46 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Messages from "../messaging/Messages";
 import "./VolunteerDashboard.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
+const MAX_ISSUE_IMAGES = 6;
+const MAX_ISSUE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+const readErrorDetail = async (res, fallback) => {
+  try {
+    const data = await res.json();
+    if (data && typeof data.detail === "string") {
+      return data.detail;
+    }
+  } catch {
+    // keep the fallback message
+  }
+  return fallback;
+};
+
+// One clickable thumbnail of a reported photo; hidden if the image cannot be loaded.
+function IssuePhotoThumb({ src, alt }) {
+  return (
+    <a
+      className="dashboard-issue-photo"
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+          e.currentTarget.parentNode.style.display = "none";
+        }}
+      />
+    </a>
+  );
+}
+
 export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem, initialTab, onInitialConsumed }) {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -21,6 +58,16 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   const [joiningId, setJoiningId] = useState(null);
   const [activityItems, setActivityItems] = useState([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
+  const [activitySubView, setActivitySubView] = useState("events");
+  const [myIssues, setMyIssues] = useState([]);
+  const [loadingIssues, setLoadingIssues] = useState(true);
+  const [editingIssueId, setEditingIssueId] = useState(null);
+  const [editForm, setEditForm] = useState({ user_description: "", location: "" });
+  const [editImages, setEditImages] = useState([]);
+  const [savingIssue, setSavingIssue] = useState(false);
+  const [deletingIssueId, setDeletingIssueId] = useState(null);
+  // Bumped after a save or delete so an older in-flight refresh cannot overwrite the result.
+  const issuesEpochRef = useRef(0);
 
   useEffect(() => {
     if (initialTab) {
@@ -136,6 +183,48 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       clearInterval(activityIntervalId);
     };
   }, [email, activeTab]);
+
+  // Silent reload of the volunteer's reported problems. It only replaces the list;
+  // the edit form lives in its own state, so typed text is never touched.
+  const loadMyIssues = useCallback(async () => {
+    if (!email) return;
+    const epoch = issuesEpochRef.current;
+    try {
+      const res = await fetch(
+        `${API_BASE}/volunteer-issues/${encodeURIComponent(email)}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data) && epoch === issuesEpochRef.current) {
+        setMyIssues(data);
+      }
+    } catch {
+      // ignore errors silently so polling never shows a toast
+    } finally {
+      setLoadingIssues(false);
+    }
+  }, [email]);
+
+  useEffect(() => {
+    if (!email || activeTab !== "activity") {
+      return undefined;
+    }
+
+    loadMyIssues();
+
+    if (activitySubView !== "problems") {
+      return undefined;
+    }
+
+    const issuesIntervalId = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      loadMyIssues();
+    }, 10000);
+
+    return () => {
+      clearInterval(issuesIntervalId);
+    };
+  }, [email, activeTab, activitySubView, loadMyIssues]);
 
   useEffect(() => {
     if (!email) {
@@ -342,6 +431,144 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     }
   };
 
+  const issuePhotoUrl = (complaintId, index) =>
+    `${API_BASE}/issue-files/issue/${encodeURIComponent(complaintId)}/${index}?email=${encodeURIComponent(email)}`;
+
+  const startEditIssue = (iss) => {
+    setEditingIssueId(iss.complaint_id);
+    setEditForm({
+      user_description: iss.user_description,
+      location: iss.location,
+    });
+    setEditImages([]);
+  };
+
+  const cancelEditIssue = () => {
+    setEditingIssueId(null);
+    setEditImages([]);
+  };
+
+  // Photos can only be added: the picked files are checked against the free slots.
+  const pickIssueImages = (iss) => (e) => {
+    const files = Array.from(e.target.files || []);
+    const freeSlots = MAX_ISSUE_IMAGES - iss.image_count;
+
+    if (files.some((f) => !f.type.startsWith("image/"))) {
+      showToast("Please choose image files only", "error");
+      e.target.value = "";
+      setEditImages([]);
+      return;
+    }
+
+    if (files.some((f) => f.size > MAX_ISSUE_IMAGE_BYTES)) {
+      showToast("Each photo must be 10 MB or smaller", "error");
+      e.target.value = "";
+      setEditImages([]);
+      return;
+    }
+
+    if (files.length > freeSlots) {
+      showToast(
+        `You can add up to ${freeSlots} more photo${freeSlots === 1 ? "" : "s"}`,
+        "error"
+      );
+      e.target.value = "";
+      setEditImages([]);
+      return;
+    }
+
+    setEditImages(files);
+  };
+
+  const saveIssue = async (iss) => {
+    if (savingIssue) return;
+
+    const description = editForm.user_description.trim();
+    const issueLocation = editForm.location.trim();
+
+    if (!description || !issueLocation) {
+      showToast("Description and location are required", "error");
+      return;
+    }
+
+    if (
+      description === iss.user_description &&
+      issueLocation === iss.location &&
+      editImages.length === 0
+    ) {
+      showToast("No changes to save", "info");
+      return;
+    }
+
+    setSavingIssue(true);
+
+    const formData = new FormData();
+    formData.append("user_description", description);
+    formData.append("location", issueLocation);
+    editImages.forEach((file) => {
+      formData.append("images", file);
+    });
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}?email=${encodeURIComponent(email)}`,
+        { method: "PATCH", body: formData }
+      );
+      if (res.ok) {
+        const updated = await res.json();
+        issuesEpochRef.current += 1;
+        setMyIssues((prev) =>
+          prev.map((item) =>
+            item.complaint_id === updated.complaint_id ? updated : item
+          )
+        );
+        setEditingIssueId(null);
+        setEditImages([]);
+        showToast("Your problem was updated");
+      } else {
+        showToast(
+          await readErrorDetail(res, "Could not update this problem"),
+          "error"
+        );
+        // The problem may have been locked meanwhile; pick up its new status.
+        await loadMyIssues();
+      }
+    } catch {
+      showToast("Could not update this problem", "error");
+    } finally {
+      setSavingIssue(false);
+    }
+  };
+
+  const deleteIssue = async (iss) => {
+    if (deletingIssueId !== null) return;
+    if (!window.confirm("Delete this reported problem? This cannot be undone.")) return;
+    setDeletingIssueId(iss.complaint_id);
+    try {
+      const res = await fetch(
+        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}?email=${encodeURIComponent(email)}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        issuesEpochRef.current += 1;
+        setMyIssues((prev) =>
+          prev.filter((item) => item.complaint_id !== iss.complaint_id)
+        );
+        showToast("Your problem was deleted");
+      } else {
+        showToast(
+          await readErrorDetail(res, "Could not delete this problem"),
+          "error"
+        );
+        await loadMyIssues();
+      }
+    } catch {
+      showToast("Could not delete this problem", "error");
+    } finally {
+      setDeletingIssueId(null);
+    }
+  };
+
   const locations = Array.from(
     new Set(ngos.map((n) => n.location).filter(Boolean))
   ).sort();
@@ -453,7 +680,234 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
           </div>
         )}
 
-        {activeTab === "activity" && (
+        {activeTab === "activity" && activitySubView === "events" && (
+          <div className="dashboard-activity-list dashboard-issue-summary">
+            <div className="dashboard-activity-item">
+              <div className="dashboard-activity-info">
+                <p className="dashboard-event-title">Reported problems</p>
+                <p className="dashboard-event-meta">
+                  {loadingIssues
+                    ? "Loading your reported problems..."
+                    : myIssues.length === 0
+                    ? "You haven't reported any problems yet."
+                    : `${myIssues.length} reported. View, edit or delete them here.`}
+                </p>
+              </div>
+
+              <div className="dashboard-activity-side">
+                <button
+                  type="button"
+                  className="dashboard-sidebar-msg-btn dashboard-activity-msg-btn"
+                  onClick={() => setActivitySubView("problems")}
+                >
+                  View reported problems
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "activity" && activitySubView === "problems" && (
+          <>
+            <div className="dashboard-issue-back">
+              <button
+                type="button"
+                className="dashboard-view-btn"
+                onClick={() => {
+                  cancelEditIssue();
+                  setActivitySubView("events");
+                }}
+              >
+                &#8592; Back to My Activity
+              </button>
+            </div>
+
+            <div className="dashboard-section-header">
+              <span className="dashboard-section-title">Reported problems</span>
+              <span className="dashboard-section-sub">
+                {myIssues.length} total
+              </span>
+            </div>
+
+            <div className="dashboard-issue-list">
+              {loadingIssues && (
+                <p className="dashboard-placeholder-text">Loading your reported problems...</p>
+              )}
+
+              {!loadingIssues && myIssues.length === 0 && (
+                <p className="dashboard-placeholder-text">
+                  You haven't reported any problems yet.
+                </p>
+              )}
+
+              {!loadingIssues &&
+                myIssues.map((iss) => {
+                  const pillLabel = iss.solved ? "Completed" : iss.status;
+                  const isReported = iss.status === "Reported";
+                  // A problem that gets locked while the form is open closes the form.
+                  const isEditing =
+                    isReported && editingIssueId === iss.complaint_id;
+                  const freeSlots = MAX_ISSUE_IMAGES - iss.image_count;
+
+                  return (
+                    <div className="dashboard-issue-item" key={iss.complaint_id}>
+                      <div className="dashboard-issue-head">
+                        <div className="dashboard-issue-info">
+                          <p className="dashboard-event-title">{iss.location}</p>
+                          <p className="dashboard-event-meta">
+                            {iss.complaint_id} · Reported on{" "}
+                            {new Date(iss.created_at).toLocaleDateString("en-IN", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </p>
+                          {iss.solved && iss.solved_by_ngo && (
+                            <p className="dashboard-event-meta">
+                              Solved by {iss.solved_by_ngo}
+                            </p>
+                          )}
+                          <p className="dashboard-issue-desc">{iss.user_description}</p>
+                        </div>
+
+                        <div className="dashboard-activity-side">
+                          <span
+                            className={`dashboard-issue-pill issue-${pillLabel
+                              .toLowerCase()
+                              .replace(/ /g, "-")}`}
+                          >
+                            {pillLabel}
+                          </span>
+                        </div>
+                      </div>
+
+                      {iss.image_count > 0 && (
+                        <div className="dashboard-issue-photos">
+                          {Array.from({ length: iss.image_count }, (_, index) => (
+                            <IssuePhotoThumb
+                              key={index}
+                              src={issuePhotoUrl(iss.complaint_id, index)}
+                              alt={`Reported photo ${index + 1}`}
+                            />
+                          ))}
+                        </div>
+                      )}
+
+                      {isReported && !isEditing && (
+                        <div className="dashboard-issue-actions">
+                          <button
+                            type="button"
+                            className="dashboard-view-btn"
+                            disabled={deletingIssueId !== null}
+                            onClick={() => startEditIssue(iss)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="dashboard-issue-delete-btn"
+                            disabled={deletingIssueId !== null}
+                            onClick={() => deleteIssue(iss)}
+                          >
+                            {deletingIssueId === iss.complaint_id ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
+                      )}
+
+                      {!isReported && (
+                        <p className="dashboard-issue-note">
+                          {iss.solved
+                            ? "Locked: this problem has been solved."
+                            : iss.status === "Under evaluation"
+                            ? "Locked: an NGO's proof for this problem is under evaluation."
+                            : "Locked: this problem can no longer be edited or deleted."}
+                        </p>
+                      )}
+
+                      {isEditing && (
+                        <div className="dashboard-issue-form">
+                          <div className="form-group">
+                            <label htmlFor={`issue-desc-${iss.complaint_id}`}>Description</label>
+                            <textarea
+                              id={`issue-desc-${iss.complaint_id}`}
+                              rows={4}
+                              maxLength={5000}
+                              value={editForm.user_description}
+                              onChange={(e) =>
+                                setEditForm((prev) => ({
+                                  ...prev,
+                                  user_description: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label htmlFor={`issue-loc-${iss.complaint_id}`}>Location</label>
+                            <input
+                              id={`issue-loc-${iss.complaint_id}`}
+                              type="text"
+                              maxLength={500}
+                              value={editForm.location}
+                              onChange={(e) =>
+                                setEditForm((prev) => ({
+                                  ...prev,
+                                  location: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label htmlFor={`issue-photos-${iss.complaint_id}`}>Add photos</label>
+                            <input
+                              id={`issue-photos-${iss.complaint_id}`}
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              disabled={freeSlots <= 0}
+                              onChange={pickIssueImages(iss)}
+                            />
+                            <span className="form-hint">
+                              {freeSlots <= 0
+                                ? `This problem already has the maximum of ${MAX_ISSUE_IMAGES} photos.`
+                                : `You can add up to ${freeSlots} more photo${freeSlots === 1 ? "" : "s"}, 10 MB each. Photos you already uploaded cannot be removed.`}
+                            </span>
+                            {editImages.length > 0 && (
+                              <p className="dashboard-issue-files">
+                                {editImages.map((f) => f.name).join(", ")}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="dashboard-issue-actions">
+                            <button
+                              type="button"
+                              className="dashboard-issue-save-btn"
+                              disabled={savingIssue}
+                              onClick={() => saveIssue(iss)}
+                            >
+                              {savingIssue ? "Saving..." : "Save changes"}
+                            </button>
+                            <button
+                              type="button"
+                              className="dashboard-view-btn"
+                              disabled={savingIssue}
+                              onClick={cancelEditIssue}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </>
+        )}
+
+        {activeTab === "activity" && activitySubView === "events" && (
           <div className="dashboard-activity-list">
             {loadingActivity && (
               <p className="dashboard-placeholder-text">Loading your activity...</p>
