@@ -5,14 +5,16 @@ os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import logging
+import mimetypes
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sklearn.metrics.pairwise import cosine_similarity
@@ -22,7 +24,7 @@ import numpy as np
 
 try:
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from .embedding_store import get_vectors, refresh_vector
     from .issue_service import (
         ISSUE_STATUSES,
@@ -44,13 +46,15 @@ try:
         VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
+        ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
+        RejectRequest,
     )
     from .migrations import ensure_signup_columns
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
 except ImportError:
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, ActivitySignupDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
     from embedding_store import get_vectors, refresh_vector
     from issue_service import (
         ISSUE_STATUSES,
@@ -72,6 +76,8 @@ except ImportError:
         VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
+        ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
+        RejectRequest,
     )
     from migrations import ensure_signup_columns
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
@@ -84,6 +90,10 @@ UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
 MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+RESOLUTIONS_UPLOAD_DIR = UPLOAD_DIR / "resolutions"
+RESOLUTIONS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ADMIN_KEY = os.environ.get("VOLUNTAG_ADMIN_KEY", "voluntag-demo-admin")
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -100,8 +110,18 @@ ALLOWED_DOCUMENT_TYPES = {
     "image/png",
 }
 
+ALLOWED_RESOLUTION_DOCUMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": (
+        "application/vnd.openxmlformats-officedocument."
+        "wordprocessingml.document"
+    ),
+}
+
 MAX_IMAGES = 6
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+MAX_DOCUMENT_SIZE = 5 * 1024 * 1024  # 5 MB per solution document
 
 MIN_EVENT_MATCH = 0.45  # minimum final score for an event to be shown
 
@@ -177,6 +197,210 @@ async def save_ngo_file(
         file.write(contents)
 
     return safe_name
+
+
+def is_admin_key(key: Optional[str]) -> bool:
+    return secrets.compare_digest(
+        (key or "").encode("utf-8"),
+        ADMIN_KEY.encode("utf-8"),
+    )
+
+
+def require_admin(x_admin_key: str = Header(default="")) -> None:
+    """Dependency: reject the request unless it carries the admin key."""
+
+    if not is_admin_key(x_admin_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+
+def safe_upload_path(base_dir: Path, stored_name) -> Optional[Path]:
+    """Resolve a stored bare filename inside base_dir, or None if unsafe."""
+
+    name = Path(str(stored_name or "")).name
+
+    if not name or name in {".", ".."}:
+        return None
+
+    path = (base_dir / name).resolve()
+
+    try:
+        path.relative_to(base_dir.resolve())
+    except ValueError:
+        return None
+
+    return path
+
+
+def save_image_upload(
+    file: UploadFile,
+    dest_dir: Path,
+    prefix: str,
+) -> tuple[str, Path]:
+    """Validate and save one image; return (stored filename, full path)."""
+
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File '{file.filename}' is not a supported "
+                f"image type. Allowed: JPEG, PNG, GIF, "
+                f"WebP, BMP, TIFF."
+            ),
+        )
+
+    contents = file.file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{file.filename}' is empty.",
+        )
+
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File '{file.filename}' exceeds the "
+                f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
+                f"size limit."
+            ),
+        )
+
+    ext = Path(file.filename or "").suffix.lower() if file.filename else ""
+
+    if ext not in {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+    }:
+        ext = ".jpg"
+
+    stored_name = f"{prefix}{uuid.uuid4().hex}{ext}"
+    dest = dest_dir / stored_name
+
+    with open(dest, "wb") as out:
+        out.write(contents)
+
+    return stored_name, dest
+
+
+def save_document_upload(
+    file: UploadFile,
+    dest_dir: Path,
+) -> tuple[str, str, Path]:
+    """Validate and save a solution document.
+
+    Returns (stored filename, original filename, full path).
+    """
+
+    original_name = Path(file.filename or "").name
+    ext = Path(original_name).suffix.lower()
+
+    if (
+        ext not in ALLOWED_RESOLUTION_DOCUMENT_TYPES
+        or file.content_type != ALLOWED_RESOLUTION_DOCUMENT_TYPES[ext]
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="The document must be a PDF, DOC, or DOCX file.",
+        )
+
+    contents = file.file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{original_name}' is empty.",
+        )
+
+    if len(contents) > MAX_DOCUMENT_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File '{original_name}' exceeds the "
+                f"{MAX_DOCUMENT_SIZE // (1024 * 1024)} MB "
+                f"size limit."
+            ),
+        )
+
+    stored_name = f"doc_{uuid.uuid4().hex}{ext}"
+    dest = dest_dir / stored_name
+
+    with open(dest, "wb") as out:
+        out.write(contents)
+
+    return stored_name, original_name[:255], dest
+
+
+def issue_matches_ngo(issue: IssueDB, ngo: NGODB) -> bool:
+    """True when the NGO appears in the issue's AI recommendations."""
+
+    recs = issue.recommended_ngos
+
+    if not recs or not isinstance(recs, list):
+        return False
+
+    return any(
+        isinstance(entry, dict) and entry.get("ngo") == ngo.name
+        for entry in recs
+    )
+
+
+def is_issue_reporter(issue: IssueDB, email: str) -> bool:
+    return bool(
+        issue.reporter_email
+        and issue.reporter_email.strip().lower() == email.strip().lower()
+    )
+
+
+def get_owned_issue(db: Session, complaint_id: str, email: str) -> IssueDB:
+    """Return the issue, or raise 404 / 403 if it is missing or not the reporter's."""
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
+        )
+
+    if not is_issue_reporter(issue, email):
+        raise HTTPException(
+            status_code=403,
+            detail="This problem was not reported by you",
+        )
+
+    return issue
+
+
+def approved_resolutions(
+    db: Session,
+    complaint_ids: list[str],
+) -> dict[str, tuple[IssueResolutionDB, str]]:
+    """Map complaint_id -> (Approved resolution, solving NGO name) in one query."""
+
+    if not complaint_ids:
+        return {}
+
+    rows = (
+        db.query(IssueResolutionDB, NGODB.name)
+        .join(NGODB, IssueResolutionDB.ngo_id == NGODB.id)
+        .filter(
+            IssueResolutionDB.complaint_id.in_(complaint_ids),
+            IssueResolutionDB.status == "Approved",
+        )
+        .all()
+    )
+
+    return {res.complaint_id: (res, name) for res, name in rows}
 
 
 def get_owned_event(db: Session, event_id: int, ngo_email: str) -> ActivityDB:
@@ -456,6 +680,7 @@ def get_issue(
 @app.put(
     "/issues/{complaint_id}/status",
     response_model=IssueResponse,
+    dependencies=[Depends(require_admin)],
 )
 def change_issue_status(
     complaint_id: str,
@@ -483,6 +708,7 @@ def change_issue_status(
 @app.delete(
     "/issues/{complaint_id}",
     response_model=IssueDeleteResponse,
+    dependencies=[Depends(require_admin)],
 )
 def remove_issue(
     complaint_id: str,
@@ -515,6 +741,783 @@ def issue_stats(
     db: Session = Depends(get_db),
 ):
     return get_issue_stats(db)
+
+
+# ─── NGO Submits Proof of Resolution ──────────────────────────────
+@app.post(
+    "/issues/{complaint_id}/resolution",
+    response_model=ResolutionResponse,
+    status_code=201,
+)
+def submit_issue_resolution(
+    complaint_id: str,
+    ngo_email: str = Form(...),
+    solution_type: str = Form(...),
+    solution_text: Optional[str] = Form(default=None),
+    document: Optional[UploadFile] = File(default=None),
+    before_photo: Optional[UploadFile] = File(default=None),
+    after_photo: Optional[UploadFile] = File(default=None),
+    db: Session = Depends(get_db),
+):
+    """Store an NGO's proof that it solved a reported problem."""
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
+        )
+
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == ngo_email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{ngo_email}'",
+        )
+
+    if not issue_matches_ngo(issue, ngo):
+        raise HTTPException(
+            status_code=403,
+            detail="This problem was not reported to your NGO",
+        )
+
+    if issue.status == "Resolved":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem has already been solved",
+        )
+
+    already_submitted = db.query(IssueResolutionDB.id).filter(
+        IssueResolutionDB.complaint_id == issue.complaint_id,
+        IssueResolutionDB.ngo_id == ngo.id,
+    ).first()
+
+    if already_submitted:
+        raise HTTPException(
+            status_code=400,
+            detail="Your NGO has already submitted proof for this problem",
+        )
+
+    solution_type = solution_type.strip()
+
+    if solution_type not in ("written", "document"):
+        raise HTTPException(
+            status_code=422,
+            detail="solution_type must be 'written' or 'document'",
+        )
+
+    # Empty file parts (no file chosen) count as not provided.
+    document = document if document is not None and document.filename else None
+    before_photo = (
+        before_photo if before_photo is not None and before_photo.filename else None
+    )
+    after_photo = (
+        after_photo if after_photo is not None and after_photo.filename else None
+    )
+
+    solution_text = (solution_text or "").strip()
+
+    if solution_type == "written":
+        if not 50 <= len(solution_text) <= 5000:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The written solution must be between 50 and "
+                    "5000 characters."
+                ),
+            )
+
+        if document is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either a written solution or a document, not both",
+            )
+
+    else:
+        if document is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A document is required when the solution type is 'document'",
+            )
+
+        if solution_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either a written solution or a document, not both",
+            )
+
+    if before_photo is None or after_photo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Both a before photo and an after photo are required",
+        )
+
+    saved_full_paths: list[Path] = []
+
+    try:
+        before_name, before_path = save_image_upload(
+            before_photo, RESOLUTIONS_UPLOAD_DIR, "before_",
+        )
+        saved_full_paths.append(before_path)
+
+        after_name, after_path = save_image_upload(
+            after_photo, RESOLUTIONS_UPLOAD_DIR, "after_",
+        )
+        saved_full_paths.append(after_path)
+
+        document_path = None
+        document_name = None
+
+        if solution_type == "document":
+            document_path, document_name, doc_full_path = save_document_upload(
+                document, RESOLUTIONS_UPLOAD_DIR,
+            )
+            saved_full_paths.append(doc_full_path)
+
+        resolution = IssueResolutionDB(
+            complaint_id=issue.complaint_id,
+            ngo_id=ngo.id,
+            solution_type=solution_type,
+            solution_text=solution_text if solution_type == "written" else None,
+            document_path=document_path,
+            document_name=document_name,
+            before_photo=before_name,
+            after_photo=after_name,
+            status="Under evaluation",
+        )
+        db.add(resolution)
+        issue.status = "Under evaluation"
+        db.commit()
+        db.refresh(resolution)
+
+    except HTTPException:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        raise
+
+    except Exception:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to save issue resolution")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save the resolution.",
+        )
+
+    return ResolutionResponse(
+        resolution_id=resolution.id,
+        complaint_id=resolution.complaint_id,
+        status=resolution.status,
+        submitted_at=resolution.submitted_at,
+    )
+
+
+# ─── Volunteer's Own Reported Problems ────────────────────────────
+def build_volunteer_issue_entry(
+    issue: IssueDB,
+    solved_map: dict[str, tuple[IssueResolutionDB, str]],
+) -> VolunteerIssueEntry:
+    solved_res, solved_ngo_name = solved_map.get(
+        issue.complaint_id, (None, None),
+    )
+
+    return VolunteerIssueEntry(
+        complaint_id=issue.complaint_id,
+        location=issue.location,
+        user_description=issue.user_description,
+        status=issue.status,
+        created_at=issue.created_at,
+        updated_at=issue.updated_at,
+        image_count=len(issue.image_paths) if issue.image_paths else 0,
+        ngo_count=len(issue.recommended_ngos) if issue.recommended_ngos else 0,
+        editable=issue.status == "Reported",
+        solved=issue.status == "Resolved",
+        solved_by_ngo=solved_ngo_name,
+        solved_at=solved_res.decided_at if solved_res else None,
+    )
+
+
+@app.get(
+    "/volunteer-issues/{email}",
+    response_model=list[VolunteerIssueEntry],
+)
+def list_volunteer_issues(
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """Return the problems reported by one volunteer, newest first."""
+
+    email_lower = email.strip().lower()
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email_lower,
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    issues = (
+        db.query(IssueDB)
+        .filter(func.lower(IssueDB.reporter_email) == email_lower)
+        .order_by(IssueDB.created_at.desc(), IssueDB.id.desc())
+        .all()
+    )
+
+    solved_map = approved_resolutions(
+        db,
+        [i.complaint_id for i in issues if i.status == "Resolved"],
+    )
+
+    return [build_volunteer_issue_entry(i, solved_map) for i in issues]
+
+
+@app.patch(
+    "/volunteer-issues/{complaint_id}",
+    response_model=VolunteerIssueEntry,
+)
+def edit_volunteer_issue(
+    complaint_id: str,
+    email: str = Query(..., min_length=1),
+    user_description: Optional[str] = Form(default=None),
+    location: Optional[str] = Form(default=None),
+    images: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+):
+    """Edit a still-unhandled report: text can change, photos can only be added."""
+
+    issue = get_owned_issue(db, complaint_id, email)
+
+    if issue.status != "Reported":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem can no longer be edited",
+        )
+
+    # Empty file parts (no file chosen) count as not provided.
+    new_images = [img for img in images if img.filename]
+
+    if user_description is None and location is None and not new_images:
+        raise HTTPException(
+            status_code=400,
+            detail="Nothing to update",
+        )
+
+    changed = False
+
+    if user_description is not None:
+        user_description = user_description.strip()
+
+        if not user_description:
+            raise HTTPException(
+                status_code=422,
+                detail="user_description must not be empty",
+            )
+
+        changed = changed or user_description != issue.user_description
+
+    if location is not None:
+        location = location.strip()
+
+        if not location:
+            raise HTTPException(
+                status_code=422,
+                detail="location must not be empty",
+            )
+
+        changed = changed or location != issue.location
+
+    existing_paths = list(issue.image_paths or [])
+
+    if len(existing_paths) + len(new_images) > MAX_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many images. Maximum is {MAX_IMAGES}.",
+        )
+
+    saved_names: list[str] = []
+    saved_full_paths: list[Path] = []
+
+    try:
+        for img in new_images:
+            stored_name, dest = save_image_upload(img, UPLOAD_DIR, "")
+            saved_names.append(stored_name)
+            saved_full_paths.append(dest)
+
+    except HTTPException:
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        raise
+
+    except Exception:
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to save uploaded images")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save uploaded images.",
+        )
+
+    if user_description is not None:
+        issue.user_description = user_description
+
+    if location is not None:
+        issue.location = location
+
+    if saved_names:
+        # Assign a new list so the JSON column change is detected and saved.
+        issue.image_paths = existing_paths + saved_names
+        changed = True
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to update issue %s", issue.complaint_id)
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update the problem.",
+        )
+
+    db.refresh(issue)
+
+    if changed:
+        try:
+            result = process_issue(issue, db)
+
+            issue.ai_image_caption = result["ai_image_caption"]
+            issue.ai_scene_category = result["ai_scene_category"]
+            issue.merged_problem_description = (
+                result["merged_problem_description"]
+            )
+            issue.recommended_ngos = result["recommended_ngos"]
+            issue.recommendation_explanations = (
+                result["recommendation_explanations"]
+            )
+
+            db.commit()
+            db.refresh(issue)
+
+        except Exception:
+            logger.exception(
+                "AI re-processing failed for issue %s; "
+                "edits kept with the previous matches.",
+                issue.complaint_id,
+            )
+
+            db.rollback()
+            db.refresh(issue)
+
+    return build_volunteer_issue_entry(issue, {})
+
+
+@app.delete(
+    "/volunteer-issues/{complaint_id}",
+    response_model=IssueDeleteResponse,
+)
+def delete_volunteer_issue(
+    complaint_id: str,
+    email: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+):
+    """Delete a still-unhandled report together with its files."""
+
+    issue = get_owned_issue(db, complaint_id, email)
+
+    if issue.status != "Reported":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A problem that is under evaluation or already solved "
+                "cannot be deleted"
+            ),
+        )
+
+    files_to_remove: list[Path] = []
+
+    image_names = (
+        issue.image_paths if isinstance(issue.image_paths, list) else []
+    )
+
+    for name in image_names:
+        path = safe_upload_path(UPLOAD_DIR, name)
+
+        if path:
+            files_to_remove.append(path)
+
+    # Only Rejected resolutions can exist for a "Reported" issue.
+    resolutions = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.complaint_id == issue.complaint_id,
+    ).all()
+
+    for resolution in resolutions:
+        for name in (
+            resolution.before_photo,
+            resolution.after_photo,
+            resolution.document_path,
+        ):
+            path = safe_upload_path(RESOLUTIONS_UPLOAD_DIR, name)
+
+            if path:
+                files_to_remove.append(path)
+
+        db.delete(resolution)
+
+    db.delete(issue)
+    db.commit()
+
+    # Remove files only after the rows are gone.
+    for path in files_to_remove:
+        path.unlink(missing_ok=True)
+
+    return {
+        "message": f"Issue '{complaint_id}' deleted",
+        "complaint_id": complaint_id,
+    }
+
+
+# ─── Admin: Review Resolutions ────────────────────────────────────
+RESOLUTION_STATUSES = ("Under evaluation", "Approved", "Rejected", "Closed")
+
+
+@app.get(
+    "/admin/resolutions",
+    response_model=list[AdminResolutionEntry],
+    dependencies=[Depends(require_admin)],
+)
+def list_admin_resolutions(
+    status: str = Query(default="Under evaluation"),
+    db: Session = Depends(get_db),
+):
+    """List submitted proofs, newest first, filtered by resolution status."""
+
+    if status not in RESOLUTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of: {', '.join(RESOLUTION_STATUSES)}",
+        )
+
+    rows = (
+        db.query(IssueResolutionDB, NGODB.name)
+        .join(NGODB, IssueResolutionDB.ngo_id == NGODB.id)
+        .filter(IssueResolutionDB.status == status)
+        .order_by(
+            IssueResolutionDB.submitted_at.desc(),
+            IssueResolutionDB.id.desc(),
+        )
+        .all()
+    )
+
+    complaint_ids = list({res.complaint_id for res, _ in rows})
+    issues_by_id = {}
+
+    if complaint_ids:
+        issues_by_id = {
+            i.complaint_id: i
+            for i in db.query(IssueDB).filter(
+                IssueDB.complaint_id.in_(complaint_ids),
+            ).all()
+        }
+
+    entries: list[AdminResolutionEntry] = []
+
+    for res, ngo_name in rows:
+        issue = issues_by_id.get(res.complaint_id)
+
+        entries.append(AdminResolutionEntry(
+            resolution_id=res.id,
+            complaint_id=res.complaint_id,
+            ngo_name=ngo_name,
+            location=issue.location if issue else None,
+            description=issue.user_description[:200] if issue else None,
+            solution_type=res.solution_type,
+            solution_text=res.solution_text,
+            document_name=res.document_name,
+            status=res.status,
+            submitted_at=res.submitted_at,
+        ))
+
+    return entries
+
+
+@app.post(
+    "/admin/resolutions/{resolution_id}/approve",
+    dependencies=[Depends(require_admin)],
+)
+def approve_resolution(
+    resolution_id: int,
+    db: Session = Depends(get_db),
+):
+    """Accept an NGO's proof: the issue becomes Resolved and the reporter is told."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Resolution '{resolution_id}' not found",
+        )
+
+    if resolution.status != "Under evaluation":
+        raise HTTPException(
+            status_code=400,
+            detail="This proof is not under evaluation",
+        )
+
+    issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{resolution.complaint_id}' not found",
+        )
+
+    if issue.status == "Resolved":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem has already been solved",
+        )
+
+    now = datetime.utcnow()
+
+    resolution.status = "Approved"
+    resolution.decided_at = now
+
+    competing = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.complaint_id == resolution.complaint_id,
+        IssueResolutionDB.id != resolution.id,
+        IssueResolutionDB.status == "Under evaluation",
+    ).all()
+
+    for other in competing:
+        other.status = "Closed"
+        other.reject_reason = "Another NGO's proof was approved"
+        other.decided_at = now
+
+    issue.status = "Resolved"
+
+    ngo = db.query(NGODB).filter(NGODB.id == resolution.ngo_id).first()
+
+    volunteer = None
+
+    if issue.reporter_email:
+        volunteer = db.query(VolunteerDB).filter(
+            func.lower(VolunteerDB.email) == issue.reporter_email.strip().lower(),
+        ).first()
+
+    # Notify the reporter from the solving NGO (a message needs a sender email).
+    if volunteer and ngo and ngo.email:
+        db.add(MessageDB(
+            sender_email=ngo.email,
+            sender_role="ngo",
+            recipient_email=volunteer.email,
+            recipient_role="volunteer",
+            message_type="text",
+            body=(
+                f"Good news! {ngo.name} has marked the problem you "
+                f"reported ({issue.complaint_id}) as solved. "
+                f"Thank you for reporting it."
+            ),
+        ))
+
+    db.commit()
+
+    return {
+        "resolution_id": resolution.id,
+        "complaint_id": resolution.complaint_id,
+        "status": resolution.status,
+    }
+
+
+@app.post(
+    "/admin/resolutions/{resolution_id}/reject",
+    dependencies=[Depends(require_admin)],
+)
+def reject_resolution(
+    resolution_id: int,
+    payload: RejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Reject an NGO's proof with a reason."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Resolution '{resolution_id}' not found",
+        )
+
+    if resolution.status != "Under evaluation":
+        raise HTTPException(
+            status_code=400,
+            detail="This proof is not under evaluation",
+        )
+
+    resolution.status = "Rejected"
+    resolution.reject_reason = payload.reason
+    resolution.decided_at = datetime.utcnow()
+
+    issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+
+    still_pending = db.query(IssueResolutionDB.id).filter(
+        IssueResolutionDB.complaint_id == resolution.complaint_id,
+        IssueResolutionDB.id != resolution.id,
+        IssueResolutionDB.status == "Under evaluation",
+    ).first()
+
+    if issue and not still_pending and issue.status == "Under evaluation":
+        issue.status = "Reported"
+
+    db.commit()
+
+    return {
+        "resolution_id": resolution.id,
+        "complaint_id": resolution.complaint_id,
+        "status": resolution.status,
+    }
+
+
+# ─── Safe File Serving for Issue Photos and Proofs ────────────────
+def serve_stored_file(
+    base_dir: Path,
+    stored_name,
+    filename: Optional[str] = None,
+) -> FileResponse:
+    """Serve one stored file from base_dir, or 404 if it is unsafe or missing."""
+
+    path = safe_upload_path(base_dir, stored_name)
+
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+    if filename:
+        return FileResponse(path=path, media_type=media_type, filename=filename)
+
+    return FileResponse(path=path, media_type=media_type)
+
+
+@app.get("/issue-files/issue/{complaint_id}/{index}")
+def get_issue_photo(
+    complaint_id: str,
+    index: int,
+    email: str = Query(default=""),
+    admin_key: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    """Serve one photo of a reported issue to its reporter, a matched NGO, or an admin."""
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
+        )
+
+    allowed = is_admin_key(admin_key) or is_issue_reporter(issue, email)
+
+    if not allowed and email.strip():
+        ngo = db.query(NGODB).filter(
+            NGODB.email.isnot(None),
+            func.lower(NGODB.email) == email.strip().lower(),
+        ).first()
+        allowed = bool(ngo and issue_matches_ngo(issue, ngo))
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this file",
+        )
+
+    names = issue.image_paths if isinstance(issue.image_paths, list) else []
+
+    if index < 0 or index >= len(names):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return serve_stored_file(UPLOAD_DIR, names[index])
+
+
+@app.get("/issue-files/resolution/{resolution_id}/{kind}")
+def get_resolution_file(
+    resolution_id: int,
+    kind: str,
+    email: str = Query(default=""),
+    admin_key: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    """Serve a proof file to the submitting NGO, the issue's reporter, or an admin."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if kind not in ("before", "after", "document"):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    allowed = is_admin_key(admin_key)
+
+    if not allowed and email.strip():
+        email_lower = email.strip().lower()
+
+        ngo = db.query(NGODB).filter(NGODB.id == resolution.ngo_id).first()
+        allowed = bool(
+            ngo and ngo.email and ngo.email.strip().lower() == email_lower
+        )
+
+        if not allowed:
+            issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+            allowed = bool(issue and is_issue_reporter(issue, email_lower))
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this file",
+        )
+
+    if kind == "document":
+        return serve_stored_file(
+            RESOLUTIONS_UPLOAD_DIR,
+            resolution.document_path,
+            filename=resolution.document_name,
+        )
+
+    stored_name = (
+        resolution.before_photo if kind == "before" else resolution.after_photo
+    )
+
+    return serve_stored_file(RESOLUTIONS_UPLOAD_DIR, stored_name)
 
 
 # ─── Volunteer Registration ────────────────────────────────────────
@@ -1366,12 +2369,37 @@ def get_ngo_issues(
         .all()
     )
 
+    # This NGO's own proofs, and the Approved proof of every Resolved issue.
+    own_resolutions = {
+        res.complaint_id: res
+        for res in db.query(IssueResolutionDB).filter(
+            IssueResolutionDB.ngo_id == ngo.id,
+        ).all()
+    }
+    approved_by_issue = {
+        complaint_id: res
+        for complaint_id, (res, _name) in approved_resolutions(
+            db,
+            [i.complaint_id for i in all_issues if i.status == "Resolved"],
+        ).items()
+    }
+
     matched: list[NGOIssueEntry] = []
 
     for issue in all_issues:
         recs = issue.recommended_ngos
         if not recs or not isinstance(recs, list):
             continue
+
+        # A solved issue stays visible only to the NGO whose proof was approved.
+        solved_res = None
+        if issue.status == "Resolved":
+            solved_res = approved_by_issue.get(issue.complaint_id)
+            if solved_res is None or solved_res.ngo_id != ngo.id:
+                continue
+
+        own_res = own_resolutions.get(issue.complaint_id)
+        shown_res = solved_res or own_res
 
         expls = issue.recommendation_explanations
         if not isinstance(expls, list):
@@ -1395,6 +2423,16 @@ def get_ngo_issues(
                     reporter_email=issue.reporter_email,
                     ai_image_caption=issue.ai_image_caption,
                     ai_scene_category=issue.ai_scene_category,
+                    resolution_status=own_res.status if own_res else None,
+                    reject_reason=own_res.reject_reason if own_res else None,
+                    solved=solved_res is not None,
+                    solved_by_me=solved_res is not None,
+                    solved_at=solved_res.decided_at if solved_res else None,
+                    solution_type=shown_res.solution_type if shown_res else None,
+                    solution_text=shown_res.solution_text if shown_res else None,
+                    document_name=shown_res.document_name if shown_res else None,
+                    resolution_id=shown_res.id if shown_res else None,
+                    image_count=len(issue.image_paths) if issue.image_paths else 0,
                 ))
                 break  # one match per issue is enough
 

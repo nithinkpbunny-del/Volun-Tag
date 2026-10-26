@@ -132,6 +132,7 @@ CATEGORY_LABELS = list(CATEGORY_KEYWORDS.keys())
 
 CATEGORY_BOOST = 0.15
 TOP_N = 3
+MIN_ISSUE_MATCH = 0.45  # every NGO at or above this score is also flagged
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
@@ -320,7 +321,7 @@ def _generate_explanation(
 # ─── Main pipeline ──────────────────────────────────────────────────
 
 def process_issue(issue: IssueDB, db: Session) -> dict:
-    """Analyse a reported issue and recommend the top NGOs.
+    """Analyse a reported issue and recommend the relevant NGOs.
 
     Parameters
     ----------
@@ -336,7 +337,8 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         ``merged_problem_description`` – the combined issue text used for
         matching (includes image captions and detected category when
         available).
-        ``recommended_ngos`` – list of up to 3 recommendation dicts, each
+        ``recommended_ngos`` – the top 3 NGOs plus every NGO at or above
+        45% (MIN_ISSUE_MATCH), ordered by score; each a recommendation dict
         containing: ngo, ngo_category, ngo_motto, score, percentage,
         confidence.
         ``recommendation_explanations`` – parallel list of explanation
@@ -403,9 +405,12 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         for j, ngo in enumerate(ngos)
     ])
 
-    # 7. Rank and select top-N
-    top_count = min(TOP_N, len(ngos))
-    top_indices = np.argsort(boosted_scores)[::-1][:top_count]
+    # 7. Rank; always keep the top-N, plus every NGO at or above the threshold
+    order = np.argsort(boosted_scores)[::-1]
+    top_indices = [
+        i for rank, i in enumerate(order)
+        if rank < TOP_N or boosted_scores[i] >= MIN_ISSUE_MATCH
+    ]
 
     # 8. Build recommendation list
     recommended_ngos: list[dict] = []

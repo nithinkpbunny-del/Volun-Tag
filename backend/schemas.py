@@ -85,6 +85,7 @@ class IssueCreate(BaseModel):
 class IssueStatusUpdate(BaseModel):
     status: Literal[
         "Reported",
+        "Under evaluation",
         "Accepted",
         "In Progress",
         "Resolved",
@@ -263,11 +264,72 @@ class NGOIssueEntry(BaseModel):
     reporter_email: Optional[str] = None
     ai_image_caption: Optional[str] = None
     ai_scene_category: Optional[str] = None
+    resolution_status: Optional[str] = None
+    reject_reason: Optional[str] = None
+    solved: bool = False
+    solved_by_me: bool = False
+    solved_at: Optional[datetime] = None
+    solution_type: Optional[str] = None
+    solution_text: Optional[str] = None
+    document_name: Optional[str] = None
+    resolution_id: Optional[int] = None
+    image_count: int = 0
 
 
 class NGOIssuesResponse(BaseModel):
     ngo_name: str
     issues: list[NGOIssueEntry]
+
+
+# ─── Issue Resolution Schemas ──────────────────────────────────────
+
+class ResolutionResponse(BaseModel):
+    resolution_id: int
+    complaint_id: str
+    status: str
+    submitted_at: datetime
+
+
+class VolunteerIssueEntry(BaseModel):
+    complaint_id: str
+    location: str
+    user_description: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    image_count: int
+    ngo_count: int
+    editable: bool
+    solved: bool
+    solved_by_ngo: Optional[str] = None
+    solved_at: Optional[datetime] = None
+
+
+class AdminResolutionEntry(BaseModel):
+    resolution_id: int
+    complaint_id: str
+    ngo_name: str
+    location: Optional[str]
+    description: Optional[str]
+    solution_type: str
+    solution_text: Optional[str]
+    document_name: Optional[str]
+    status: str
+    submitted_at: datetime
+
+
+class RejectRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_length(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be empty or whitespace only")
+        if len(value) > 1000:
+            raise ValueError("reason must be 1000 characters or fewer")
+        return value
 
 
 class VolunteerMatchEntry(BaseModel):

@@ -166,6 +166,33 @@ class IssueDB(Base):
     )
 
 
+class IssueResolutionDB(Base):
+    """Proof submitted by an NGO that it solved a reported issue."""
+
+    __tablename__ = "issue_resolutions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # complaint_id is stored without a foreign key so the issue row stays independent.
+    complaint_id = Column(String(32), index=True, nullable=False)
+    ngo_id = Column(Integer, ForeignKey("ngos.id"), nullable=False)
+
+    solution_type = Column(String(10), nullable=False)  # "written" | "document"
+    solution_text = Column(Text, nullable=True)
+    document_path = Column(String(255), nullable=True)
+    document_name = Column(String(255), nullable=True)
+
+    before_photo = Column(String(255), nullable=False)
+    after_photo = Column(String(255), nullable=False)
+
+    # "Under evaluation" | "Approved" | "Rejected" | "Closed"
+    status = Column(String(20), nullable=False, default="Under evaluation")
+    reject_reason = Column(Text, nullable=True)
+
+    submitted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+
 class MessageDB(Base):
     """Direct messages between volunteers and NGOs."""
 

@@ -13,6 +13,7 @@ except ImportError:
 
 ISSUE_STATUSES = (
     "Reported",
+    "Under evaluation",
     "Accepted",
     "In Progress",
     "Resolved",
