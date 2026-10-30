@@ -377,6 +377,217 @@ class AdminResolutionDetail(BaseModel):
     other_resolutions: list[AdminOtherResolution]
 
 
+# ─── Admin Console: Overview ──────────────────────────────────────
+class AdminNGOCounts(BaseModel):
+    total: int
+    by_status: dict[str, int]
+
+
+class AdminEventCounts(BaseModel):
+    upcoming: int
+    completed: int
+    cancelled: int
+
+
+class AdminSignupCounts(BaseModel):
+    total: int
+    approved: int
+    attended: int
+
+
+class AdminIssueCounts(BaseModel):
+    total: int
+    reported: int
+    under_evaluation: int
+    resolved: int
+    other: int
+
+
+class AdminActivityItem(BaseModel):
+    type: str
+    text: str
+    at: datetime
+    ref_type: str
+    ref_id: str
+
+
+class AdminOverview(BaseModel):
+    ngos: AdminNGOCounts
+    volunteers_total: int
+    events: AdminEventCounts
+    signups: AdminSignupCounts
+    issues: AdminIssueCounts
+    proofs_pending: int
+    messages_total: int
+    recent_activity: list[AdminActivityItem]
+
+
+# ─── Admin Console: NGOs ──────────────────────────────────────────
+class AdminNGOListItem(BaseModel):
+    id: int
+    name: str
+    email: Optional[str]
+    category: Optional[str]
+    location: Optional[str]
+    verification_status: str
+    events_total: int
+    events_upcoming: int
+    events_completed: int
+    events_cancelled: int
+    problems_solved: int
+    proofs_pending: int
+
+
+class AdminNGOProfile(BaseModel):
+    name: str
+    email: Optional[str]
+    contact_number: Optional[str]
+    category: Optional[str]
+    location: Optional[str]
+    motto: Optional[str]
+    legal_structure: Optional[str]
+    year_founded: Optional[int]
+    website_url: Optional[str]
+    verification_status: str
+    verification_notes: Optional[str]
+    verified_at: Optional[datetime]
+
+
+class AdminNGODocument(BaseModel):
+    key: str
+    label: str
+    available: bool
+
+
+class AdminNGOStats(BaseModel):
+    events_total: int
+    events_upcoming: int
+    events_completed: int
+    events_cancelled: int
+    problems_solved: int
+    proofs_pending: int
+    volunteers_engaged: int
+    average_rating_given: Optional[float]
+
+
+class AdminNGOEvent(BaseModel):
+    id: int
+    title: str
+    event_date: Optional[datetime]
+    status_label: str
+    spots_available: Optional[int]
+    signups: int
+    approved: int
+    attended: int
+    average_rating: Optional[float]
+
+
+class AdminMatchedIssue(BaseModel):
+    complaint_id: str
+    location: str
+    status: str
+    created_at: datetime
+
+
+class AdminNGOProof(BaseModel):
+    id: int
+    complaint_id: str
+    status: str
+    solution_type: str
+    submitted_at: datetime
+    decided_at: Optional[datetime]
+
+
+class AdminNGOProblems(BaseModel):
+    matched_open: list[AdminMatchedIssue]
+    proofs: list[AdminNGOProof]
+
+
+class AdminConversationSummary(BaseModel):
+    email: str
+    name: str
+    role: str
+    message_count: int
+    last_message_at: datetime
+
+
+class AdminNGODetail(BaseModel):
+    id: int
+    profile: AdminNGOProfile
+    documents: list[AdminNGODocument]
+    stats: AdminNGOStats
+    events: list[AdminNGOEvent]
+    problems: AdminNGOProblems
+    conversations: list[AdminConversationSummary]
+
+
+# ─── Admin Console: Events ────────────────────────────────────────
+class AdminEventVolunteer(BaseModel):
+    volunteer_id: int
+    name: Optional[str]
+    email: Optional[str]
+    signup_status: str
+    attendance_status: Optional[str]
+    rating: Optional[int]
+    feedback: Optional[str]
+    created_at: datetime
+
+
+class AdminEventDetail(BaseModel):
+    id: int
+    title: str
+    description: Optional[str]
+    required_skills: str
+    location: Optional[str]
+    event_date: Optional[datetime]
+    status_label: str
+    spots_available: Optional[int]
+    created_at: datetime
+    ngo_id: int
+    ngo_name: Optional[str]
+    volunteers: list[AdminEventVolunteer]
+
+
+# ─── Admin Console: Conversations ─────────────────────────────────
+class AdminParticipant(BaseModel):
+    email: str
+    name: str
+    role: str
+
+
+class AdminMessage(BaseModel):
+    id: int
+    sender_email: str
+    sender_role: str
+    recipient_email: str
+    recipient_role: str
+    message_type: str
+    body: Optional[str]
+    file_name: Optional[str]
+    file_size: Optional[int]
+    mime_type: Optional[str]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    created_at: datetime
+    read_at: Optional[datetime]
+
+
+class AdminConversation(BaseModel):
+    a: AdminParticipant
+    b: AdminParticipant
+    messages: list[AdminMessage]
+
+
+# ─── Admin Console: Audit Log ─────────────────────────────────────
+class AdminActionEntry(BaseModel):
+    id: int
+    action: str
+    target_type: Optional[str]
+    target_id: Optional[str]
+    details: Any
+    created_at: datetime
+
+
 class RejectRequest(BaseModel):
     reason: str
 

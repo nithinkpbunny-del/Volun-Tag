@@ -684,6 +684,12 @@ def change_issue_status(
             detail=f"Issue '{complaint_id}' not found",
         )
 
+    # Added before the update so update_issue_status commits both together.
+    log_admin_action(db, "change_issue_status", "issue", complaint_id, {
+        "old_status": issue.status,
+        "new_status": status_update.status,
+    })
+
     return update_issue_status(
         issue,
         status_update.status,
@@ -710,6 +716,11 @@ def remove_issue(
             status_code=404,
             detail=f"Issue '{complaint_id}' not found",
         )
+
+    # Added before the delete so delete_issue commits both together.
+    log_admin_action(db, "delete_issue", "issue", complaint_id, {
+        "complaint_id": complaint_id,
+    })
 
     delete_issue(issue, db)
 
