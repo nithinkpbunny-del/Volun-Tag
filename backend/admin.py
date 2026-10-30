@@ -5,7 +5,7 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 try:
@@ -34,7 +34,9 @@ try:
         AdminNGOListItem, AdminNGOProblems, AdminNGOProfile, AdminNGOProof,
         AdminNGOStats, AdminOtherResolution, AdminOverview, AdminParticipant,
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
-        AdminSignupCounts,
+        AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
+        AdminVolunteerListItem, AdminVolunteerProblem, AdminVolunteerProfile,
+        AdminVolunteerStats,
     )
 except ImportError:
     from admin_auth import (
@@ -62,7 +64,9 @@ except ImportError:
         AdminNGOListItem, AdminNGOProblems, AdminNGOProfile, AdminNGOProof,
         AdminNGOStats, AdminOtherResolution, AdminOverview, AdminParticipant,
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
-        AdminSignupCounts,
+        AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
+        AdminVolunteerListItem, AdminVolunteerProblem, AdminVolunteerProfile,
+        AdminVolunteerStats,
     )
 
 
@@ -784,6 +788,232 @@ def get_admin_ngo_document(
 
     # serve_stored_file resolves the name with safe_upload_path and 404s if unsafe or missing.
     return app.serve_stored_file(app.UPLOAD_DIR, stored_name)
+
+
+# ─── Volunteers ───────────────────────────────────────────────────
+def _signup_status(signup: ActivitySignupDB, completed: bool) -> str:
+    """Same rule as GET /admin/events/{id}: approved, else not selected once the event is over."""
+    if signup.approved_at is not None:
+        return "Approved"
+    if completed:
+        return "Not selected"
+    return "Waiting for approval"
+
+
+def _volunteer_counts(db: Session, volunteers: list[VolunteerDB]) -> dict[int, dict[str, int]]:
+    """Signup and reported-issue counts per volunteer id, with one grouped query each."""
+
+    counts = {
+        volunteer.id: {
+            "signups_total": 0,
+            "signups_approved": 0,
+            "events_attended": 0,
+            "events_not_attended": 0,
+            "issues_reported": 0,
+            "issues_resolved": 0,
+        }
+        for volunteer in volunteers
+    }
+
+    if not volunteers:
+        return counts
+
+    signup_rows = (
+        db.query(
+            ActivitySignupDB.volunteer_id,
+            func.count(ActivitySignupDB.id),
+            func.sum(case((ActivitySignupDB.approved_at.isnot(None), 1), else_=0)),
+            func.sum(case((ActivitySignupDB.attendance_status == "attended", 1), else_=0)),
+            func.sum(case((ActivitySignupDB.attendance_status == "not_attended", 1), else_=0)),
+        )
+        .filter(ActivitySignupDB.volunteer_id.in_(list(counts)))
+        .group_by(ActivitySignupDB.volunteer_id)
+        .all()
+    )
+
+    for volunteer_id, total, approved, attended, not_attended in signup_rows:
+        entry = counts[volunteer_id]
+        entry["signups_total"] = total
+        entry["signups_approved"] = approved or 0
+        entry["events_attended"] = attended or 0
+        entry["events_not_attended"] = not_attended or 0
+
+    # Issues link to their reporter by email only; issues without one count for nobody.
+    id_by_email = {
+        volunteer.email.strip().lower(): volunteer.id
+        for volunteer in volunteers
+        if volunteer.email and volunteer.email.strip()
+    }
+
+    if id_by_email:
+        reporter = func.lower(func.trim(IssueDB.reporter_email))
+
+        issue_rows = (
+            db.query(
+                reporter,
+                func.count(IssueDB.id),
+                func.sum(case((IssueDB.status == "Resolved", 1), else_=0)),
+            )
+            .filter(reporter.in_(list(id_by_email)))
+            .group_by(reporter)
+            .all()
+        )
+
+        for email, reported, resolved in issue_rows:
+            entry = counts[id_by_email[email]]
+            entry["issues_reported"] = reported
+            entry["issues_resolved"] = resolved or 0
+
+    return counts
+
+
+@router.get(
+    "/volunteers",
+    response_model=list[AdminVolunteerListItem],
+    dependencies=[Depends(require_admin)],
+)
+def list_admin_volunteers(
+    search: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    """Volunteers sorted by name, filtered by a search term."""
+
+    query = db.query(VolunteerDB)
+
+    term = search.strip().lower()
+    if term:
+        pattern = _like_pattern(term)
+        query = query.filter(or_(
+            *[
+                func.lower(func.coalesce(column, "")).like(pattern, escape="\\")
+                for column in (
+                    VolunteerDB.name,
+                    VolunteerDB.email,
+                    VolunteerDB.location,
+                    VolunteerDB.skills,
+                )
+            ]
+        ))
+
+    volunteers = query.order_by(func.lower(VolunteerDB.name), VolunteerDB.id).all()
+    counts = _volunteer_counts(db, volunteers)
+
+    return [
+        AdminVolunteerListItem(
+            id=volunteer.id,
+            name=volunteer.name,
+            email=volunteer.email,
+            location=volunteer.location,
+            signups_total=counts[volunteer.id]["signups_total"],
+            signups_approved=counts[volunteer.id]["signups_approved"],
+            events_attended=counts[volunteer.id]["events_attended"],
+            issues_reported=counts[volunteer.id]["issues_reported"],
+        )
+        for volunteer in volunteers
+    ]
+
+
+@router.get(
+    "/volunteers/{volunteer_id}",
+    response_model=AdminVolunteerDetail,
+    dependencies=[Depends(require_admin)],
+)
+def get_admin_volunteer(
+    volunteer_id: int,
+    db: Session = Depends(get_db),
+):
+    """One volunteer: profile, stats, event activity, reported problems and conversations."""
+
+    app = _app()
+
+    volunteer = db.query(VolunteerDB).filter(VolunteerDB.id == volunteer_id).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Volunteer '{volunteer_id}' not found",
+        )
+
+    counts = _volunteer_counts(db, [volunteer])[volunteer.id]
+
+    # ── Event activity ──
+    signup_rows = (
+        db.query(ActivitySignupDB, ActivityDB, NGODB.name)
+        .outerjoin(ActivityDB, ActivitySignupDB.activity_id == ActivityDB.id)
+        .outerjoin(NGODB, ActivityDB.ngo_id == NGODB.id)
+        .filter(ActivitySignupDB.volunteer_id == volunteer.id)
+        .order_by(ActivitySignupDB.created_at.desc(), ActivitySignupDB.id.desc())
+        .all()
+    )
+
+    activity = []
+    ratings_received = []
+
+    for signup, event, ngo_name in signup_rows:
+        completed = event is not None and app.is_completed(event)
+
+        if signup.attendance_status == "attended" and signup.rating is not None:
+            ratings_received.append(signup.rating)
+
+        activity.append(AdminVolunteerActivity(
+            event_id=signup.activity_id,
+            event_title=event.title if event else None,
+            ngo_id=event.ngo_id if event else None,
+            ngo_name=ngo_name,
+            event_date=event.event_date if event else None,
+            event_status_label=_event_status_label(event, completed) if event else None,
+            signup_status=_signup_status(signup, completed),
+            attendance_status=signup.attendance_status,
+            rating=signup.rating,
+            feedback=signup.feedback,
+            signed_up_at=signup.created_at,
+        ))
+
+    # ── Reported problems ──
+    email = (volunteer.email or "").strip().lower()
+
+    issues = []
+    if email:
+        issues = (
+            db.query(IssueDB)
+            .filter(func.lower(func.trim(IssueDB.reporter_email)) == email)
+            .order_by(IssueDB.created_at.desc(), IssueDB.id.desc())
+            .all()
+        )
+
+    solved = app.approved_resolutions(db, [issue.complaint_id for issue in issues])
+
+    return AdminVolunteerDetail(
+        id=volunteer.id,
+        profile=AdminVolunteerProfile(
+            name=volunteer.name,
+            email=volunteer.email,
+            contact_number=volunteer.contact_number,
+            age=volunteer.age,
+            designation=volunteer.designation,
+            gender=volunteer.gender,
+            skills=volunteer.skills,
+            location=volunteer.location,
+            availability=volunteer.availability,
+            experience=volunteer.experience,
+        ),
+        stats=AdminVolunteerStats(
+            **counts,
+            average_rating_received=_average(ratings_received),
+        ),
+        activity=activity,
+        problems=[
+            AdminVolunteerProblem(
+                complaint_id=issue.complaint_id,
+                location=issue.location,
+                status=issue.status,
+                created_at=issue.created_at,
+                solved_by=solved[issue.complaint_id][1] if issue.complaint_id in solved else None,
+            )
+            for issue in issues
+        ],
+        conversations=_ngo_conversations(db, volunteer.email),
+    )
 
 
 # ─── Events ───────────────────────────────────────────────────────

@@ -521,6 +521,73 @@ class AdminNGODetail(BaseModel):
     conversations: list[AdminConversationSummary]
 
 
+# ─── Admin Console: Volunteers ────────────────────────────────────
+class AdminVolunteerListItem(BaseModel):
+    id: int
+    name: str
+    email: str
+    location: Optional[str]
+    signups_total: int
+    signups_approved: int
+    events_attended: int
+    issues_reported: int
+
+
+class AdminVolunteerProfile(BaseModel):
+    # Every volunteers column except id (top level) and password.
+    name: str
+    email: str
+    contact_number: Optional[str]
+    age: Optional[int]
+    designation: Optional[str]
+    gender: Optional[str]
+    skills: Optional[str]
+    location: Optional[str]
+    availability: Optional[str]
+    experience: Optional[str]
+
+
+class AdminVolunteerStats(BaseModel):
+    signups_total: int
+    signups_approved: int
+    events_attended: int
+    events_not_attended: int
+    average_rating_received: Optional[float]
+    issues_reported: int
+    issues_resolved: int
+
+
+class AdminVolunteerActivity(BaseModel):
+    event_id: int
+    event_title: Optional[str]
+    ngo_id: Optional[int]
+    ngo_name: Optional[str]
+    event_date: Optional[datetime]
+    event_status_label: Optional[str]
+    signup_status: str
+    attendance_status: Optional[str]
+    rating: Optional[int]
+    feedback: Optional[str]
+    signed_up_at: datetime
+
+
+class AdminVolunteerProblem(BaseModel):
+    complaint_id: str
+    location: str
+    status: str
+    created_at: datetime
+    solved_by: Optional[str]
+
+
+class AdminVolunteerDetail(BaseModel):
+    id: int
+    profile: AdminVolunteerProfile
+    stats: AdminVolunteerStats
+    activity: list[AdminVolunteerActivity]
+    problems: list[AdminVolunteerProblem]
+    conversations: list[AdminConversationSummary]
+
+
 # ─── Admin Console: Events ────────────────────────────────────────
 class AdminEventVolunteer(BaseModel):
     volunteer_id: int
