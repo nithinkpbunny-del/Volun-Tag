@@ -1720,6 +1720,48 @@
   }
 }
 
+/* ═══ Phase 3: volunteers, audit log ═══════════════════════════════ */
+
+.adm-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.adm-select {
+  width: auto;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.adm-audit-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 220px;
+  font-size: 0.84rem;
+}
+
+.adm-audit-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.adm-audit-detail dt {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.adm-audit-detail dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {

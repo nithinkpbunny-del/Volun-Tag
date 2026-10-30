@@ -11,20 +11,20 @@ const TABS = [
   { id: "messages", label: "Messages" },
 ];
 
-const EVENT_PILL = {
+export const EVENT_PILL = {
   Upcoming: "pending",
   Completed: "approved",
   Cancelled: "rejected",
   Filled: "closed",
 };
 
-const ATTENDANCE_LABELS = { attended: "Attended", not_attended: "Not attended" };
+export const ATTENDANCE_LABELS = { attended: "Attended", not_attended: "Not attended" };
 
-const ROLE_LABELS = { ngo: "NGO", volunteer: "Volunteer" };
+export const ROLE_LABELS = { ngo: "NGO", volunteer: "Volunteer" };
 
 const EVENT_COLUMNS = 8;
 
-function InfoField({ label, children }) {
+export function InfoField({ label, children }) {
   return (
     <div className="adm-field">
       <dt>{label}</dt>
@@ -33,11 +33,11 @@ function InfoField({ label, children }) {
   );
 }
 
-function ratingText(value, empty = "—") {
+export function ratingText(value, empty = "—") {
   return value === null || value === undefined ? empty : `${value} / 5`;
 }
 
-function countText(value) {
+export function countText(value) {
   return value === null || value === undefined ? "—" : String(value);
 }
 

@@ -135,6 +135,25 @@ export function getEvent(id) {
   return adminFetch(`/admin/events/${encodeURIComponent(id)}`);
 }
 
+export function getVolunteers(search = "") {
+  return adminFetch(`/admin/volunteers?search=${encodeURIComponent(search)}`);
+}
+
+export function getVolunteer(id) {
+  return adminFetch(`/admin/volunteers/${encodeURIComponent(id)}`);
+}
+
+/** Audit log, newest first. Empty filters are left out of the query. */
+export function getAuditActions(limit = 50, targetType = "", targetId = "") {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", String(limit));
+  if (targetType) params.set("target_type", targetType);
+  if (targetId) params.set("target_id", targetId);
+
+  const query = params.toString();
+  return adminFetch(`/admin/actions${query ? `?${query}` : ""}`);
+}
+
 /** Every call writes an audit row on the server, so call it once per deliberate view. */
 export function getConversation(a, b) {
   return adminFetch(

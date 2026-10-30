@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import AdminAuditLog from "./AdminAuditLog";
 import AdminNGOs from "./AdminNGOs";
 import AdminOverview from "./AdminOverview";
 import AdminProofs from "./AdminProofs";
+import AdminVolunteers from "./AdminVolunteers";
 import { PENDING_STATUS, adminFetch, useVisibleInterval } from "./adminApi";
 
-// The first item is the landing page. Later phases add Volunteers and Audit log here.
+// The first item is the landing page.
 // `badge` names a key of the badges object built below.
 const NAV_ITEMS = [
   {
@@ -25,6 +27,18 @@ const NAV_ITEMS = [
     label: "NGOs",
     icon: "⌂",
     component: AdminNGOs,
+  },
+  {
+    id: "volunteers",
+    label: "Volunteers",
+    icon: "☺",
+    component: AdminVolunteers,
+  },
+  {
+    id: "audit",
+    label: "Audit log",
+    icon: "≡",
+    component: AdminAuditLog,
   },
 ];
 
