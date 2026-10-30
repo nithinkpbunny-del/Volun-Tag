@@ -1,16 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
+import AdminNGOs from "./AdminNGOs";
+import AdminOverview from "./AdminOverview";
 import AdminProofs from "./AdminProofs";
 import { PENDING_STATUS, adminFetch, useVisibleInterval } from "./adminApi";
 
-// Later phases add Overview, NGOs, Volunteers and Audit log here.
+// The first item is the landing page. Later phases add Volunteers and Audit log here.
 // `badge` names a key of the badges object built below.
 const NAV_ITEMS = [
+  {
+    id: "overview",
+    label: "Overview",
+    icon: "◫",
+    component: AdminOverview,
+  },
   {
     id: "proofs",
     label: "Proof reviews",
     icon: "✓",
     badge: "pendingProofs",
     component: AdminProofs,
+  },
+  {
+    id: "ngos",
+    label: "NGOs",
+    icon: "⌂",
+    component: AdminNGOs,
   },
 ];
 
@@ -91,7 +105,11 @@ export default function AdminLayout({ showToast, onLogout }) {
       </aside>
 
       <main className="adm-main">
-        <ActivePage showToast={showToast} onDataChanged={refreshBadges} />
+        <ActivePage
+          showToast={showToast}
+          onDataChanged={refreshBadges}
+          onNavigate={setActiveId}
+        />
       </main>
     </div>
   );

@@ -71,6 +71,7 @@ export default function AdminProofDetail({
   onBack,
   onOpenProof,
   onChanged,
+  backLabel = "Back to proof reviews",
 }) {
   const [proof, setProof] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -241,7 +242,7 @@ export default function AdminProofDetail({
 
   const backButton = (
     <button type="button" className="adm-back" onClick={onBack}>
-      <span aria-hidden="true">←</span> Back to proof reviews
+      <span aria-hidden="true">←</span> {backLabel}
     </button>
   );
 

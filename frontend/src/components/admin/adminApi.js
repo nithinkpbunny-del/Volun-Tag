@@ -107,6 +107,41 @@ export async function fetchFileUrl(path) {
   return URL.createObjectURL(blob);
 }
 
+// ─── Read-only platform views ──────────────────────────────────────
+export function getOverview() {
+  return adminFetch("/admin/overview");
+}
+
+export function getNGOs(search = "", status = "") {
+  return adminFetch(
+    `/admin/ngos?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`
+  );
+}
+
+export function getNGO(id) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}`);
+}
+
+/** Fetch one NGO registration document or work photo; returns { blob, contentType }. */
+export async function getNGODocumentBlob(id, key) {
+  const res = await authorizedFetch(
+    `/admin/ngos/${encodeURIComponent(id)}/documents/${encodeURIComponent(key)}`
+  );
+  const blob = await res.blob();
+  return { blob, contentType: res.headers.get("Content-Type") || blob.type || "" };
+}
+
+export function getEvent(id) {
+  return adminFetch(`/admin/events/${encodeURIComponent(id)}`);
+}
+
+/** Every call writes an audit row on the server, so call it once per deliberate view. */
+export function getConversation(a, b) {
+  return adminFetch(
+    `/admin/conversation?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`
+  );
+}
+
 /** Exchange the password for a token. Not routed through adminFetch: a 401 here is a wrong password. */
 export async function loginRequest(password) {
   let res;
@@ -161,10 +196,10 @@ export function formatIST(value, { time = true } = {}) {
 
 // ─── Silent polling ────────────────────────────────────────────────
 /**
- * Run callback every REFRESH_MS while the tab is visible, and once when the
- * tab becomes visible again. Pass enabled=false to pause.
+ * Run callback every intervalMs (default REFRESH_MS) while the tab is visible,
+ * and once when the tab becomes visible again. Pass enabled=false to pause.
  */
-export function useVisibleInterval(callback, enabled = true) {
+export function useVisibleInterval(callback, enabled = true, intervalMs = REFRESH_MS) {
   const saved = useRef(callback);
 
   useEffect(() => {
@@ -178,14 +213,21 @@ export function useVisibleInterval(callback, enabled = true) {
       if (document.visibilityState === "visible") saved.current();
     };
 
-    const id = setInterval(tick, REFRESH_MS);
+    const id = setInterval(tick, intervalMs);
     document.addEventListener("visibilitychange", tick);
 
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", tick);
     };
-  }, [enabled]);
+  }, [enabled, intervalMs]);
+}
+
+/** Text for a nullable value: "Not provided" (or the given fallback) when empty. */
+export function orNotProvided(value, fallback = "Not provided") {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text ? text : fallback;
 }
 
 // ─── Status helpers ────────────────────────────────────────────────
