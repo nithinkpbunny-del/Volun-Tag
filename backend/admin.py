@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,8 +31,10 @@ try:
         AdminConversationSummary, AdminEventCounts, AdminEventDetail,
         AdminEventVolunteer, AdminIssueCounts, AdminLoginRequest,
         AdminLoginResponse, AdminMatchedIssue, AdminMeResponse, AdminMessage,
-        AdminNGOCounts, AdminNGODetail, AdminNGODocument, AdminNGOEvent,
+        AdminNGOApproveRequest, AdminNGOCounts, AdminNGODecisionResponse,
+        AdminNGODetail, AdminNGODocument, AdminNGOEvent,
         AdminNGOListItem, AdminNGOProblems, AdminNGOProfile, AdminNGOProof,
+        AdminNGORejectRequest,
         AdminNGOStats, AdminOtherResolution, AdminOverview, AdminParticipant,
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
         AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
@@ -60,8 +63,10 @@ except ImportError:
         AdminConversationSummary, AdminEventCounts, AdminEventDetail,
         AdminEventVolunteer, AdminIssueCounts, AdminLoginRequest,
         AdminLoginResponse, AdminMatchedIssue, AdminMeResponse, AdminMessage,
-        AdminNGOCounts, AdminNGODetail, AdminNGODocument, AdminNGOEvent,
+        AdminNGOApproveRequest, AdminNGOCounts, AdminNGODecisionResponse,
+        AdminNGODetail, AdminNGODocument, AdminNGOEvent,
         AdminNGOListItem, AdminNGOProblems, AdminNGOProfile, AdminNGOProof,
+        AdminNGORejectRequest,
         AdminNGOStats, AdminOtherResolution, AdminOverview, AdminParticipant,
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
         AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
@@ -788,6 +793,87 @@ def get_admin_ngo_document(
 
     # serve_stored_file resolves the name with safe_upload_path and 404s if unsafe or missing.
     return app.serve_stored_file(app.UPLOAD_DIR, stored_name)
+
+
+# ─── NGO Verification ─────────────────────────────────────────────
+def _decide_ngo(
+    db: Session,
+    ngo_id: int,
+    new_status: str,
+    action: str,
+    note_key: str,
+    note: Optional[str],
+) -> AdminNGODecisionResponse:
+    """Record a verification decision and its audit row in one commit."""
+
+    ngo = db.query(NGODB).filter(NGODB.id == ngo_id).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"NGO '{ngo_id}' not found",
+        )
+
+    old_status = ngo.verification_status
+
+    if old_status == new_status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"NGO is already {new_status.lower()}",
+        )
+
+    ngo.verification_status = new_status
+    ngo.verification_notes = note
+    ngo.verified_at = datetime.utcnow()
+
+    log_admin_action(db, action, "ngo", str(ngo.id), {
+        "ngo_name": ngo.name,
+        "old_status": old_status,
+        "new_status": new_status,
+        note_key: note,
+    })
+
+    db.commit()
+
+    return AdminNGODecisionResponse(
+        id=ngo.id,
+        name=ngo.name,
+        verification_status=ngo.verification_status,
+        verification_notes=ngo.verification_notes,
+        verified_at=ngo.verified_at,
+    )
+
+
+@router.post(
+    "/ngos/{ngo_id}/approve",
+    response_model=AdminNGODecisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+def approve_ngo(
+    ngo_id: int,
+    payload: Optional[AdminNGOApproveRequest] = None,
+    db: Session = Depends(get_db),
+):
+    """Mark an NGO as verified, with optional notes."""
+
+    notes = payload.notes if payload else None
+
+    return _decide_ngo(db, ngo_id, "Approved", "approve_ngo", "notes", notes)
+
+
+@router.post(
+    "/ngos/{ngo_id}/reject",
+    response_model=AdminNGODecisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+def reject_ngo(
+    ngo_id: int,
+    payload: AdminNGORejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Mark an NGO as rejected, with a reason."""
+
+    return _decide_ngo(db, ngo_id, "Rejected", "reject_ngo", "reason", payload.reason)
 
 
 # ─── Volunteers ───────────────────────────────────────────────────

@@ -521,6 +521,43 @@ class AdminNGODetail(BaseModel):
     conversations: list[AdminConversationSummary]
 
 
+# ─── Admin Console: NGO Verification ──────────────────────────────
+class AdminNGOApproveRequest(BaseModel):
+    notes: Optional[str] = None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_length(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if len(value) > 1000:
+            raise ValueError("notes must be 1000 characters or fewer")
+        return value or None
+
+
+class AdminNGORejectRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_length(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must be at least 3 characters")
+        if len(value) > 1000:
+            raise ValueError("reason must be 1000 characters or fewer")
+        return value
+
+
+class AdminNGODecisionResponse(BaseModel):
+    id: int
+    name: str
+    verification_status: str
+    verification_notes: Optional[str]
+    verified_at: Optional[datetime]
+
+
 # ─── Admin Console: Volunteers ────────────────────────────────────
 class AdminVolunteerListItem(BaseModel):
     id: int
