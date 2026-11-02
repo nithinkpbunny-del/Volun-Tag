@@ -122,6 +122,20 @@ export function getNGO(id) {
   return adminFetch(`/admin/ngos/${encodeURIComponent(id)}`);
 }
 
+export function approveNGO(id, notes) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ notes: notes || null }),
+  });
+}
+
+export function rejectNGO(id, reason) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
 /** Fetch one NGO registration document or work photo; returns { blob, contentType }. */
 export async function getNGODocumentBlob(id, key) {
   const res = await authorizedFetch(

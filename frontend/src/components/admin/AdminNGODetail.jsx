@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AdminConversation, { startConversationRequest } from "./AdminConversation";
 import AdminDocumentViewer from "./AdminDocumentViewer";
 import AdminProofDetail, { StatusPill, solutionTypeLabel } from "./AdminProofDetail";
-import { formatIST, getEvent, getNGO, orNotProvided } from "./adminApi";
+import { approveNGO, formatIST, getEvent, getNGO, orNotProvided, rejectNGO } from "./adminApi";
 
 const TABS = [
   { id: "profile", label: "Profile" },
@@ -23,6 +23,38 @@ export const ATTENDANCE_LABELS = { attended: "Attended", not_attended: "Not atte
 export const ROLE_LABELS = { ngo: "NGO", volunteer: "Volunteer" };
 
 const EVENT_COLUMNS = 8;
+
+const DECISION_TEXT_MAX = 1000;
+const REJECT_REASON_MIN = 3;
+
+const DECISIONS = {
+  approve: {
+    title: "Approve this NGO?",
+    text:
+      "No message is sent to the NGO, but its dashboard will show the new status. " +
+      "Any earlier notes or rejection reason will be replaced.",
+    label: "Notes",
+    hint: "(optional)",
+    placeholder: "Anything worth recording about this approval.",
+    submit: "Approve NGO",
+    submitting: "Approving…",
+    submitClass: "adm-btn--primary",
+    success: "NGO approved.",
+  },
+  reject: {
+    title: "Reject this NGO?",
+    text:
+      "It will be hidden from volunteer matching until it is approved again. " +
+      "No message is sent to the NGO, but its dashboard will show the new status.",
+    label: "Reason for rejection",
+    hint: `(required, at least ${REJECT_REASON_MIN} characters)`,
+    placeholder: "What is missing or wrong in this NGO's verification.",
+    submit: "Reject NGO",
+    submitting: "Rejecting…",
+    submitClass: "adm-btn--danger",
+    success: "NGO rejected. It is now hidden from volunteer matching.",
+  },
+};
 
 export function InfoField({ label, children }) {
   return (
@@ -113,6 +145,105 @@ function EventVolunteers({ entry, onRetry }) {
   );
 }
 
+function DecisionForm({ kind, ngoName, busy, error, onCancel, onSubmit }) {
+  const [text, setText] = useState("");
+
+  const copy = DECISIONS[kind];
+  const trimmed = text.trim();
+  const valid = kind === "approve" || trimmed.length >= REJECT_REASON_MIN;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (valid && !busy) onSubmit(trimmed);
+  };
+
+  return (
+    <form className="adm-reject-form" onSubmit={handleSubmit}>
+      <h2 className="adm-card-title" id="adm-decision-title">{copy.title}</h2>
+      <p className="adm-modal-ngo">{ngoName}</p>
+      <p className="adm-muted adm-modal-text">{copy.text}</p>
+
+      <label className="adm-field-label" htmlFor="adm-decision-text">
+        {copy.label} <span className="adm-required">{copy.hint}</span>
+      </label>
+      <textarea
+        id="adm-decision-text"
+        className="adm-input adm-textarea"
+        rows={4}
+        maxLength={DECISION_TEXT_MAX}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        disabled={busy}
+        placeholder={copy.placeholder}
+        aria-describedby="adm-decision-count"
+      />
+
+      {error && <p className="adm-modal-error" role="alert">{error}</p>}
+
+      <div className="adm-reject-footer">
+        <span
+          id="adm-decision-count"
+          className={`adm-counter${text.length >= DECISION_TEXT_MAX ? " adm-counter--limit" : ""}`}
+        >
+          {text.length} / {DECISION_TEXT_MAX}
+        </span>
+        <div className="adm-btn-row">
+          <button type="button" className="adm-btn adm-btn--ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className={`adm-btn ${copy.submitClass}`} disabled={!valid || busy}>
+            {busy ? copy.submitting : copy.submit}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+/** Native modal: the browser keeps focus inside it and returns focus when it closes. */
+function DecisionDialog({ kind, ngoName, busy, error, onCancel, onSubmit }) {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (kind && !dialog.open) dialog.showModal();
+    if (!kind && dialog.open) dialog.close();
+  }, [kind]);
+
+  // Escape closes the dialog unless a request is running.
+  const handleEscape = (e) => {
+    e.preventDefault();
+    if (!busy) onCancel();
+  };
+
+  // The browser can force a close after repeated Escapes; keep the state in step.
+  const handleClosed = () => {
+    if (kind && !dialogRef.current.open) onCancel();
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="adm-modal"
+      aria-labelledby="adm-decision-title"
+      onCancel={handleEscape}
+      onClose={handleClosed}
+    >
+      {kind && (
+        <DecisionForm
+          key={kind}
+          kind={kind}
+          ngoName={ngoName}
+          busy={busy}
+          error={error}
+          onCancel={onCancel}
+          onSubmit={onSubmit}
+        />
+      )}
+    </dialog>
+  );
+}
+
 /**
  * One NGO, loaded once on open. Proof details and conversations open in
  * place so Back returns here with the tab and expanded events intact.
@@ -140,6 +271,10 @@ export default function AdminNGODetail({
 
   const [proofId, setProofId] = useState(null);
   const [conversation, setConversation] = useState(null);
+
+  const [decision, setDecision] = useState(null); // "approve" | "reject" | null
+  const [decisionBusy, setDecisionBusy] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
 
   const requestSeq = useRef(0);
   const started = useRef(false);
@@ -249,6 +384,43 @@ export default function AdminNGODetail({
     window.scrollTo({ top: 0, behavior: "instant" });
   };
 
+  const openDecision = (kind) => {
+    setDecisionError("");
+    setDecision(kind);
+  };
+
+  const submitDecision = async (text) => {
+    if (decisionBusy) return;
+
+    setDecisionBusy(true);
+    setDecisionError("");
+
+    try {
+      await (decision === "approve" ? approveNGO(ngoId, text) : rejectNGO(ngoId, text));
+    } catch (err) {
+      // A 401 already sent the admin back to the login screen.
+      if (err.status === 401) return;
+
+      if (err.status === 409) {
+        // The status changed elsewhere: say so and show the real one.
+        showToast(err.message, "error");
+        setDecision(null);
+        await load();
+      } else {
+        setDecisionError(err.message || "Something went wrong");
+      }
+      setDecisionBusy(false);
+      return;
+    }
+
+    showToast(DECISIONS[decision].success, "success");
+    setDecision(null);
+    if (onDataChanged) onDataChanged();
+    // The header buttons stay disabled until the new status is on screen.
+    await load();
+    setDecisionBusy(false);
+  };
+
   const ngoName = data ? data.profile.name : "NGO";
 
   if (proofId !== null) {
@@ -322,8 +494,39 @@ export default function AdminNGODetail({
           <h1 className="adm-page-title" id="adm-ngo-title">{profile.name}</h1>
           <p className="adm-page-sub">{orNotProvided(profile.email, "No email on file")}</p>
         </div>
-        <StatusPill status={profile.verification_status} />
+        <div className="adm-header-actions">
+          <StatusPill status={profile.verification_status} />
+          {profile.verification_status !== "Approved" && (
+            <button
+              type="button"
+              className="adm-btn adm-btn--primary adm-btn--sm"
+              onClick={() => openDecision("approve")}
+              disabled={decisionBusy}
+            >
+              Approve NGO
+            </button>
+          )}
+          {profile.verification_status !== "Rejected" && (
+            <button
+              type="button"
+              className="adm-btn adm-btn--danger-outline adm-btn--sm"
+              onClick={() => openDecision("reject")}
+              disabled={decisionBusy}
+            >
+              Reject NGO
+            </button>
+          )}
+        </div>
       </header>
+
+      <DecisionDialog
+        kind={decision}
+        ngoName={profile.name}
+        busy={decisionBusy}
+        error={decisionError}
+        onCancel={() => setDecision(null)}
+        onSubmit={submitDecision}
+      />
 
       <dl className="adm-mini-stats">
         <div className="adm-mini-stat">

@@ -1012,6 +1012,51 @@
   flex-direction: column;
 }
 
+/* ─── NGO verification ───────────────────────────────────────────── */
+
+.adm-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.adm-modal {
+  width: min(34rem, calc(100vw - 2rem));
+  margin: auto;
+  padding: 1.75rem;
+  background: var(--white);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-hover);
+}
+
+.adm-modal::backdrop {
+  background: var(--ink);
+  opacity: 0.45;
+}
+
+.adm-modal-ngo {
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.adm-modal-text {
+  margin-bottom: 1.1rem;
+}
+
+.adm-modal-error {
+  margin-top: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--adm-red-light);
+  color: var(--adm-red-dark);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 .adm-reject-footer {
   display: flex;
   flex-wrap: wrap;

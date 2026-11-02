@@ -10,6 +10,7 @@ const STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "Approved", label: "Approved" },
   { value: "Pending", label: "Pending" },
+  { value: "Rejected", label: "Rejected" },
 ];
 
 export default function AdminNGOs({ showToast, onDataChanged }) {

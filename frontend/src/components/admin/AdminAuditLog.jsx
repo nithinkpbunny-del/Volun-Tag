@@ -10,6 +10,7 @@ const TARGET_FILTERS = [
   { value: "", label: "All" },
   { value: "conversation", label: "Conversations" },
   { value: "resolution", label: "Proofs" },
+  { value: "ngo", label: "NGOs" },
   { value: "issue", label: "Issues" },
   { value: "session", label: "Logins" },
 ];
@@ -20,6 +21,8 @@ const ACTION_LABELS = {
   view_conversation: "Viewed conversation",
   approve_resolution: "Approved proof",
   reject_resolution: "Rejected proof",
+  approve_ngo: "Approved NGO",
+  reject_ngo: "Rejected NGO",
   change_issue_status: "Changed issue status",
   delete_issue: "Deleted issue",
   login: "Admin login",
