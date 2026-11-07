@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./NGORegisterForm.css";
 import { API_BASE } from "../../config";
+import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 
 const CATEGORIES = [
   "Education",
@@ -53,6 +54,8 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  const passwordOk = meetsPasswordPolicy(form.password);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -121,6 +124,8 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
 
     if (!form.password.trim()) {
       errs.password = "Password is required";
+    } else if (!passwordOk) {
+      errs.password = "Password does not meet all the rules below";
     }
 
     if (!form.category) {
@@ -422,14 +427,11 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
                 Password <span className="required">*</span>
               </label>
 
-              <input
+              <PasswordField
                 id="ngo-reg-password"
-                type="password"
                 value={form.password}
-                onChange={(e) =>
-                  updateField("password", e.target.value)
-                }
-                className={errors.password ? "input-error" : ""}
+                onChange={(value) => updateField("password", value)}
+                hasError={Boolean(errors.password)}
               />
 
               {errors.password && (
@@ -863,7 +865,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
             <button
               className={`submit-btn ${loading ? "loading" : ""}`}
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || !passwordOk}
               id="ngo-reg-submit"
             >
               {loading ? "Submitting..." : "Submit NGO Registration"}

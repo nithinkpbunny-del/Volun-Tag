@@ -51,6 +51,7 @@ try:
         RejectRequest,
     )
     from .migrations import ensure_signup_columns
+    from .password_policy import password_policy_error
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
     from .settings import (
@@ -87,6 +88,7 @@ except ImportError:
         RejectRequest,
     )
     from migrations import ensure_signup_columns
+    from password_policy import password_policy_error
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
     from settings import (
@@ -1555,6 +1557,14 @@ def add_volunteer(
     volunteer: Volunteer,
     db: Session = Depends(get_db),
 ):
+    password_error = password_policy_error(volunteer.password)
+
+    if password_error:
+        raise HTTPException(
+            status_code=422,
+            detail=password_error,
+        )
+
     if db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.name)
         == volunteer.name.lower()
@@ -1715,6 +1725,14 @@ async def add_ngo(
         raise HTTPException(
             status_code=422,
             detail="Password is required",
+        )
+
+    password_error = password_policy_error(password)
+
+    if password_error:
+        raise HTTPException(
+            status_code=422,
+            detail=password_error,
         )
 
     if not category:

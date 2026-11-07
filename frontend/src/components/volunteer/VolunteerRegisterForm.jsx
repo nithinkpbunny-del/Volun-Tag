@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./VolunteerRegisterForm.css";
 import { API_BASE } from "../../config";
+import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 
 const SKILL_SUGGESTIONS = [
   "Teaching", "Tutoring", "Mentoring", "First Aid", "Web Development",
@@ -36,6 +37,8 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  const passwordOk = meetsPasswordPolicy(form.password);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -91,6 +94,8 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
 
     if (!form.password) {
       errs.password = "Password is required";
+    } else if (!passwordOk) {
+      errs.password = "Password does not meet all the rules below";
     }
 
     if (!form.age) {
@@ -361,14 +366,11 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
                 Password <span className="required">*</span>
               </label>
 
-              <input
+              <PasswordField
                 id="vol-reg-password"
-                type="password"
                 value={form.password}
-                onChange={(e) =>
-                  updateField("password", e.target.value)
-                }
-                className={errors.password ? "input-error" : ""}
+                onChange={(value) => updateField("password", value)}
+                hasError={Boolean(errors.password)}
               />
 
               {errors.password && (
@@ -605,7 +607,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
                 loading ? "loading" : ""
               }`}
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || !passwordOk}
               id="vol-reg-submit"
             >
               {loading
