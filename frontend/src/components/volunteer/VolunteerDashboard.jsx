@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Messages from "../messaging/Messages";
 import "./VolunteerDashboard.css";
+import { API_BASE } from "../../config";
 
-const API_BASE = "http://127.0.0.1:8000";
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
 const MAX_ISSUE_IMAGES = 6;
 const MAX_ISSUE_IMAGE_BYTES = 10 * 1024 * 1024;

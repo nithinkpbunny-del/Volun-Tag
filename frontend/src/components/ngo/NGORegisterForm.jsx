@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./NGORegisterForm.css";
+import { API_BASE } from "../../config";
 
 const CATEGORIES = [
   "Education",
@@ -32,8 +33,6 @@ const DOC_FIELDS = [
   { key: "cert_80g", label: "80G Certificate", required: false },
   { key: "cert_fcra", label: "FCRA Certificate", required: false },
 ];
-
-const API_BASE = "http://127.0.0.1:8000";
 
 export default function NGORegisterForm({ showToast, setPage, setDashboardEmail }) {
   const [form, setForm] = useState({

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { API_BASE } from "../../config";
 
-export const API_BASE = "http://127.0.0.1:8000";
+export { API_BASE };
 
 const TOKEN_KEY = "voluntag_admin_token";
 

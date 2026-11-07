@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./VolunteerRegisterForm.css";
+import { API_BASE } from "../../config";
 
 const SKILL_SUGGESTIONS = [
   "Teaching", "Tutoring", "Mentoring", "First Aid", "Web Development",
@@ -16,8 +17,6 @@ const AVAILABILITY_OPTIONS = [
 ];
 
 const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
-
-const API_BASE = "http://127.0.0.1:8000";
 
 export default function VolunteerRegisterForm({ showToast, setPage, setDashboardEmail }) {
   const [form, setForm] = useState({

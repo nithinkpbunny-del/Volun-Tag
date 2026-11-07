@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./VolunteerForm.css";
+import { API_BASE } from "../config";
 
 const SKILL_SUGGESTIONS = [
   "Teaching", "Tutoring", "Mentoring", "First Aid", "Web Development",
@@ -8,8 +9,6 @@ const SKILL_SUGGESTIONS = [
   "Social Media", "Translation", "Nursing", "Cooking", "Driving",
   "Construction", "Legal Aid", "Music", "Sports Coaching",
 ];
-
-const API_BASE = "http://127.0.0.1:8000";
 
 export default function VolunteerForm({ showToast }) {
   const [form, setForm] = useState({ name: "", skills: "", location: "", availability: "", experience: "" });

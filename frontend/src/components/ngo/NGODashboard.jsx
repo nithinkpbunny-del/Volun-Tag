@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import Messages from "../messaging/Messages";
 import "./NGODashboard.css";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "../../config";
 
 // One clickable thumbnail; hidden entirely if the image cannot be loaded.
 function PhotoThumb({ src, alt, caption }) {

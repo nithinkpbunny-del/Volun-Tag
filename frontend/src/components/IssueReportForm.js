@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import ImagePreviewCard from "./ImagePreviewCard";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "../config";
 
 export default function IssueReportForm({ showToast, onReportSuccess, reporterEmail }) {
   const [step, setStep] = useState(1);

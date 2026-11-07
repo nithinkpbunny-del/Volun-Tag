@@ -1,7 +1,6 @@
 import { useState } from "react";
 import "./DashboardLogin.css";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "../config";
 
 export default function DashboardLogin({ showToast, setPage, setDashboardEmail }) {
   const [role, setRole] = useState("volunteer");
