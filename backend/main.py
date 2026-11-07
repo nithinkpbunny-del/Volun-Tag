@@ -53,6 +53,10 @@ try:
     from .migrations import ensure_signup_columns
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from .settings import (
+        ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
+        SEED_DEMO_DATA, UPLOAD_DIR,
+    )
 except ImportError:
     from admin import router as admin_router
     from admin_auth import is_admin_request, log_admin_action, require_admin
@@ -85,16 +89,16 @@ except ImportError:
     from migrations import ensure_signup_columns
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from settings import (
+        ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
+        SEED_DEMO_DATA, UPLOAD_DIR,
+    )
 
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
-MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-RESOLUTIONS_UPLOAD_DIR = UPLOAD_DIR / "resolutions"
-RESOLUTIONS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# UPLOAD_DIR, MESSAGES_UPLOAD_DIR and RESOLUTIONS_UPLOAD_DIR come from
+# settings.py (under DATA_DIR), which also creates the folders.
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -136,7 +140,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -148,8 +152,11 @@ app.include_router(admin_router)
 # ─── Startup / Seed Data ───────────────────────────────────────────
 @app.on_event("startup")
 def seed_data():
-    """Load sample data on server startup."""
-    run_seed()
+    """Create tables and, unless SEED_DEMO_DATA is off, load sample data."""
+    if SEED_DEMO_DATA:
+        run_seed()
+    else:
+        Base.metadata.create_all(bind=engine)
     ensure_signup_columns(engine)
 
 

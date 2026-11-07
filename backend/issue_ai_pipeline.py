@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -34,17 +33,15 @@ try:
     from .db_models import IssueDB, NGODB
     from .embedding_store import get_vectors
     from .matching import MODEL_LOCK, encode_texts
+    from .settings import UPLOAD_DIR
 except ImportError:
     from db_models import IssueDB, NGODB
     from embedding_store import get_vectors
     from matching import MODEL_LOCK, encode_texts
+    from settings import UPLOAD_DIR
 
 
 logger = logging.getLogger(__name__)
-
-# ─── Upload directory (resolved relative to this file) ──────────────
-
-UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 
 
 # ─── Model singletons (lazy-loaded) ────────────────────────────────

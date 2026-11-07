@@ -1,10 +1,13 @@
-from pathlib import Path
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+try:
+    from .settings import DATABASE_PATH
+except ImportError:
+    from settings import DATABASE_PATH
 
-DATABASE_URL = f"sqlite:///{Path(__file__).with_name('voluntag.db')}"
+
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
     DATABASE_URL,

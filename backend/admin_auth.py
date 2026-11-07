@@ -1,7 +1,8 @@
 """Admin console authentication: password check, sessions, lockout and audit log.
 
-The admin password is never stored. backend/admin_secret.json (written by
-create_admin_password.py, git-ignored) holds only a salted PBKDF2 hash.
+The admin password is never stored. admin_secret.json in DATA_DIR (written
+by create_admin_password.py; DATA_DIR defaults to the backend folder, where
+the file is git-ignored) holds only a salted PBKDF2 hash.
 Sessions are random bearer tokens; the database keeps only their sha256 hash.
 """
 
@@ -13,7 +14,6 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
@@ -22,14 +22,16 @@ from sqlalchemy.orm import Session
 try:
     from .database import get_db
     from .db_models import AdminActionDB, AdminSessionDB
+    from .settings import ADMIN_SECRET_PATH
 except ImportError:
     from database import get_db
     from db_models import AdminActionDB, AdminSessionDB
+    from settings import ADMIN_SECRET_PATH
 
 
 logger = logging.getLogger(__name__)
 
-SECRET_PATH = Path(__file__).resolve().with_name("admin_secret.json")
+SECRET_PATH = ADMIN_SECRET_PATH
 
 SESSION_LIFETIME = timedelta(hours=8)
 

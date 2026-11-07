@@ -5,8 +5,10 @@ Run from the backend folder with the venv active:
     python create_admin_password.py          # first-time setup
     python create_admin_password.py --reset  # replace an existing password
 
-The password is printed once. backend/admin_secret.json holds only the salt,
-iteration count and PBKDF2-SHA256 hash, and is git-ignored.
+The password is printed once. admin_secret.json holds only the salt,
+iteration count and PBKDF2-SHA256 hash. It is written to DATA_DIR (default:
+the backend folder, where it is git-ignored), so run this with the same
+DATA_DIR as the server.
 """
 
 import argparse
@@ -15,10 +17,14 @@ import json
 import os
 import secrets
 import sys
-from pathlib import Path
+
+try:
+    from .settings import ADMIN_SECRET_PATH
+except ImportError:
+    from settings import ADMIN_SECRET_PATH
 
 
-SECRET_PATH = Path(__file__).resolve().with_name("admin_secret.json")
+SECRET_PATH = ADMIN_SECRET_PATH
 ITERATIONS = 310000
 
 
