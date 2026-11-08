@@ -22,3 +22,11 @@ backend/uploads/
 
 # Admin password hash (created by backend/create_admin_password.py)
 backend/admin_secret.json
+
+# Deployment hygiene
+.venv/
+.env.*
+!.env.example
+*.db.bak
+frontend/build/
+docs/

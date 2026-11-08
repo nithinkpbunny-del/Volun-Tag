@@ -148,10 +148,6 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
   const handleSubmit = async () => {
   const isValid = validate();
 
-  console.log("NGO FORM DATA:", form);
-  console.log("DOCUMENTS:", docs);
-  console.log("VALIDATION RESULT:", isValid);
-
   if (!isValid) {
     showToast("Please fill in all required fields", "error");
     return;

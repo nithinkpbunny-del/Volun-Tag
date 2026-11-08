@@ -467,6 +467,12 @@ def home():
     }
 
 
+# ─── Health Check ─────────────────────────────────────────────────
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # ─── Report Issue ─────────────────────────────────────────────────
 @app.post(
     "/report-issue",
