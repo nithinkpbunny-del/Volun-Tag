@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import func
 
 try:
@@ -8,6 +10,16 @@ except ImportError:
     from database import Base, SessionLocal, engine
     from db_models import NGODB, VolunteerDB
     from schemas import NGO, Volunteer
+
+
+class SeedVolunteer(Volunteer):
+    """Volunteer schema for the demo rows: same checks, but no password.
+
+    Demo volunteers are stored with an empty (NULL) password, so nobody can
+    log in as them. They still take part in matching as before.
+    """
+
+    password: Optional[str] = None
 
 
 # ─── Sample Seed Data ───────────────────────────────────────────────
@@ -186,11 +198,10 @@ SEED_NGOS = [
 
 
 SEED_VOLUNTEERS = [
-    Volunteer(
+    SeedVolunteer(
         name="Aditya Rao",
         email="aditya.rao.seed@voluntag.test",
         contact_number="9999990031",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Male",
@@ -199,11 +210,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Nandini Bose",
         email="nandini.bose.seed@voluntag.test",
         contact_number="9999990032",
-        password="seed123",
         age=23,
         designation="Student",
         gender="Female",
@@ -212,11 +222,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Farhan Ansari",
         email="farhan.ansari.seed@voluntag.test",
         contact_number="9999990033",
-        password="seed123",
         age=31,
         designation="Employee",
         gender="Male",
@@ -225,11 +234,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ritika Chawla",
         email="ritika.chawla.seed@voluntag.test",
         contact_number="9999990034",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Female",
@@ -238,11 +246,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Devansh Malhotra",
         email="devansh.malhotra.seed@voluntag.test",
         contact_number="9999990035",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Male",
@@ -251,11 +258,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ishita Ghosh",
         email="ishita.ghosh.seed@voluntag.test",
         contact_number="9999990036",
-        password="seed123",
         age=22,
         designation="Student",
         gender="Female",
@@ -264,11 +270,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rajat Kapoor",
         email="rajat.kapoor.seed@voluntag.test",
         contact_number="9999990037",
-        password="seed123",
         age=34,
         designation="Employee",
         gender="Male",
@@ -277,11 +282,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Simran Kaur",
         email="simran.kaur.seed@voluntag.test",
         contact_number="9999990038",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -290,11 +294,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Yash Thakur",
         email="yash.thakur.seed@voluntag.test",
         contact_number="9999990039",
-        password="seed123",
         age=24,
         designation="Student",
         gender="Male",
@@ -303,11 +306,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Aarushi Bhatia",
         email="aarushi.bhatia.seed@voluntag.test",
         contact_number="9999990040",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Female",
@@ -316,11 +318,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Kabir Malik",
         email="kabir.malik.seed@voluntag.test",
         contact_number="9999990041",
-        password="seed123",
         age=32,
         designation="Employee",
         gender="Male",
@@ -329,11 +330,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Neha Pandey",
         email="neha.pandey.seed@voluntag.test",
         contact_number="9999990042",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Female",
@@ -342,11 +342,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Siddharth Jain",
         email="siddharth.jain.seed@voluntag.test",
         contact_number="9999990043",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Male",
@@ -355,11 +354,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ayesha Siddiqui",
         email="ayesha.siddiqui.seed@voluntag.test",
         contact_number="9999990044",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Female",
@@ -368,11 +366,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Vivaan Chatterjee",
         email="vivaan.chatterjee.seed@voluntag.test",
         contact_number="9999990045",
-        password="seed123",
         age=33,
         designation="Employee",
         gender="Male",
@@ -381,11 +378,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Riya D'Souza",
         email="riya.dsouza.seed@voluntag.test",
         contact_number="9999990046",
-        password="seed123",
         age=21,
         designation="Student",
         gender="Female",
@@ -394,11 +390,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Aryan Chauhan",
         email="aryan.chauhan.seed@voluntag.test",
         contact_number="9999990047",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Male",
@@ -407,11 +402,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Tanvi Shah",
         email="tanvi.shah.seed@voluntag.test",
         contact_number="9999990048",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -420,11 +414,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Om Prakash",
         email="om.prakash.seed@voluntag.test",
         contact_number="9999990049",
-        password="seed123",
         age=37,
         designation="Employee",
         gender="Male",
@@ -433,11 +426,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Diya Menon",
         email="diya.menon.seed@voluntag.test",
         contact_number="9999990050",
-        password="seed123",
         age=24,
         designation="Student",
         gender="Female",
@@ -446,11 +438,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Reyansh Oberoi",
         email="reyansh.oberoi.seed@voluntag.test",
         contact_number="9999990051",
-        password="seed123",
         age=35,
         designation="Employee",
         gender="Male",
@@ -459,11 +450,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Kritika Suri",
         email="kritika.suri.seed@voluntag.test",
         contact_number="9999990052",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Female",
@@ -472,11 +462,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Aniket Joshi",
         email="aniket.joshi.seed@voluntag.test",
         contact_number="9999990053",
-        password="seed123",
         age=22,
         designation="Student",
         gender="Male",
@@ -485,11 +474,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Mahima Bansal",
         email="mahima.bansal.seed@voluntag.test",
         contact_number="9999990054",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Female",
@@ -498,11 +486,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Zaid Khan",
         email="zaid.khan.seed@voluntag.test",
         contact_number="9999990055",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Male",
@@ -511,11 +498,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Vanya Kohli",
         email="vanya.kohli.seed@voluntag.test",
         contact_number="9999990056",
-        password="seed123",
         age=23,
         designation="Student",
         gender="Female",
@@ -524,11 +510,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Harsh Vardhan",
         email="harsh.vardhan.seed@voluntag.test",
         contact_number="9999990057",
-        password="seed123",
         age=31,
         designation="Employee",
         gender="Male",
@@ -537,11 +522,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Sanya Grover",
         email="sanya.grover.seed@voluntag.test",
         contact_number="9999990058",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Female",
@@ -550,11 +534,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ishaan Bakshi",
         email="ishaan.bakshi.seed@voluntag.test",
         contact_number="9999990059",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Male",
@@ -563,11 +546,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Alia Fernandes",
         email="alia.fernandes.seed@voluntag.test",
         contact_number="9999990060",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Female",
@@ -576,11 +558,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Dhruv Sethi",
         email="dhruv.sethi.seed@voluntag.test",
         contact_number="9999990061",
-        password="seed123",
         age=33,
         designation="Employee",
         gender="Male",
@@ -589,11 +570,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Navya Iyer",
         email="navya.iyer.seed@voluntag.test",
         contact_number="9999990062",
-        password="seed123",
         age=24,
         designation="Student",
         gender="Female",
@@ -602,11 +582,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Kunal Wadhwa",
         email="kunal.wadhwa.seed@voluntag.test",
         contact_number="9999990063",
-        password="seed123",
         age=36,
         designation="Employee",
         gender="Male",
@@ -615,11 +594,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Prisha Anand",
         email="prisha.anand.seed@voluntag.test",
         contact_number="9999990064",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -628,11 +606,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rehan Qureshi",
         email="rehan.qureshi.seed@voluntag.test",
         contact_number="9999990065",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Male",
@@ -641,11 +618,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Aditi Vyas",
         email="aditi.vyas.seed@voluntag.test",
         contact_number="9999990066",
-        password="seed123",
         age=22,
         designation="Student",
         gender="Female",
@@ -654,11 +630,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Veer Chopra",
         email="veer.chopra.seed@voluntag.test",
         contact_number="9999990067",
-        password="seed123",
         age=34,
         designation="Employee",
         gender="Male",
@@ -667,11 +642,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Myra Kapadia",
         email="myra.kapadia.seed@voluntag.test",
         contact_number="9999990068",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Female",
@@ -680,11 +654,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Arnav Trivedi",
         email="arnav.trivedi.seed@voluntag.test",
         contact_number="9999990069",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Male",
@@ -693,11 +666,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Larisa D'Costa",
         email="larisa.dcosta.seed@voluntag.test",
         contact_number="9999990070",
-        password="seed123",
         age=23,
         designation="Student",
         gender="Female",
@@ -706,11 +678,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Uday Ranganathan",
         email="uday.ranganathan.seed@voluntag.test",
         contact_number="9999990071",
-        password="seed123",
         age=32,
         designation="Employee",
         gender="Male",
@@ -719,11 +690,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Zoya Merchant",
         email="zoya.merchant.seed@voluntag.test",
         contact_number="9999990072",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Female",
@@ -732,11 +702,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Shaurya Bedi",
         email="shaurya.bedi.seed@voluntag.test",
         contact_number="9999990073",
-        password="seed123",
         age=21,
         designation="Student",
         gender="Male",
@@ -745,11 +714,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Anushka Bhalla",
         email="anushka.bhalla.seed@voluntag.test",
         contact_number="9999990074",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -758,11 +726,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rudra Pillai",
         email="rudra.pillai.seed@voluntag.test",
         contact_number="9999990075",
-        password="seed123",
         age=38,
         designation="Employee",
         gender="Male",
@@ -771,11 +738,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Esha Nanda",
         email="esha.nanda.seed@voluntag.test",
         contact_number="9999990076",
-        password="seed123",
         age=24,
         designation="Student",
         gender="Female",
@@ -784,11 +750,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Beginner",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Nikhil Sarin",
         email="nikhil.sarin.seed@voluntag.test",
         contact_number="9999990077",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Male",
@@ -797,11 +762,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Pihu Sachdeva",
         email="pihu.sachdeva.seed@voluntag.test",
         contact_number="9999990078",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Female",
@@ -810,11 +774,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Vihaan Rastogi",
         email="vihaan.rastogi.seed@voluntag.test",
         contact_number="9999990079",
-        password="seed123",
         age=25,
         designation="Other",
         gender="Other",
@@ -823,11 +786,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Trisha Kulshreshtha",
         email="trisha.kulshreshtha.seed@voluntag.test",
         contact_number="9999990080",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Female",
@@ -836,11 +798,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ravi Kumar",
         email="ravi.seed@voluntag.test",
         contact_number="9999990001",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Male",
@@ -849,11 +810,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Priya Sharma",
         email="priya.seed@voluntag.test",
         contact_number="9999990002",
-        password="seed123",
         age=24,
         designation="Employee",
         gender="Female",
@@ -862,11 +822,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Ankit Patel",
         email="ankit.seed@voluntag.test",
         contact_number="9999990003",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Male",
@@ -875,11 +834,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Sneha Reddy",
         email="sneha.seed@voluntag.test",
         contact_number="9999990004",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -888,11 +846,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Arjun Nair",
         email="arjun.seed@voluntag.test",
         contact_number="9999990005",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Male",
@@ -901,11 +858,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Meera Joshi",
         email="meera.seed@voluntag.test",
         contact_number="9999990006",
-        password="seed123",
         age=23,
         designation="Student",
         gender="Female",
@@ -914,11 +870,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Vikram Singh",
         email="vikram.seed@voluntag.test",
         contact_number="9999990007",
-        password="seed123",
         age=32,
         designation="Employee",
         gender="Male",
@@ -927,11 +882,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Kavitha Menon",
         email="kavitha.seed@voluntag.test",
         contact_number="9999990008",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Female",
@@ -940,11 +894,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rahul Deshmukh",
         email="rahul.seed@voluntag.test",
         contact_number="9999990009",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Male",
@@ -953,11 +906,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Anita Desai",
         email="anita.seed@voluntag.test",
         contact_number="9999990010",
-        password="seed123",
         age=31,
         designation="Employee",
         gender="Female",
@@ -966,11 +918,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Suresh Iyer",
         email="suresh.seed@voluntag.test",
         contact_number="9999990011",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Male",
@@ -979,11 +930,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Deepa Krishnan",
         email="deepa.seed@voluntag.test",
         contact_number="9999990012",
-        password="seed123",
         age=25,
         designation="Employee",
         gender="Female",
@@ -992,11 +942,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Amit Gupta",
         email="amit.seed@voluntag.test",
         contact_number="9999990013",
-        password="seed123",
         age=35,
         designation="Employee",
         gender="Male",
@@ -1005,11 +954,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Fatima Khan",
         email="fatima.seed@voluntag.test",
         contact_number="9999990014",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -1018,11 +966,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rajesh Verma",
         email="rajesh.seed@voluntag.test",
         contact_number="9999990015",
-        password="seed123",
         age=33,
         designation="Employee",
         gender="Male",
@@ -1031,11 +978,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Lakshmi Sundaram",
         email="lakshmi.seed@voluntag.test",
         contact_number="9999990016",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Female",
@@ -1044,11 +990,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Sanjay Bhatt",
         email="sanjay.seed@voluntag.test",
         contact_number="9999990017",
-        password="seed123",
         age=34,
         designation="Employee",
         gender="Male",
@@ -1057,11 +1002,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Pooja Agarwal",
         email="pooja.seed@voluntag.test",
         contact_number="9999990018",
-        password="seed123",
         age=24,
         designation="Student",
         gender="Female",
@@ -1070,11 +1014,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Karthik Rajan",
         email="karthik.seed@voluntag.test",
         contact_number="9999990019",
-        password="seed123",
         age=27,
         designation="Employee",
         gender="Male",
@@ -1083,11 +1026,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Nisha Tiwari",
         email="nisha.seed@voluntag.test",
         contact_number="9999990020",
-        password="seed123",
         age=23,
         designation="Student",
         gender="Female",
@@ -1096,11 +1038,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Manoj Pillai",
         email="manoj.seed@voluntag.test",
         contact_number="9999990021",
-        password="seed123",
         age=36,
         designation="Employee",
         gender="Male",
@@ -1109,11 +1050,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Swati Kulkarni",
         email="swati.seed@voluntag.test",
         contact_number="9999990022",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Female",
@@ -1122,11 +1062,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Rohan Saxena",
         email="rohan.seed@voluntag.test",
         contact_number="9999990023",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Male",
@@ -1135,11 +1074,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Divya Nambiar",
         email="divya.seed@voluntag.test",
         contact_number="9999990024",
-        password="seed123",
         age=26,
         designation="Employee",
         gender="Female",
@@ -1148,11 +1086,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Arun Prakash",
         email="arun.seed@voluntag.test",
         contact_number="9999990025",
-        password="seed123",
         age=32,
         designation="Employee",
         gender="Male",
@@ -1161,11 +1098,10 @@ SEED_VOLUNTEERS = [
         availability="Weekdays",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Geeta Rao",
         email="geeta.seed@voluntag.test",
         contact_number="9999990026",
-        password="seed123",
         age=28,
         designation="Employee",
         gender="Female",
@@ -1174,11 +1110,10 @@ SEED_VOLUNTEERS = [
         availability="Flexible",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Imran Sheikh",
         email="imran.seed@voluntag.test",
         contact_number="9999990027",
-        password="seed123",
         age=30,
         designation="Employee",
         gender="Male",
@@ -1187,11 +1122,10 @@ SEED_VOLUNTEERS = [
         availability="Part-time",
         experience="Experienced",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Bhavna Mehta",
         email="bhavna.seed@voluntag.test",
         contact_number="9999990028",
-        password="seed123",
         age=25,
         designation="Student",
         gender="Female",
@@ -1200,11 +1134,10 @@ SEED_VOLUNTEERS = [
         availability="Weekends",
         experience="Intermediate",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Venkat Subramanian",
         email="venkat.seed@voluntag.test",
         contact_number="9999990029",
-        password="seed123",
         age=38,
         designation="Employee",
         gender="Male",
@@ -1213,11 +1146,10 @@ SEED_VOLUNTEERS = [
         availability="Full-time",
         experience="Expert",
     ),
-    Volunteer(
+    SeedVolunteer(
         name="Tanya Chopra",
         email="tanya.seed@voluntag.test",
         contact_number="9999990030",
-        password="seed123",
         age=29,
         designation="Employee",
         gender="Female",

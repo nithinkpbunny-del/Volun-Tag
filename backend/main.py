@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -51,6 +52,7 @@ try:
         RejectRequest,
     )
     from .migrations import ensure_signup_columns
+    from .password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from .password_policy import password_policy_error
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -88,6 +90,7 @@ except ImportError:
         RejectRequest,
     )
     from migrations import ensure_signup_columns
+    from password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from password_policy import password_policy_error
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
@@ -1595,7 +1598,7 @@ def add_volunteer(
         contact_number=(
             volunteer.contact_number or None
         ),
-        password=volunteer.password or None,
+        password=hash_password(volunteer.password),
         age=volunteer.age,
         designation=volunteer.designation or None,
         gender=volunteer.gender or None,
@@ -1899,7 +1902,7 @@ async def add_ngo(
         name=name,
         email=email,
         contact_number=contact_number,
-        password=password,
+        password=hash_password(password),
         category=category,
         location=location,
         year_founded=year_founded,
@@ -2679,6 +2682,78 @@ def get_ngo_dashboard(
             status_code=404,
             detail=f"No NGO found with email '{email}'",
         )
+
+    return ngo
+
+
+# ─── Volunteer / NGO Login ────────────────────────────────────────
+LOGIN_FAILED_DETAIL = "Incorrect email or password"
+
+
+class LoginRequest(BaseModel):
+    # Defaults instead of required fields, so a missing email or password
+    # gets the same 401 as a wrong one rather than a 422.
+    email: str = ""
+    password: str = ""
+
+
+def check_login_password(account, password: str) -> None:
+    """Raise the one login-failure 401 unless password matches account's hash.
+
+    Unknown accounts, empty passwords and stored values that are not a valid
+    hash are checked against DUMMY_HASH first, so every failure takes about
+    as long as a wrong password. The password is never logged.
+    """
+
+    stored = account.password if account is not None else None
+
+    if account is None or not password or not is_hashed(stored):
+        verify_password(password, DUMMY_HASH)
+        raise HTTPException(status_code=401, detail=LOGIN_FAILED_DETAIL)
+
+    if not verify_password(password, stored):
+        raise HTTPException(status_code=401, detail=LOGIN_FAILED_DETAIL)
+
+
+@app.post(
+    "/volunteer-login",
+    response_model=VolunteerDashboardResponse,
+)
+def volunteer_login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+    volunteer = None
+
+    if email:
+        volunteer = db.query(VolunteerDB).filter(
+            func.lower(VolunteerDB.email) == email
+        ).first()
+
+    check_login_password(volunteer, payload.password)
+
+    return volunteer
+
+
+@app.post(
+    "/ngo-login",
+    response_model=NGODashboardResponse,
+)
+def ngo_login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+    ngo = None
+
+    if email:
+        ngo = db.query(NGODB).filter(
+            NGODB.email.isnot(None),
+            func.lower(NGODB.email) == email,
+        ).first()
+
+    check_login_password(ngo, payload.password)
 
     return ngo
 

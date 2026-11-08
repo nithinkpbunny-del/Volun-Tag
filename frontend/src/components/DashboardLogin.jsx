@@ -5,6 +5,7 @@ import { API_BASE } from "../config";
 export default function DashboardLogin({ showToast, setPage, setDashboardEmail }) {
   const [role, setRole] = useState("volunteer");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
@@ -15,15 +16,27 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
       return;
     }
 
+    if (!password) {
+      showToast("Please enter your password", "error");
+      return;
+    }
+
+    // Sent exactly as typed, then cleared so it is not kept after submit.
+    const attempt = password;
+    setPassword("");
     setLoading(true);
 
     const endpoint =
       role === "volunteer"
-        ? `${API_BASE}/volunteer-dashboard/${encodeURIComponent(trimmedEmail)}`
-        : `${API_BASE}/ngo-dashboard/${encodeURIComponent(trimmedEmail)}`;
+        ? `${API_BASE}/volunteer-login`
+        : `${API_BASE}/ngo-login`;
 
     try {
-      const res = await fetch(endpoint);
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail, password: attempt }),
+      });
 
       if (!res.ok) {
         let data = {};
@@ -34,7 +47,9 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
           data = {};
         }
 
-        throw new Error(data.detail || "No matching profile found");
+        throw new Error(
+          typeof data.detail === "string" ? data.detail : "Unable to log in"
+        );
       }
 
       setDashboardEmail(trimmedEmail);
@@ -52,7 +67,7 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
         <div className="form-header">
           <h2 className="form-title">View My Dashboard</h2>
           <p className="form-subtitle">
-            Enter your registered email to view your profile
+            Enter your registered email and password to view your profile
           </p>
         </div>
 
@@ -97,6 +112,21 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="dashboard-login-password">
+              Password <span className="required">*</span>
+            </label>
+
+            <input
+              id="dashboard-login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
             />
           </div>
 

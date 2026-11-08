@@ -62,9 +62,10 @@
   color: var(--ink);
 }
 
-/* ─── Email input scoped to dashboard-login-card ────────────────── */
+/* ─── Email and password inputs scoped to dashboard-login-card ──── */
 
-.dashboard-login-card .form-group input[type="email"] {
+.dashboard-login-card .form-group input[type="email"],
+.dashboard-login-card .form-group input[type="password"] {
   width: 100%;
   font-family: var(--font-body);
   font-size: 0.92rem;
@@ -80,7 +81,8 @@
   -webkit-appearance: none;
 }
 
-.dashboard-login-card .form-group input[type="email"]:focus {
+.dashboard-login-card .form-group input[type="email"]:focus,
+.dashboard-login-card .form-group input[type="password"]:focus {
   border-color: var(--sage);
   box-shadow: 0 0 0 3px rgba(74, 124, 111, 0.12);
   background: #ffffff;
@@ -88,7 +90,10 @@
 
 .dashboard-login-card
   .form-group
-  input[type="email"]:hover:not(:focus) {
+  input[type="email"]:hover:not(:focus),
+.dashboard-login-card
+  .form-group
+  input[type="password"]:hover:not(:focus) {
   border-color: var(--sage-mid);
 }
 
