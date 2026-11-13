@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import Nav from "./components/Nav";
 import ComingSoon from "./components/ComingSoon";
+import { RequireRole } from "./components/RouteGuards";
 import LandingPage from "./components/LandingPage";
 // The old VolunteerForm screen is no longer routed, but its stylesheet holds the
 // shared form styles (form-card, form-title, submit-btn, ...) that the login,
@@ -37,6 +38,7 @@ import {
 import {
   COMING_SOON_PAGES,
   PATHS,
+  dashboardFor,
   eventVolunteersPath,
   pageFromPath,
   resolveIssuePath,
@@ -109,6 +111,7 @@ export default function VolunTag() {
   // Only a logged-in volunteer can report a problem; the report form reads
   // the same session itself, this just decides which screen to show.
   const reporterEmail = dashboardRole === "volunteer" ? dashboardEmail : "";
+  const loggedIn = dashboardRole === "volunteer" || dashboardRole === "ngo";
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
   const [ngoReturnTab, setNgoReturnTab] = useState(null);
   const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
@@ -127,15 +130,24 @@ export default function VolunTag() {
 
     if (!target) return;
 
-    // A dashboard sending a logged-out visitor to the login screen replaces its
-    // own history entry, so the Back button does not bounce between the two.
-    const fromDashboard =
-      pathRef.current === PATHS["volunteer-dashboard"] ||
-      pathRef.current === PATHS["ngo-dashboard"];
+    const from = pageFromPath(pathRef.current);
+    const fromDashboard = from === "volunteer-dashboard" || from === "ngo-dashboard";
 
-    navigateRef.current(target, {
-      replace: name === "dashboard-login" && fromDashboard,
-    });
+    // A dashboard sending the user to the login screen (no login, or its data
+    // would not load) replaces its own history entry, so Back does not bounce
+    // between the two. showLogin tells /login to show the form even if the user
+    // is still logged in; otherwise a dashboard that cannot load would be sent
+    // back to itself by the "logged in, go to your dashboard" rule, forever.
+    if (name === "dashboard-login" && fromDashboard) {
+      navigateRef.current(target, { replace: true, state: { showLogin: true } });
+      return;
+    }
+
+    // Logging in leaves /login behind: the dashboard replaces the login entry,
+    // so Back goes to the page before the login screen.
+    const toDashboard = name === "volunteer-dashboard" || name === "ngo-dashboard";
+
+    navigateRef.current(target, { replace: from === "dashboard-login" && toDashboard });
   }, []);
 
   useEffect(() => {
@@ -174,17 +186,23 @@ export default function VolunTag() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When the server rejects the login (expired or ended), return to the login screen.
+  // When the server rejects the login (expired or ended), return to the login
+  // screen. In order: clear the user, go to /login (replacing the current entry),
+  // show the toast. The user is cleared in the same handler as the navigation,
+  // so /login shows the form instead of forwarding back to a dashboard.
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setDashboardEmail("");
       setDashboardRole("");
-      setPage("dashboard-login");
+      navigateRef.current(PATHS["dashboard-login"], {
+        replace: true,
+        state: { showLogin: true },
+      });
       showToast("Please log in again", "error");
     });
 
     return () => setUnauthorizedHandler(null);
-  }, [showToast, setPage]);
+  }, [showToast]);
 
   // The only way to log out: the Log out button in the navbar. logoutUser clears
   // the stored login first, then tells the server (best effort).
@@ -254,84 +272,96 @@ export default function VolunTag() {
               <Route
                 path="/login"
                 element={
-                  <DashboardLogin
-                    showToast={showToast}
-                    setPage={setPage}
-                    onLogin={handleLogin}
-                  />
+                  loggedIn && !(location.state && location.state.showLogin) ? (
+                    <Navigate to={dashboardFor(dashboardRole)} replace />
+                  ) : (
+                    <DashboardLogin
+                      showToast={showToast}
+                      setPage={setPage}
+                      onLogin={handleLogin}
+                    />
+                  )
                 }
               />
 
               <Route
                 path="/volunteer/dashboard"
                 element={
-                  <VolunteerDashboard
-                    email={dashboardEmail}
-                    showToast={showToast}
-                    setPage={setPage}
-                    onReportProblem={handleReportProblem}
-                    initialTab={volunteerInitialTab}
-                    onInitialConsumed={() => setVolunteerInitialTab(null)}
-                  />
+                  <RequireRole role="volunteer" currentRole={dashboardRole}>
+                    <VolunteerDashboard
+                      email={dashboardEmail}
+                      showToast={showToast}
+                      setPage={setPage}
+                      onReportProblem={handleReportProblem}
+                      initialTab={volunteerInitialTab}
+                      onInitialConsumed={() => setVolunteerInitialTab(null)}
+                    />
+                  </RequireRole>
                 }
               />
 
               <Route
                 path="/ngo/dashboard"
                 element={
-                  <NGODashboard
-                    email={dashboardEmail}
-                    showToast={showToast}
-                    setPage={setPage}
-                    onViewVolunteers={(ev) =>
-                      navigate(eventVolunteersPath(ev.id), { state: { event: ev } })
-                    }
-                    onMarkSolved={(iss) =>
-                      navigate(resolveIssuePath(iss.complaint_id), { state: { issue: iss } })
-                    }
-                    initialTab={ngoReturnTab}
-                    initialChat={ngoChatTarget}
-                    onInitialConsumed={() => {
-                      setNgoReturnTab(null);
-                      setNgoChatTarget(null);
-                    }}
-                  />
+                  <RequireRole role="ngo" currentRole={dashboardRole}>
+                    <NGODashboard
+                      email={dashboardEmail}
+                      showToast={showToast}
+                      setPage={setPage}
+                      onViewVolunteers={(ev) =>
+                        navigate(eventVolunteersPath(ev.id), { state: { event: ev } })
+                      }
+                      onMarkSolved={(iss) =>
+                        navigate(resolveIssuePath(iss.complaint_id), { state: { issue: iss } })
+                      }
+                      initialTab={ngoReturnTab}
+                      initialChat={ngoChatTarget}
+                      onInitialConsumed={() => {
+                        setNgoReturnTab(null);
+                        setNgoChatTarget(null);
+                      }}
+                    />
+                  </RequireRole>
                 }
               />
 
               <Route
                 path="/ngo/events/:id/volunteers"
                 element={
-                  <EventVolunteersRoute
-                    ngoEmail={dashboardEmail}
-                    showToast={showToast}
-                    onBack={(event) => {
-                      setNgoReturnTab(
-                        event.is_completed && event.status !== "Cancelled"
-                          ? "activity"
-                          : "events"
-                      );
-                      setPage("ngo-dashboard");
-                    }}
-                    onConnect={(target) => {
-                      setNgoChatTarget(target);
-                      setPage("ngo-dashboard");
-                    }}
-                  />
+                  <RequireRole role="ngo" currentRole={dashboardRole}>
+                    <EventVolunteersRoute
+                      ngoEmail={dashboardEmail}
+                      showToast={showToast}
+                      onBack={(event) => {
+                        setNgoReturnTab(
+                          event.is_completed && event.status !== "Cancelled"
+                            ? "activity"
+                            : "events"
+                        );
+                        setPage("ngo-dashboard");
+                      }}
+                      onConnect={(target) => {
+                        setNgoChatTarget(target);
+                        setPage("ngo-dashboard");
+                      }}
+                    />
+                  </RequireRole>
                 }
               />
 
               <Route
                 path="/ngo/issues/:id/resolve"
                 element={
-                  <ResolveIssueRoute
-                    ngoEmail={dashboardEmail}
-                    showToast={showToast}
-                    onBack={() => {
-                      setNgoReturnTab("problems");
-                      setPage("ngo-dashboard");
-                    }}
-                  />
+                  <RequireRole role="ngo" currentRole={dashboardRole}>
+                    <ResolveIssueRoute
+                      ngoEmail={dashboardEmail}
+                      showToast={showToast}
+                      onBack={() => {
+                        setNgoReturnTab("problems");
+                        setPage("ngo-dashboard");
+                      }}
+                    />
+                  </RequireRole>
                 }
               />
 
