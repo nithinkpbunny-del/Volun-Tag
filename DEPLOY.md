@@ -80,6 +80,26 @@ the database or the models, so it only shows that the server process is up.
 - **SPA rewrite on the frontend host.** Send every path that is not a real
   file to `index.html`, so reloading a page does not return a 404.
 
+## Single-page app rewrites
+
+The frontend is a single-page app. Pages such as `/news` or
+`/volunteer/dashboard` are not real files, so the frontend host must send every
+path that is not a real file to `index.html` (with status 200, not a redirect).
+Without this, reloading a page or opening a link directly returns a 404.
+
+- **Netlify, Cloudflare Pages and similar hosts:** `frontend/public/_redirects`
+  is copied into the build and already contains `/* /index.html 200`.
+- **Vercel:** it ignores `_redirects`. A `vercel.json` next to the frontend
+  would need this (not created yet, because the host is not chosen):
+
+  ```json
+  {"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}
+  ```
+
+- **Admin console:** it lives at `/admin` and is part of the same app, so
+  `/admin` needs the same rewrite. There is no link to it from the public site;
+  open the address directly.
+
 ## Python packages
 
 - `backend/requirements.txt` was frozen on macOS. On the host, check that every
