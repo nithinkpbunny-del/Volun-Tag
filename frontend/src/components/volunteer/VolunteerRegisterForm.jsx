@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./VolunteerRegisterForm.css";
 import { API_BASE } from "../../config";
+import { loginUser } from "../../api";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 
 const SKILL_SUGGESTIONS = [
@@ -19,7 +20,7 @@ const AVAILABILITY_OPTIONS = [
 
 const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
 
-export default function VolunteerRegisterForm({ showToast, setPage, setDashboardEmail }) {
+export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -176,6 +177,17 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
       }
 
       showToast("Volunteer registered successfully!", "success");
+
+      // Log in with the email and password just typed, so the dashboard opens.
+      try {
+        const account = await loginUser("volunteer", form.email.trim(), form.password);
+        onLogin({ role: "volunteer", email: account.email || form.email.trim() });
+      } catch {
+        showToast("Registered. Please log in to continue.", "success");
+        setPage("dashboard-login");
+        return;
+      }
+
       setSubmitted(true);
     } catch (err) {
       showToast(
@@ -226,10 +238,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
 
               <button
                 className="success-btn-secondary"
-                onClick={() => {
-                  setDashboardEmail(form.email.trim());
-                  setPage("volunteer-dashboard");
-                }}
+                onClick={() => setPage("volunteer-dashboard")}
                 id="volunteer-reg-view-dashboard"
               >
                 Go to My Dashboard

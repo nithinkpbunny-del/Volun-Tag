@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import "./Messages.css";
+import AuthImage from "../AuthImage";
 import { API_BASE } from "../../config";
+import { authFetch, openAuthedFile } from "../../api";
 
 const BLOCKED_EXTENSIONS = [
   "exe", "bat", "cmd", "com", "msi", "scr", "sh",
@@ -277,7 +279,7 @@ export default function Messages({
     async (otherEmail) => {
       if (!email || !otherEmail) return;
       try {
-        await fetch(`${API_BASE}/messages/read`, {
+        await authFetch(`${API_BASE}/messages/read`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -300,7 +302,7 @@ export default function Messages({
       if (!isBackground) setLoadingConvos(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/conversations/${encodeURIComponent(email.trim().toLowerCase())}`
         );
         if (!res.ok) {
@@ -344,7 +346,7 @@ export default function Messages({
       const targetEmail = otherEmail.trim().toLowerCase();
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/messages/${encodeURIComponent(
             email.trim().toLowerCase()
           )}/with/${encodeURIComponent(targetEmail)}`
@@ -630,7 +632,7 @@ export default function Messages({
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
-          const res = await fetch(`${API_BASE}/messages/location`, {
+          const res = await authFetch(`${API_BASE}/messages/location`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -723,7 +725,7 @@ export default function Messages({
           formData.append("caption", trimmed);
         }
 
-        const res = await fetch(`${API_BASE}/messages/file`, {
+        const res = await authFetch(`${API_BASE}/messages/file`, {
           method: "POST",
           body: formData,
         });
@@ -747,7 +749,7 @@ export default function Messages({
         }
       } else {
         // Send regular text message
-        const res = await fetch(`${API_BASE}/messages`, {
+        const res = await authFetch(`${API_BASE}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -831,9 +833,8 @@ export default function Messages({
       }
 
       const isMine = msg.is_mine;
-      const fileUrlWithAuth = msg.file_url
-        ? `${API_BASE}${msg.file_url}?email=${encodeURIComponent(email.trim().toLowerCase())}`
-        : null;
+      // Path only: AuthImage and openAuthedFile fetch it with the login token.
+      const filePath = msg.file_url || null;
 
       items.push(
         <div
@@ -842,26 +843,19 @@ export default function Messages({
         >
           <div className={`msg-bubble ${isMine ? "msg-bubble-mine" : "msg-bubble-theirs"}`}>
             {/* 1. Image message */}
-            {msg.message_type === "image" && fileUrlWithAuth && (
+            {msg.message_type === "image" && filePath && (
               <div className="msg-attachment-image-box">
-                <a
-                  href={fileUrlWithAuth}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="msg-image-link"
-                >
-                  <img
-                    src={fileUrlWithAuth}
-                    alt={msg.file_name || "Shared photo"}
-                    className="msg-image-thumbnail"
-                    loading="lazy"
-                  />
-                </a>
+                <AuthImage
+                  src={filePath}
+                  alt={msg.file_name || "Shared photo"}
+                  className="msg-image-thumbnail"
+                  linkClassName="msg-image-link"
+                />
               </div>
             )}
 
             {/* 2. Document message */}
-            {msg.message_type === "document" && fileUrlWithAuth && (
+            {msg.message_type === "document" && filePath && (
               <div className="msg-doc-card">
                 <div className="msg-doc-icon-box">
                   <DocIcon />
@@ -874,15 +868,21 @@ export default function Messages({
                     {formatFileSize(msg.file_size)}
                   </span>
                 </div>
-                <a
-                  href={fileUrlWithAuth}
-                  download={msg.file_name || "file"}
+                <button
+                  type="button"
                   className="msg-doc-download-btn"
                   title="Download file"
+                  onClick={() =>
+                    openAuthedFile(filePath).catch(() => {
+                      if (showToastRef.current) {
+                        showToastRef.current("Could not open the file", "error");
+                      }
+                    })
+                  }
                 >
                   <DownloadIcon />
                   <span>Download</span>
-                </a>
+                </button>
               </div>
             )}
 

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Messages from "../messaging/Messages";
+import AuthImage from "../AuthImage";
 import "./VolunteerDashboard.css";
 import { API_BASE } from "../../config";
+import { authFetch } from "../../api";
 
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
 const MAX_ISSUE_IMAGES = 6;
@@ -21,23 +23,17 @@ const readErrorDetail = async (res, fallback) => {
 
 // One clickable thumbnail of a reported photo; hidden if the image cannot be loaded.
 function IssuePhotoThumb({ src, alt }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) return null;
+
   return (
-    <a
-      className="dashboard-issue-photo"
-      href={src}
-      target="_blank"
-      rel="noreferrer"
-    >
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        onError={(e) => {
-          e.currentTarget.style.display = "none";
-          e.currentTarget.parentNode.style.display = "none";
-        }}
-      />
-    </a>
+    <AuthImage
+      src={src}
+      alt={alt}
+      linkClassName="dashboard-issue-photo"
+      onFail={() => setFailed(true)}
+    />
   );
 }
 
@@ -88,7 +84,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       if (inFlight || document.visibilityState === "hidden") return;
       inFlight = true;
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/conversations/${encodeURIComponent(email)}`
         );
         if (!res.ok) return;
@@ -119,7 +115,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   const loadEvents = useCallback(async () => {
     if (!email) return;
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/volunteer-events/${encodeURIComponent(email)}`
       );
       if (!res.ok) return;
@@ -157,7 +153,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
 
     const fetchActivity = async () => {
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/volunteer-activity/${encodeURIComponent(email)}`
         );
         if (!res.ok) return;
@@ -190,7 +186,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     if (!email) return;
     const epoch = issuesEpochRef.current;
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/volunteer-issues/${encodeURIComponent(email)}`
       );
       if (!res.ok) return;
@@ -238,7 +234,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       setLoadingProfile(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/volunteer-dashboard/${encodeURIComponent(email)}`
         );
 
@@ -313,7 +309,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
 
     const fetchMatches = async () => {
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/volunteer-matches/${encodeURIComponent(email)}`
         );
 
@@ -370,7 +366,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     if (joiningId !== null || ev.joined) return;
     setJoiningId(ev.activity_id);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/activities/${ev.activity_id}/join`,
         {
           method: "POST",
@@ -405,7 +401,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     if (!window.confirm("Leave this activity?")) return;
     setJoiningId(ev.activity_id);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/activities/${ev.activity_id}/join?volunteer_email=${encodeURIComponent(email)}`,
         { method: "DELETE" }
       );
@@ -431,8 +427,9 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     }
   };
 
-  const issuePhotoUrl = (complaintId, index) =>
-    `${API_BASE}/issue-files/issue/${encodeURIComponent(complaintId)}/${index}?email=${encodeURIComponent(email)}`;
+  // Path only: AuthImage fetches it with the login token.
+  const issuePhotoPath = (complaintId, index) =>
+    `/issue-files/issue/${encodeURIComponent(complaintId)}/${index}`;
 
   const startEditIssue = (iss) => {
     setEditingIssueId(iss.complaint_id);
@@ -510,8 +507,8 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     });
 
     try {
-      const res = await fetch(
-        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}?email=${encodeURIComponent(email)}`,
+      const res = await authFetch(
+        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}`,
         { method: "PATCH", body: formData }
       );
       if (res.ok) {
@@ -545,8 +542,8 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     if (!window.confirm("Delete this reported problem? This cannot be undone.")) return;
     setDeletingIssueId(iss.complaint_id);
     try {
-      const res = await fetch(
-        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}?email=${encodeURIComponent(email)}`,
+      const res = await authFetch(
+        `${API_BASE}/volunteer-issues/${encodeURIComponent(iss.complaint_id)}`,
         { method: "DELETE" }
       );
       if (res.ok) {
@@ -786,7 +783,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
                           {Array.from({ length: iss.image_count }, (_, index) => (
                             <IssuePhotoThumb
                               key={index}
-                              src={issuePhotoUrl(iss.complaint_id, index)}
+                              src={issuePhotoPath(iss.complaint_id, index)}
                               alt={`Reported photo ${index + 1}`}
                             />
                           ))}

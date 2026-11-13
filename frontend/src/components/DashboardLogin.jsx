@@ -1,8 +1,8 @@
 import { useState } from "react";
 import "./DashboardLogin.css";
-import { API_BASE } from "../config";
+import { loginUser } from "../api";
 
-export default function DashboardLogin({ showToast, setPage, setDashboardEmail }) {
+export default function DashboardLogin({ showToast, setPage, onLogin }) {
   const [role, setRole] = useState("volunteer");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,33 +26,11 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
     setPassword("");
     setLoading(true);
 
-    const endpoint =
-      role === "volunteer"
-        ? `${API_BASE}/volunteer-login`
-        : `${API_BASE}/ngo-login`;
-
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmedEmail, password: attempt }),
-      });
+      // A locked account comes back as the server's 429 message.
+      const account = await loginUser(role, trimmedEmail, attempt);
 
-      if (!res.ok) {
-        let data = {};
-
-        try {
-          data = await res.json();
-        } catch {
-          data = {};
-        }
-
-        throw new Error(
-          typeof data.detail === "string" ? data.detail : "Unable to log in"
-        );
-      }
-
-      setDashboardEmail(trimmedEmail);
+      onLogin({ role, email: account.email || trimmedEmail });
       setPage(role === "volunteer" ? "volunteer-dashboard" : "ngo-dashboard");
     } catch (err) {
       showToast(err.message || "Unable to connect to backend", "error");

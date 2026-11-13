@@ -1,24 +1,35 @@
 import { useEffect, useState } from "react";
 import Messages from "../messaging/Messages";
+import AuthImage from "../AuthImage";
 import "./NGODashboard.css";
 import { API_BASE } from "../../config";
+import { authFetch, openAuthedFile } from "../../api";
+
+// Looks like a link; opens a protected file through the login token.
+const LINK_BUTTON_STYLE = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  font: "inherit",
+  color: "inherit",
+  textDecoration: "underline",
+  cursor: "pointer",
+};
 
 // One clickable thumbnail; hidden entirely if the image cannot be loaded.
 function PhotoThumb({ src, alt, caption }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) return null;
+
   return (
     <div className="ngo-photo-item">
-      <a href={src} target="_blank" rel="noreferrer">
-        <img
-          className="ngo-photo-thumb"
-          src={src}
-          alt={alt}
-          loading="lazy"
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
-            e.currentTarget.closest(".ngo-photo-item").style.display = "none";
-          }}
-        />
-      </a>
+      <AuthImage
+        className="ngo-photo-thumb"
+        src={src}
+        alt={alt}
+        onFail={() => setFailed(true)}
+      />
       {caption && <span className="ngo-photo-caption">{caption}</span>}
     </div>
   );
@@ -71,7 +82,7 @@ export default function NGODashboard({
       if (inFlight || document.visibilityState === "hidden") return;
       inFlight = true;
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/conversations/${encodeURIComponent(email)}`
         );
         if (!res.ok) return;
@@ -128,7 +139,7 @@ export default function NGODashboard({
       setLoadingProfile(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/ngo-dashboard/${encodeURIComponent(email)}`
         );
 
@@ -165,7 +176,7 @@ export default function NGODashboard({
     setLoadingEvents(true);
 
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/ngo-events/${encodeURIComponent(email)}?include_cancelled=true`
       );
 
@@ -190,7 +201,7 @@ export default function NGODashboard({
       setLoadingEvents(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/ngo-events/${encodeURIComponent(email)}?include_cancelled=true`
         );
 
@@ -228,7 +239,7 @@ export default function NGODashboard({
       if (document.visibilityState === "hidden") return;
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/ngo-events/${encodeURIComponent(email)}?include_cancelled=true`
         );
 
@@ -264,7 +275,7 @@ export default function NGODashboard({
       if (!silent) setLoadingIssues(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/ngo-issues/${encodeURIComponent(email)}`
         );
 
@@ -314,7 +325,7 @@ export default function NGODashboard({
           : null,
       };
 
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/organize-event/${encodeURIComponent(email)}`,
         {
           method: "POST",
@@ -357,7 +368,7 @@ export default function NGODashboard({
           : null,
       };
 
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/update-event/${editingEventId}`,
         {
           method: "PATCH",
@@ -385,7 +396,7 @@ export default function NGODashboard({
   // ── Cancel event ────────────────────────────────────────────────
   const handleCancel = async (eventId) => {
     try {
-      const res = await fetch(`${API_BASE}/event-status/${eventId}`, {
+      const res = await authFetch(`${API_BASE}/event-status/${eventId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "Cancelled" }),
@@ -407,7 +418,7 @@ export default function NGODashboard({
   // ── Mark event filled / reopen event ────────────────────────────
   const handleSetEventStatus = async (eventId, status, successMessage) => {
     try {
-      const res = await fetch(`${API_BASE}/event-status/${eventId}`, {
+      const res = await authFetch(`${API_BASE}/event-status/${eventId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -463,11 +474,12 @@ export default function NGODashboard({
     return "Reported";
   };
 
-  const issuePhotoUrl = (complaintId, index) =>
-    `${API_BASE}/issue-files/issue/${complaintId}/${index}?email=${encodeURIComponent(email)}`;
+  // Paths only: AuthImage and openAuthedFile fetch them with the login token.
+  const issuePhotoPath = (complaintId, index) =>
+    `/issue-files/issue/${encodeURIComponent(complaintId)}/${index}`;
 
-  const resolutionFileUrl = (resolutionId, kind) =>
-    `${API_BASE}/issue-files/resolution/${resolutionId}/${kind}?email=${encodeURIComponent(email)}`;
+  const resolutionFilePath = (resolutionId, kind) =>
+    `/issue-files/resolution/${resolutionId}/${kind}`;
 
   const onField = (field) => (e) =>
     setFormData((prev) => ({ ...prev, [field]: e.target.value }));
@@ -672,13 +684,17 @@ export default function NGODashboard({
                         <p className="ngo-solution-block">
                           <strong>Solution:</strong>{" "}
                           {iss.solution_type === "document" ? (
-                            <a
-                              href={resolutionFileUrl(iss.resolution_id, "document")}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              style={LINK_BUTTON_STYLE}
+                              onClick={() =>
+                                openAuthedFile(
+                                  resolutionFilePath(iss.resolution_id, "document")
+                                ).catch(() => showToast("Could not open the document", "error"))
+                              }
                             >
                               Open document ({iss.document_name})
-                            </a>
+                            </button>
                           ) : (
                             iss.solution_text
                           )}
@@ -687,12 +703,12 @@ export default function NGODashboard({
                         {iss.resolution_id && (
                           <div className="ngo-photo-list">
                             <PhotoThumb
-                              src={resolutionFileUrl(iss.resolution_id, "before")}
+                              src={resolutionFilePath(iss.resolution_id, "before")}
                               alt="Before photo"
                               caption="Your before photo"
                             />
                             <PhotoThumb
-                              src={resolutionFileUrl(iss.resolution_id, "after")}
+                              src={resolutionFilePath(iss.resolution_id, "after")}
                               alt="After photo"
                               caption="Your after photo"
                             />
@@ -1273,7 +1289,7 @@ export default function NGODashboard({
                               {Array.from({ length: iss.image_count }, (_, index) => (
                                 <PhotoThumb
                                   key={index}
-                                  src={issuePhotoUrl(iss.complaint_id, index)}
+                                  src={issuePhotoPath(iss.complaint_id, index)}
                                   alt={`Reported photo ${index + 1}`}
                                 />
                               ))}
@@ -1284,12 +1300,12 @@ export default function NGODashboard({
                         {iss.resolution_id && (
                           <div className="ngo-photo-list">
                             <PhotoThumb
-                              src={resolutionFileUrl(iss.resolution_id, "before")}
+                              src={resolutionFilePath(iss.resolution_id, "before")}
                               alt="Before photo"
                               caption="Your before photo"
                             />
                             <PhotoThumb
-                              src={resolutionFileUrl(iss.resolution_id, "after")}
+                              src={resolutionFilePath(iss.resolution_id, "after")}
                               alt="After photo"
                               caption="Your after photo"
                             />

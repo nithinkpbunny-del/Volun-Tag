@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./EventVolunteers.css";
 import { API_BASE } from "../../config";
+import { authFetch } from "../../api";
 
 const initials = (name) =>
   name
@@ -168,14 +169,14 @@ export default function EventVolunteers({
 
     let cancelled = false;
 
-    const url = `${API_BASE}/event-volunteers/${event.id}?ngo_email=${encodeURIComponent(ngoEmail)}`;
+    const url = `${API_BASE}/event-volunteers/${event.id}`;
 
     const load = async () => {
       setLoading(true);
       setError("");
 
       try {
-        const res = await fetch(url);
+        const res = await authFetch(url);
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -201,7 +202,7 @@ export default function EventVolunteers({
       if (document.visibilityState === "hidden") return;
 
       try {
-        const res = await fetch(url);
+        const res = await authFetch(url);
 
         if (!res.ok) return;
 
@@ -249,8 +250,8 @@ export default function EventVolunteers({
   // Same fetch as the 10-second refresh: no loading state, errors ignored.
   const reloadSilently = async () => {
     try {
-      const res = await fetch(
-        `${API_BASE}/event-volunteers/${event.id}?ngo_email=${encodeURIComponent(ngoEmail)}`
+      const res = await authFetch(
+        `${API_BASE}/event-volunteers/${event.id}`
       );
 
       if (!res.ok) return;
@@ -274,8 +275,8 @@ export default function EventVolunteers({
     setBusyId(v.volunteer_id);
 
     try {
-      const res = await fetch(
-        `${API_BASE}/event-volunteers/${event.id}/${v.volunteer_id}/${action}?ngo_email=${encodeURIComponent(ngoEmail)}`,
+      const res = await authFetch(
+        `${API_BASE}/event-volunteers/${event.id}/${v.volunteer_id}/${action}`,
         { method: "POST" }
       );
 
@@ -332,8 +333,8 @@ export default function EventVolunteers({
     setBusyId(v.volunteer_id);
 
     try {
-      const res = await fetch(
-        `${API_BASE}/event-volunteers/${event.id}/${v.volunteer_id}/feedback?ngo_email=${encodeURIComponent(ngoEmail)}`,
+      const res = await authFetch(
+        `${API_BASE}/event-volunteers/${event.id}/${v.volunteer_id}/feedback`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

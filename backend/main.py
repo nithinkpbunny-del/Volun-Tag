@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -24,9 +24,10 @@ import numpy as np
 
 try:
     from .admin import router as admin_router
-    from .admin_auth import is_admin_request, log_admin_action, require_admin
+    from . import login_limiter
+    from .admin_auth import log_admin_action, require_admin
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, UserSessionDB, VolunteerDB
     from .embedding_store import get_vectors, refresh_vector
     from .issue_service import (
         ISSUE_STATUSES,
@@ -56,15 +57,21 @@ try:
     from .password_policy import password_policy_error
     from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from .user_auth import (
+        create_user_session, delete_session_for_header, ensure_own_email,
+        require_ngo, require_user, require_user_or_admin, require_volunteer,
+        same_email,
+    )
     from .settings import (
         ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
         SEED_DEMO_DATA, UPLOAD_DIR,
     )
 except ImportError:
     from admin import router as admin_router
-    from admin_auth import is_admin_request, log_admin_action, require_admin
+    import login_limiter
+    from admin_auth import log_admin_action, require_admin
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, UserSessionDB, VolunteerDB
     from embedding_store import get_vectors, refresh_vector
     from issue_service import (
         ISSUE_STATUSES,
@@ -94,6 +101,11 @@ except ImportError:
     from password_policy import password_policy_error
     from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from user_auth import (
+        create_user_session, delete_session_for_header, ensure_own_email,
+        require_ngo, require_user, require_user_or_admin, require_volunteer,
+        same_email,
+    )
     from settings import (
         ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
         SEED_DEMO_DATA, UPLOAD_DIR,
@@ -418,7 +430,6 @@ def get_owned_event(db: Session, event_id: int, ngo_email: str) -> ActivityDB:
         NGODB.id == event.ngo_id,
     ).first()
 
-    # Email-only ownership check; real authentication is on the roadmap.
     if (
         not ngo
         or not ngo.email
@@ -486,9 +497,12 @@ def report_issue(
     reporter_name: Optional[str] = Form(default=None),
     contact_information: Optional[str] = Form(default=None),
     images: list[UploadFile] = File(default=[]),
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
-    """Store a public issue report with optional image uploads and AI processing."""
+    """Store an issue report from a logged-in volunteer, with optional images and AI processing."""
+
+    ensure_own_email(session, reporter_email)
 
     user_description = user_description.strip()
     location = location.strip()
@@ -650,6 +664,7 @@ def report_issue(
 @app.get(
     "/issues",
     response_model=list[IssueResponse],
+    dependencies=[Depends(require_admin)],
 )
 def list_issues(
     db: Session = Depends(get_db),
@@ -662,6 +677,7 @@ def list_issues(
 @app.get(
     "/issues/{complaint_id}",
     response_model=IssueResponse,
+    dependencies=[Depends(require_admin)],
 )
 def get_issue(
     complaint_id: str,
@@ -772,9 +788,12 @@ def submit_issue_resolution(
     document: Optional[UploadFile] = File(default=None),
     before_photo: Optional[UploadFile] = File(default=None),
     after_photo: Optional[UploadFile] = File(default=None),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
     """Store an NGO's proof that it solved a reported problem."""
+
+    ensure_own_email(session, ngo_email)
 
     issue = get_issue_by_complaint_id(db, complaint_id)
 
@@ -970,9 +989,12 @@ def build_volunteer_issue_entry(
 )
 def list_volunteer_issues(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
     """Return the problems reported by one volunteer, newest first."""
+
+    ensure_own_email(session, email)
 
     email_lower = email.strip().lower()
 
@@ -1007,15 +1029,15 @@ def list_volunteer_issues(
 )
 def edit_volunteer_issue(
     complaint_id: str,
-    email: str = Query(..., min_length=1),
     user_description: Optional[str] = Form(default=None),
     location: Optional[str] = Form(default=None),
     images: list[UploadFile] = File(default=[]),
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
     """Edit a still-unhandled report: text can change, photos can only be added."""
 
-    issue = get_owned_issue(db, complaint_id, email)
+    issue = get_owned_issue(db, complaint_id, session.email)
 
     if issue.status != "Reported":
         raise HTTPException(
@@ -1154,12 +1176,12 @@ def edit_volunteer_issue(
 )
 def delete_volunteer_issue(
     complaint_id: str,
-    email: str = Query(..., min_length=1),
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
     """Delete a still-unhandled report together with its files."""
 
-    issue = get_owned_issue(db, complaint_id, email)
+    issue = get_owned_issue(db, complaint_id, session.email)
 
     if issue.status != "Reported":
         raise HTTPException(
@@ -1469,8 +1491,7 @@ def serve_stored_file(
 def get_issue_photo(
     complaint_id: str,
     index: int,
-    email: str = Query(default=""),
-    is_admin: bool = Depends(is_admin_request),
+    session: Optional[UserSessionDB] = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ):
     """Serve one photo of a reported issue to its reporter, a matched NGO, or an admin."""
@@ -1483,13 +1504,14 @@ def get_issue_photo(
             detail=f"Issue '{complaint_id}' not found",
         )
 
-    allowed = is_admin or is_issue_reporter(issue, email)
+    # session is None for an admin session.
+    allowed = session is None
 
-    if not allowed and email.strip():
-        ngo = db.query(NGODB).filter(
-            NGODB.email.isnot(None),
-            func.lower(NGODB.email) == email.strip().lower(),
-        ).first()
+    if session is not None and session.user_role == "volunteer":
+        allowed = is_issue_reporter(issue, session.email)
+
+    if session is not None and session.user_role == "ngo":
+        ngo = db.query(NGODB).filter(NGODB.id == session.user_id).first()
         allowed = bool(ngo and issue_matches_ngo(issue, ngo))
 
     if not allowed:
@@ -1510,8 +1532,7 @@ def get_issue_photo(
 def get_resolution_file(
     resolution_id: int,
     kind: str,
-    email: str = Query(default=""),
-    is_admin: bool = Depends(is_admin_request),
+    session: Optional[UserSessionDB] = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ):
     """Serve a proof file to the submitting NGO, the issue's reporter, or an admin."""
@@ -1526,19 +1547,15 @@ def get_resolution_file(
     if kind not in ("before", "after", "document"):
         raise HTTPException(status_code=404, detail="File not found")
 
-    allowed = is_admin
+    # session is None for an admin session.
+    allowed = session is None
 
-    if not allowed and email.strip():
-        email_lower = email.strip().lower()
+    if session is not None and session.user_role == "ngo":
+        allowed = session.user_id == resolution.ngo_id
 
-        ngo = db.query(NGODB).filter(NGODB.id == resolution.ngo_id).first()
-        allowed = bool(
-            ngo and ngo.email and ngo.email.strip().lower() == email_lower
-        )
-
-        if not allowed:
-            issue = get_issue_by_complaint_id(db, resolution.complaint_id)
-            allowed = bool(issue and is_issue_reporter(issue, email_lower))
+    if session is not None and session.user_role == "volunteer":
+        issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+        allowed = bool(issue and is_issue_reporter(issue, session.email))
 
     if not allowed:
         raise HTTPException(
@@ -1972,8 +1989,11 @@ async def add_ngo(
 def organize_event(
     email: str,
     event: EventCreate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -2022,8 +2042,11 @@ def organize_event(
 def get_ngo_events(
     email: str,
     include_cancelled: bool = Query(False),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -2120,10 +2143,10 @@ def get_ngo_events(
 )
 def get_event_volunteers(
     event_id: int,
-    ngo_email: str = Query(...),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = get_owned_event(db, event_id, ngo_email)
+    event = get_owned_event(db, event_id, session.email)
 
     rows = (
         db.query(ActivitySignupDB, VolunteerDB)
@@ -2203,10 +2226,10 @@ def get_event_volunteers(
 def approve_event_volunteer(
     event_id: int,
     volunteer_id: int,
-    ngo_email: str = Query(...),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = get_owned_event(db, event_id, ngo_email)
+    event = get_owned_event(db, event_id, session.email)
 
     if event.status != "Active":
         raise HTTPException(
@@ -2264,10 +2287,10 @@ def approve_event_volunteer(
 def unapprove_event_volunteer(
     event_id: int,
     volunteer_id: int,
-    ngo_email: str = Query(...),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = get_owned_event(db, event_id, ngo_email)
+    event = get_owned_event(db, event_id, session.email)
 
     if is_past(event):
         raise HTTPException(
@@ -2306,10 +2329,10 @@ def submit_event_volunteer_feedback(
     event_id: int,
     volunteer_id: int,
     body: FeedbackRequest,
-    ngo_email: str = Query(...),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = get_owned_event(db, event_id, ngo_email)
+    event = get_owned_event(db, event_id, session.email)
 
     if event.status == "Cancelled":
         raise HTTPException(
@@ -2404,9 +2427,12 @@ def submit_event_volunteer_feedback(
 )
 def get_ngo_issues(
     email: str,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
     """Return issues whose AI recommendations include the NGO identified by *email*."""
+
+    ensure_own_email(session, email)
 
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
@@ -2503,17 +2529,10 @@ def get_ngo_issues(
 def update_event_status(
     event_id: int,
     status_update: EventStatusUpdate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = db.query(ActivityDB).filter(
-        ActivityDB.id == event_id,
-    ).first()
-
-    if not event:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Event '{event_id}' not found",
-        )
+    event = get_owned_event(db, event_id, session.email)
 
     if is_completed(event):
         raise HTTPException(
@@ -2557,17 +2576,10 @@ def update_event_status(
 def update_event(
     event_id: int,
     event_update: EventUpdate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = db.query(ActivityDB).filter(
-        ActivityDB.id == event_id,
-    ).first()
-
-    if not event:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Event '{event_id}' not found",
-        )
+    event = get_owned_event(db, event_id, session.email)
 
     if is_completed(event):
         raise HTTPException(
@@ -2596,7 +2608,7 @@ def update_event(
 
 
 # ─── Data Retrieval ────────────────────────────────────────────────
-@app.get("/volunteers")
+@app.get("/volunteers", dependencies=[Depends(require_admin)])
 def get_volunteers(
     db: Session = Depends(get_db),
 ):
@@ -2626,8 +2638,11 @@ def get_volunteers(
 )
 def get_volunteer_dashboard(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == email.strip().lower()
@@ -2675,8 +2690,11 @@ def get_ngos(
 )
 def get_ngo_dashboard(
     email: str,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -2721,9 +2739,36 @@ def check_login_password(account, password: str) -> None:
         raise HTTPException(status_code=401, detail=LOGIN_FAILED_DETAIL)
 
 
+class VolunteerLoginResponse(VolunteerDashboardResponse):
+    token: str = ""
+
+
+class NGOLoginResponse(NGODashboardResponse):
+    token: str = ""
+
+
+def check_login_with_limit(role: str, email: str, account, password: str) -> None:
+    """Apply the per-account rate limit around check_login_password.
+
+    Locked accounts get 429 before any password check. A wrong password
+    (or unknown email) counts as a failure; a correct one resets the count.
+    """
+
+    login_limiter.check_login_allowed(role, email)
+
+    try:
+        check_login_password(account, password)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            login_limiter.record_failed_login(role, email)
+        raise
+
+    login_limiter.reset_failed_logins(role, email)
+
+
 @app.post(
     "/volunteer-login",
-    response_model=VolunteerDashboardResponse,
+    response_model=VolunteerLoginResponse,
 )
 def volunteer_login(
     payload: LoginRequest,
@@ -2737,14 +2782,20 @@ def volunteer_login(
             func.lower(VolunteerDB.email) == email
         ).first()
 
-    check_login_password(volunteer, payload.password)
+    check_login_with_limit("volunteer", email, volunteer, payload.password)
 
-    return volunteer
+    token, _ = create_user_session(db, "volunteer", volunteer.id, volunteer.email)
+    db.commit()
+
+    result = VolunteerLoginResponse.model_validate(volunteer, from_attributes=True)
+    result.token = token
+
+    return result
 
 
 @app.post(
     "/ngo-login",
-    response_model=NGODashboardResponse,
+    response_model=NGOLoginResponse,
 )
 def ngo_login(
     payload: LoginRequest,
@@ -2759,69 +2810,34 @@ def ngo_login(
             func.lower(NGODB.email) == email,
         ).first()
 
-    check_login_password(ngo, payload.password)
+    check_login_with_limit("ngo", email, ngo, payload.password)
 
-    return ngo
-
-
-# ─── Delete Volunteer ──────────────────────────────────────────────
-@app.delete("/delete-volunteer/{name}")
-def delete_volunteer(
-    name: str,
-    db: Session = Depends(get_db),
-):
-    volunteer = db.query(VolunteerDB).filter(
-        func.lower(VolunteerDB.name)
-        == name.lower()
-    ).first()
-
-    if not volunteer:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Volunteer '{name}' not found",
-        )
-
-    db.delete(volunteer)
+    token, _ = create_user_session(db, "ngo", ngo.id, ngo.email)
     db.commit()
 
-    remaining = db.query(
-        func.count(VolunteerDB.id)
-    ).scalar()
+    result = NGOLoginResponse.model_validate(ngo, from_attributes=True)
+    result.token = token
 
-    return {
-        "message": f"Volunteer '{name}' deleted",
-        "remaining": remaining,
-    }
+    return result
 
 
-# ─── Delete NGO ────────────────────────────────────────────────────
-@app.delete("/delete-ngo/{name}")
-def delete_ngo(
-    name: str,
+@app.get("/session")
+def get_session(session: UserSessionDB = Depends(require_user)):
+    """Who the bearer token belongs to; used to restore a login after a refresh."""
+
+    return {"role": session.user_role, "email": session.email}
+
+
+@app.post("/logout")
+def logout(
+    authorization: str = Header(default=""),
     db: Session = Depends(get_db),
 ):
-    ngo = db.query(NGODB).filter(
-        func.lower(NGODB.name)
-        == name.lower()
-    ).first()
+    """End the session behind the bearer token. Always succeeds."""
 
-    if not ngo:
-        raise HTTPException(
-            status_code=404,
-            detail=f"NGO '{name}' not found",
-        )
+    delete_session_for_header(authorization, db)
 
-    db.delete(ngo)
-    db.commit()
-
-    remaining = db.query(
-        func.count(NGODB.id)
-    ).scalar()
-
-    return {
-        "message": f"NGO '{name}' deleted",
-        "remaining": remaining,
-    }
+    return {"status": "ok"}
 
 
 # ─── Volunteer ↔ Activity Matching ─────────────────────────────────
@@ -2831,8 +2847,11 @@ def delete_ngo(
 )
 def get_volunteer_matches(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == email.strip().lower()
@@ -2984,8 +3003,11 @@ def get_volunteer_matches(
 )
 def get_volunteer_events(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     """Return scored & filtered events for a volunteer, sorted by match."""
 
     volunteer = db.query(VolunteerDB).filter(
@@ -3123,8 +3145,11 @@ def get_volunteer_events(
 )
 def get_volunteer_activity(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == email.strip().lower()
@@ -3204,9 +3229,12 @@ def get_volunteer_activity(
 def join_activity(
     activity_id: int,
     body: JoinRequest,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
     """Let a volunteer sign up for an activity."""
+
+    ensure_own_email(session, body.volunteer_email)
 
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
@@ -3281,11 +3309,13 @@ def join_activity(
 def leave_activity(
     activity_id: int,
     volunteer_email: str = Query(...),
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
     """Let a volunteer withdraw their signup from an activity."""
 
-    # The email is trusted from the request; real authentication is on the roadmap.
+    ensure_own_email(session, volunteer_email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == volunteer_email.strip().lower()
@@ -3724,15 +3754,21 @@ def _validate_pair(
 @app.post("/messages", response_model=MessageResponse, status_code=201)
 def send_message(
     payload: MessageSend,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send a text message between a volunteer and an NGO."""
 
-    if payload.sender_email == payload.recipient_email:
+    ensure_own_email(session, payload.sender_email)
+
+    sender_email = payload.sender_email.strip().lower()
+    recipient_email = payload.recipient_email.strip().lower()
+
+    if sender_email == recipient_email:
         raise HTTPException(status_code=400, detail="Cannot message yourself")
 
-    sender_role, sender_name = _resolve_role(payload.sender_email, db)
-    recipient_role, recipient_name = _resolve_role(payload.recipient_email, db)
+    sender_role, sender_name = _resolve_role(sender_email, db)
+    recipient_role, recipient_name = _resolve_role(recipient_email, db)
 
     # Same-role check
     if sender_role == recipient_role:
@@ -3747,7 +3783,7 @@ def send_message(
     # NGO can only message volunteers who messaged them or reported a matched issue
     if sender_role == "ngo":
         if not _ngo_may_message_volunteer(
-            payload.sender_email, payload.recipient_email, db,
+            sender_email, recipient_email, db,
         ):
             raise HTTPException(
                 status_code=403,
@@ -3758,9 +3794,9 @@ def send_message(
             )
 
     msg = MessageDB(
-        sender_email=payload.sender_email,
+        sender_email=sender_email,
         sender_role=sender_role,
-        recipient_email=payload.recipient_email,
+        recipient_email=recipient_email,
         recipient_role=recipient_role,
         message_type="text",
         body=payload.body,
@@ -3797,9 +3833,12 @@ async def send_file_message(
     recipient_email: str = Form(...),
     file: UploadFile = File(...),
     caption: Optional[str] = Form(default=None),
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send an image or document attachment between a volunteer and an NGO."""
+    ensure_own_email(session, sender_email)
+
     s_email = sender_email.strip().lower()
     r_email = recipient_email.strip().lower()
     sender_role, recipient_role = _validate_pair(s_email, r_email, db)
@@ -3911,19 +3950,25 @@ async def send_file_message(
 @app.post("/messages/location", response_model=MessageResponse, status_code=201)
 def send_location_message(
     payload: LocationMessageSend,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send a location message between a volunteer and an NGO."""
+    ensure_own_email(session, payload.sender_email)
+
+    sender_email = payload.sender_email.strip().lower()
+    recipient_email = payload.recipient_email.strip().lower()
+
     sender_role, recipient_role = _validate_pair(
-        payload.sender_email,
-        payload.recipient_email,
+        sender_email,
+        recipient_email,
         db,
     )
 
     msg = MessageDB(
-        sender_email=payload.sender_email,
+        sender_email=sender_email,
         sender_role=sender_role,
-        recipient_email=payload.recipient_email,
+        recipient_email=recipient_email,
         recipient_role=recipient_role,
         message_type="location",
         body=None,
@@ -3959,16 +4004,18 @@ def send_location_message(
 @app.get("/messages/files/{message_id}")
 def get_message_file(
     message_id: int,
-    email: str = Query(..., description="Requester email"),
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Download or view a message attachment securely."""
+    """Download or view a message attachment; only its sender or recipient may."""
     msg = db.query(MessageDB).filter(MessageDB.id == message_id).first()
     if not msg or not msg.file_path:
         raise HTTPException(status_code=404, detail="File not found")
 
-    req_email = email.strip().lower()
-    if req_email not in (msg.sender_email.lower(), msg.recipient_email.lower()):
+    if not (
+        same_email(session.email, msg.sender_email)
+        or same_email(session.email, msg.recipient_email)
+    ):
         raise HTTPException(
             status_code=403,
             detail="You do not have access to this conversation's files",
@@ -4002,9 +4049,12 @@ def get_message_file(
 @app.get("/conversations/{email}", response_model=list[ConversationEntry])
 def list_conversations(
     email: str,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """List all conversations for a user, newest first."""
+
+    ensure_own_email(session, email)
 
     my_role, _ = _resolve_role(email, db)
     email_lower = email.strip().lower()
@@ -4086,9 +4136,12 @@ def list_conversations(
 def get_thread(
     email: str,
     other_email: str,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Return the full message thread between two users, oldest first."""
+
+    ensure_own_email(session, email)
 
     _resolve_role(email, db)       # 404 if unknown
     _resolve_role(other_email, db)
@@ -4140,9 +4193,12 @@ def get_thread(
 @app.patch("/messages/read", response_model=MarkReadResponse)
 def mark_messages_read(
     payload: MarkReadRequest,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Mark all unread messages from other_email→reader_email as read."""
+
+    ensure_own_email(session, payload.reader_email)
 
     _resolve_role(payload.reader_email, db)
     _resolve_role(payload.other_email, db)
@@ -4152,8 +4208,8 @@ def mark_messages_read(
     count = (
         db.query(MessageDB)
         .filter(
-            MessageDB.sender_email == payload.other_email,
-            MessageDB.recipient_email == payload.reader_email,
+            func.lower(MessageDB.sender_email) == payload.other_email.strip().lower(),
+            func.lower(MessageDB.recipient_email) == payload.reader_email.strip().lower(),
             MessageDB.read_at.is_(None),
         )
         .update({"read_at": now})

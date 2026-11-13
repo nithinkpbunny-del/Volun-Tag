@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
 import ImagePreviewCard from "./ImagePreviewCard";
 import { API_BASE } from "../config";
+import { authFetch, getSession } from "../api";
 
-export default function IssueReportForm({ showToast, onReportSuccess, reporterEmail }) {
+export default function IssueReportForm({ showToast, onReportSuccess }) {
+  // The reporter is whoever is logged in as a volunteer; it is never typed in.
+  const session = getSession();
+  const reporterEmail = session && session.role === "volunteer" ? session.email : "";
+
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -42,6 +47,11 @@ export default function IssueReportForm({ showToast, onReportSuccess, reporterEm
   };
 
   const handleSubmit = async () => {
+    if (!reporterEmail) {
+      showToast("Please log in as a volunteer to report a problem", "error");
+      return;
+    }
+
     if (!validate()) {
       showToast("Please complete all required fields", "error");
       return;
@@ -58,7 +68,7 @@ export default function IssueReportForm({ showToast, onReportSuccess, reporterEm
     });
 
     try {
-      const response = await fetch(`${API_BASE}/report-issue`, {
+      const response = await authFetch(`${API_BASE}/report-issue`, {
         method: "POST",
         body: formData,
       });
@@ -82,6 +92,17 @@ export default function IssueReportForm({ showToast, onReportSuccess, reporterEm
   };
 
   const canProceed = form.user_description.trim() && form.location.trim();
+
+  if (!reporterEmail) {
+    return (
+      <div className="form-card report-card">
+        <div className="form-header">
+          <h2 className="form-title">Report an Issue</h2>
+          <p className="form-subtitle">Log in as a volunteer to report a problem</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="form-card report-card">

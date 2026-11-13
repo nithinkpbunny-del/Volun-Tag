@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Nav from "./components/Nav";
 import LandingPage from "./components/LandingPage";
 import VolunteerForm from "./components/VolunteerForm";
@@ -15,6 +15,12 @@ import VolunteerDashboard from "./components/volunteer/VolunteerDashboard";
 import NGODashboard from "./components/ngo/NGODashboard";
 import EventVolunteers from "./components/ngo/EventVolunteers";
 import ResolveIssue from "./components/ngo/ResolveIssue";
+import {
+  getSession,
+  logoutUser,
+  restoreSession,
+  setUnauthorizedHandler,
+} from "./api";
 import "./VolunTag.css";
  
 export default function VolunTag() {
@@ -22,7 +28,13 @@ export default function VolunTag() {
   const { toast, showToast } = useToast();
   const [issueResult, setIssueResult] = useState(null);
   const [dashboardEmail, setDashboardEmail] = useState("");
-  const [reporterEmail, setReporterEmail] = useState("");
+  const [dashboardRole, setDashboardRole] = useState("");
+  // True while a stored login is being checked after a page refresh.
+  const [restoring, setRestoring] = useState(() => Boolean(getSession()));
+  const previousPage = useRef(null);
+  // Only a logged-in volunteer can report a problem; the report form reads
+  // the same session itself, this just decides which screen to show.
+  const reporterEmail = dashboardRole === "volunteer" ? dashboardEmail : "";
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [selectedIssue, setSelectedIssue] = useState(null);
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
@@ -47,11 +59,59 @@ export default function VolunTag() {
     }
   }, [page, selectedIssue, dashboardEmail]);
 
-  // Clear reporter identity when navigating back to landing (acts like logout).
+  const handleLogin = ({ role, email }) => {
+    setDashboardEmail(email);
+    setDashboardRole(role);
+  };
+
+  // After a page refresh, pick the stored login back up if the server still accepts it.
   useEffect(() => {
-    if (page === "landing") {
-      setReporterEmail("");
+    if (!getSession()) {
+      setRestoring(false);
+      return undefined;
     }
+
+    let cancelled = false;
+
+    restoreSession().then((session) => {
+      if (cancelled) return;
+
+      if (session) {
+        handleLogin(session);
+        setPage(session.role === "ngo" ? "ngo-dashboard" : "volunteer-dashboard");
+      }
+
+      setRestoring(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // Runs once on load; handleLogin only sets state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When the server rejects the login (expired or ended), return to the login screen.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setDashboardEmail("");
+      setDashboardRole("");
+      setPage("dashboard-login");
+      showToast("Please log in again", "error");
+    });
+
+    return () => setUnauthorizedHandler(null);
+  }, [showToast]);
+
+  // Going back to the landing page logs out (ends the session on the server too).
+  useEffect(() => {
+    if (page === "landing" && previousPage.current && previousPage.current !== "landing") {
+      logoutUser();
+      setDashboardEmail("");
+      setDashboardRole("");
+    }
+
+    previousPage.current = page;
   }, [page]);
  
   const handleReportSuccess = (payload) => {
@@ -64,13 +124,11 @@ export default function VolunTag() {
     setPage("report");
   };
 
-  const handleReportProblem = (email) => {
-    setReporterEmail(email);
+  const handleReportProblem = () => {
     setPage("report");
   };
 
   const goToVolunteerDashboard = (tab) => {
-    setDashboardEmail(reporterEmail || dashboardEmail);
     setVolunteerInitialTab(tab || null);
     setPage("volunteer-dashboard");
   };
@@ -81,7 +139,9 @@ export default function VolunTag() {
  
       <main className="page-wrapper">
         <div className={`page-transition ${page}`} key={page}>
-          {page === "landing" && <LandingPage setPage={setPage} />}
+          {restoring && <p className="page" style={{ textAlign: "center" }}>Loading…</p>}
+
+          {!restoring && page === "landing" && <LandingPage setPage={setPage} />}
  
           {page === "role-select" && (
             <RoleSelect setPage={setPage} />
@@ -95,7 +155,7 @@ export default function VolunTag() {
             <VolunteerRegisterForm
               showToast={showToast}
               setPage={setPage}
-              setDashboardEmail={setDashboardEmail}
+              onLogin={handleLogin}
             />
           )}
  
@@ -103,7 +163,7 @@ export default function VolunTag() {
             <NGORegisterForm
               showToast={showToast}
               setPage={setPage}
-              setDashboardEmail={setDashboardEmail}
+              onLogin={handleLogin}
             />
           )}
 
@@ -111,7 +171,7 @@ export default function VolunTag() {
             <DashboardLogin
               showToast={showToast}
               setPage={setPage}
-              setDashboardEmail={setDashboardEmail}
+              onLogin={handleLogin}
             />
           )}
 

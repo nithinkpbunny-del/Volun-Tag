@@ -278,6 +278,25 @@ class AdminSessionDB(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class UserSessionDB(Base):
+    """A logged-in volunteer or NGO session. Only a hash of the token is stored."""
+
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # sha256 hex of the bearer token handed to the browser
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+
 class AdminActionDB(Base):
     """Audit log of actions taken in the admin console."""
 

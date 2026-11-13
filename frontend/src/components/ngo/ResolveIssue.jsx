@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./ResolveIssue.css";
 import { API_BASE } from "../../config";
+import { authFetch } from "../../api";
 
 const MIN_TEXT = 50;
 const MAX_TEXT = 5000;
@@ -139,7 +140,7 @@ export default function ResolveIssue({ issue, ngoEmail, showToast, onBack }) {
     formData.append("after_photo", afterPhoto);
 
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/issues/${encodeURIComponent(issue.complaint_id)}/resolution`,
         { method: "POST", body: formData }
       );
