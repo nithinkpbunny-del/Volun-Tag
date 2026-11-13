@@ -55,6 +55,58 @@ export function pageFromPath(pathname) {
   return "";
 }
 
+// Pages that only say "Coming soon" for now: address -> title.
+export const COMING_SOON_PAGES = {
+  "/news": "News",
+  "/about": "About",
+  "/contact": "Contact",
+};
+
+function cleanPath(pathname) {
+  return ((pathname || "/").replace(/\/+$/, "") || "/").toLowerCase();
+}
+
+const startsWithPath = (path, base) => path === base || path.startsWith(base + "/");
+
+/**
+ * Which navbar item is the current one for an address.
+ *   home       only "/"
+ *   features   /features and /features/matching
+ *   dashboard  either dashboard, and the NGO event and issue screens under it
+ *   report     /report and /report/results
+ *   join       /register and /register/*
+ * The rest match their own address.
+ */
+export function isNavItemActive(item, pathname) {
+  const path = cleanPath(pathname);
+
+  switch (item) {
+    case "home":
+      return path === "/";
+    case "features":
+      return startsWithPath(path, "/features");
+    case "dashboard":
+      return (
+        path === PATHS["volunteer-dashboard"] ||
+        path === PATHS["ngo-dashboard"] ||
+        startsWithPath(path, "/ngo/events") ||
+        startsWithPath(path, "/ngo/issues")
+      );
+    case "report":
+      return startsWithPath(path, "/report");
+    case "join":
+      return startsWithPath(path, "/register");
+    case "login":
+      return path === PATHS["dashboard-login"];
+    case "news":
+    case "about":
+    case "contact":
+      return path === "/" + item;
+    default:
+      return false;
+  }
+}
+
 /** Where a logged-in user's own dashboard lives; the login page if there is no role. */
 export function dashboardFor(role) {
   if (role === "ngo") return PATHS["ngo-dashboard"];

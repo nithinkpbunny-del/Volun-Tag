@@ -5,10 +5,10 @@ import {
   Routes,
   useLocation,
   useNavigate,
-  useNavigationType,
   useParams,
 } from "react-router-dom";
 import Nav from "./components/Nav";
+import ComingSoon from "./components/ComingSoon";
 import LandingPage from "./components/LandingPage";
 // The old VolunteerForm screen is no longer routed, but its stylesheet holds the
 // shared form styles (form-card, form-title, submit-btn, ...) that the login,
@@ -35,6 +35,7 @@ import {
   setUnauthorizedHandler,
 } from "./api";
 import {
+  COMING_SOON_PAGES,
   PATHS,
   eventVolunteersPath,
   pageFromPath,
@@ -98,7 +99,6 @@ function ReportResultsRoute({ children }) {
 export default function VolunTag() {
   const location = useLocation();
   const navigate = useNavigate();
-  const navigationType = useNavigationType();
   const page = pageFromPath(location.pathname);
 
   const { toast, showToast } = useToast();
@@ -106,7 +106,6 @@ export default function VolunTag() {
   const [dashboardRole, setDashboardRole] = useState("");
   // True while a stored login is being checked after a page refresh.
   const [restoring, setRestoring] = useState(() => Boolean(getSession()));
-  const previousPath = useRef(null);
   // Only a logged-in volunteer can report a problem; the report form reads
   // the same session itself, this just decides which screen to show.
   const reporterEmail = dashboardRole === "volunteer" ? dashboardEmail : "";
@@ -187,28 +186,15 @@ export default function VolunTag() {
     return () => setUnauthorizedHandler(null);
   }, [showToast, setPage]);
 
-  // Going back to the landing page logs out (ends the session on the server too).
-  // Temporary: this goes away with the Log out button. It only counts a move
-  // to "/" from another screen of the app by a push or a Back/Forward, never
-  // the first load and never a redirect, so an unknown address that is sent
-  // to "/" does not log anyone out.
-  useEffect(() => {
-    const previous = previousPath.current;
-
-    previousPath.current = location.pathname;
-
-    if (
-      location.pathname === PATHS.landing &&
-      previous !== null &&
-      pageFromPath(previous) &&
-      pageFromPath(previous) !== "landing" &&
-      navigationType !== "REPLACE"
-    ) {
-      logoutUser();
-      setDashboardEmail("");
-      setDashboardRole("");
-    }
-  }, [location.pathname, navigationType]);
+  // The only way to log out: the Log out button in the navbar. logoutUser clears
+  // the stored login first, then tells the server (best effort).
+  const handleLogout = () => {
+    logoutUser();
+    setDashboardEmail("");
+    setDashboardRole("");
+    navigate(PATHS.landing);
+    showToast("Logged out", "success");
+  };
 
   const handleReportSuccess = (payload) => {
     navigate(PATHS["report-results"], { state: { result: payload } });
@@ -229,7 +215,7 @@ export default function VolunTag() {
 
   return (
     <>
-      <Nav page={page} setPage={setPage} />
+      <Nav role={dashboardRole} restoring={restoring} onLogout={handleLogout} />
 
       <main className="page-wrapper">
         <div className={`page-transition ${page}`} key={location.pathname}>
@@ -385,7 +371,11 @@ export default function VolunTag() {
                 }
               />
 
-              {/* /news, /about, /contact and any unknown address go home for now. */}
+              {Object.entries(COMING_SOON_PAGES).map(([path, title]) => (
+                <Route key={path} path={path} element={<ComingSoon title={title} />} />
+              ))}
+
+              {/* Any other unknown address goes home. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           )}
