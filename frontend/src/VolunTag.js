@@ -1,7 +1,20 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+  useParams,
+} from "react-router-dom";
 import Nav from "./components/Nav";
 import LandingPage from "./components/LandingPage";
-import VolunteerForm from "./components/VolunteerForm";
+// The old VolunteerForm screen is no longer routed, but its stylesheet holds the
+// shared form styles (form-card, form-title, submit-btn, ...) that the login,
+// registration, report and resolve screens use. Keep it loaded, in the same
+// place in the import order as before.
+import "./components/VolunteerForm.css";
 import VolunteerRegisterForm from "./components/volunteer/VolunteerRegisterForm";
 import NGORegisterForm from "./components/ngo/NGORegisterForm";
 import ResultsPage from "./components/ResultsPage";
@@ -21,50 +34,122 @@ import {
   restoreSession,
   setUnauthorizedHandler,
 } from "./api";
+import {
+  PATHS,
+  eventVolunteersPath,
+  pageFromPath,
+  resolveIssuePath,
+} from "./routes";
 import "./VolunTag.css";
- 
+
+// The event and issue screens get their data from the router's location
+// state (set when the NGO clicks through from the dashboard). Without it
+// (for example a link opened in a new tab) they go back to the dashboard.
+function EventVolunteersRoute({ ngoEmail, showToast, onBack, onConnect }) {
+  const { id } = useParams();
+  const { state } = useLocation();
+  const event = state && state.event;
+
+  if (!event || !ngoEmail || String(event.id) !== id) {
+    return <Navigate to={PATHS["ngo-dashboard"]} replace />;
+  }
+
+  return (
+    <EventVolunteers
+      event={event}
+      ngoEmail={ngoEmail}
+      showToast={showToast}
+      onBack={() => onBack(event)}
+      onConnect={onConnect}
+    />
+  );
+}
+
+function ResolveIssueRoute({ ngoEmail, showToast, onBack }) {
+  const { id } = useParams();
+  const { state } = useLocation();
+  const issue = state && state.issue;
+
+  if (!issue || !ngoEmail || String(issue.complaint_id) !== id) {
+    return <Navigate to={PATHS["ngo-dashboard"]} replace />;
+  }
+
+  return (
+    <ResolveIssue
+      issue={issue}
+      ngoEmail={ngoEmail}
+      showToast={showToast}
+      onBack={onBack}
+    />
+  );
+}
+
+function ReportResultsRoute({ children }) {
+  const { state } = useLocation();
+  const result = state && state.result;
+
+  if (!result) {
+    return <Navigate to={PATHS.report} replace />;
+  }
+
+  return children(result);
+}
+
 export default function VolunTag() {
-  const [page, setPage] = useState("landing");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navigationType = useNavigationType();
+  const page = pageFromPath(location.pathname);
+
   const { toast, showToast } = useToast();
-  const [issueResult, setIssueResult] = useState(null);
   const [dashboardEmail, setDashboardEmail] = useState("");
   const [dashboardRole, setDashboardRole] = useState("");
   // True while a stored login is being checked after a page refresh.
   const [restoring, setRestoring] = useState(() => Boolean(getSession()));
-  const previousPage = useRef(null);
+  const previousPath = useRef(null);
   // Only a logged-in volunteer can report a problem; the report form reads
   // the same session itself, this just decides which screen to show.
   const reporterEmail = dashboardRole === "volunteer" ? dashboardEmail : "";
-  const [selectedEvent, setSelectedEvent] = useState(null);
-  const [selectedIssue, setSelectedIssue] = useState(null);
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
   const [ngoReturnTab, setNgoReturnTab] = useState(null);
   const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
 
+  // Temporary bridge: screens still call setPage("page-name"); this turns it
+  // into a navigation. Its identity never changes, because the dashboards list
+  // it in effect dependencies and a new one every render would refetch them.
+  // (navigate itself changes whenever the address changes.)
+  const navigateRef = useRef(navigate);
+  const pathRef = useRef(location.pathname);
+  navigateRef.current = navigate;
+  pathRef.current = location.pathname;
+
+  const setPage = useCallback((name) => {
+    const target = PATHS[name];
+
+    if (!target) return;
+
+    // A dashboard sending a logged-out visitor to the login screen replaces its
+    // own history entry, so the Back button does not bounce between the two.
+    const fromDashboard =
+      pathRef.current === PATHS["volunteer-dashboard"] ||
+      pathRef.current === PATHS["ngo-dashboard"];
+
+    navigateRef.current(target, {
+      replace: name === "dashboard-login" && fromDashboard,
+    });
+  }, []);
+
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
-  }, [page]);
-
-  // The event-volunteers screen needs an event and an NGO login; otherwise go back.
-  useEffect(() => {
-    if (page === "event-volunteers" && (!selectedEvent || !dashboardEmail)) {
-      setPage("ngo-dashboard");
-    }
-  }, [page, selectedEvent, dashboardEmail]);
-
-  // The resolve-issue screen needs an issue and an NGO login; otherwise go back.
-  useEffect(() => {
-    if (page === "resolve-issue" && (!selectedIssue || !dashboardEmail)) {
-      setPage("ngo-dashboard");
-    }
-  }, [page, selectedIssue, dashboardEmail]);
+  }, [location.pathname]);
 
   const handleLogin = ({ role, email }) => {
     setDashboardEmail(email);
     setDashboardRole(role);
   };
 
-  // After a page refresh, pick the stored login back up if the server still accepts it.
+  // After a page refresh, pick the stored login back up if the server still
+  // accepts it. The address is left as it is.
   useEffect(() => {
     if (!getSession()) {
       setRestoring(false);
@@ -78,7 +163,6 @@ export default function VolunTag() {
 
       if (session) {
         handleLogin(session);
-        setPage(session.role === "ngo" ? "ngo-dashboard" : "volunteer-dashboard");
       }
 
       setRestoring(false);
@@ -101,26 +185,36 @@ export default function VolunTag() {
     });
 
     return () => setUnauthorizedHandler(null);
-  }, [showToast]);
+  }, [showToast, setPage]);
 
   // Going back to the landing page logs out (ends the session on the server too).
+  // Temporary: this goes away with the Log out button. It only counts a move
+  // to "/" from another screen of the app by a push or a Back/Forward, never
+  // the first load and never a redirect, so an unknown address that is sent
+  // to "/" does not log anyone out.
   useEffect(() => {
-    if (page === "landing" && previousPage.current && previousPage.current !== "landing") {
+    const previous = previousPath.current;
+
+    previousPath.current = location.pathname;
+
+    if (
+      location.pathname === PATHS.landing &&
+      previous !== null &&
+      pageFromPath(previous) &&
+      pageFromPath(previous) !== "landing" &&
+      navigationType !== "REPLACE"
+    ) {
       logoutUser();
       setDashboardEmail("");
       setDashboardRole("");
     }
+  }, [location.pathname, navigationType]);
 
-    previousPage.current = page;
-  }, [page]);
- 
   const handleReportSuccess = (payload) => {
-    setIssueResult(payload);
-    setPage("report-results");
+    navigate(PATHS["report-results"], { state: { result: payload } });
   };
- 
+
   const handleReportRestart = () => {
-    setIssueResult(null);
     setPage("report");
   };
 
@@ -132,146 +226,172 @@ export default function VolunTag() {
     setVolunteerInitialTab(tab || null);
     setPage("volunteer-dashboard");
   };
- 
+
   return (
     <>
       <Nav page={page} setPage={setPage} />
- 
+
       <main className="page-wrapper">
-        <div className={`page-transition ${page}`} key={page}>
+        <div className={`page-transition ${page}`} key={location.pathname}>
           {restoring && <p className="page" style={{ textAlign: "center" }}>Loading…</p>}
 
-          {!restoring && page === "landing" && <LandingPage setPage={setPage} />}
- 
-          {page === "role-select" && (
-            <RoleSelect setPage={setPage} />
-          )}
- 
-          {page === "features" && (
-            <FeaturesPage setPage={setPage} />
-          )}
- 
-          {page === "volunteer-register" && (
-            <VolunteerRegisterForm
-              showToast={showToast}
-              setPage={setPage}
-              onLogin={handleLogin}
-            />
-          )}
- 
-          {page === "ngo-register" && (
-            <NGORegisterForm
-              showToast={showToast}
-              setPage={setPage}
-              onLogin={handleLogin}
-            />
-          )}
+          {!restoring && (
+            <Routes>
+              <Route path="/" element={<LandingPage setPage={setPage} />} />
 
-          {page === "dashboard-login" && (
-            <DashboardLogin
-              showToast={showToast}
-              setPage={setPage}
-              onLogin={handleLogin}
-            />
-          )}
+              <Route path="/register" element={<RoleSelect setPage={setPage} />} />
 
-          {page === "volunteer-dashboard" && (
-            <VolunteerDashboard
-              email={dashboardEmail}
-              showToast={showToast}
-              setPage={setPage}
-              onReportProblem={handleReportProblem}
-              initialTab={volunteerInitialTab}
-              onInitialConsumed={() => setVolunteerInitialTab(null)}
-            />
-          )}
+              <Route path="/features" element={<FeaturesPage setPage={setPage} />} />
 
-          {page === "ngo-dashboard" && (
-            <NGODashboard
-              email={dashboardEmail}
-              showToast={showToast}
-              setPage={setPage}
-              onViewVolunteers={(ev) => {
-                setSelectedEvent(ev);
-                setPage("event-volunteers");
-              }}
-              onMarkSolved={(iss) => {
-                setSelectedIssue(iss);
-                setPage("resolve-issue");
-              }}
-              initialTab={ngoReturnTab}
-              initialChat={ngoChatTarget}
-              onInitialConsumed={() => {
-                setNgoReturnTab(null);
-                setNgoChatTarget(null);
-              }}
-            />
-          )}
+              <Route
+                path="/register/volunteer"
+                element={
+                  <VolunteerRegisterForm
+                    showToast={showToast}
+                    setPage={setPage}
+                    onLogin={handleLogin}
+                  />
+                }
+              />
 
-          {page === "event-volunteers" && selectedEvent && dashboardEmail && (
-            <EventVolunteers
-              event={selectedEvent}
-              ngoEmail={dashboardEmail}
-              showToast={showToast}
-              onBack={() => {
-                setNgoReturnTab(
-                  selectedEvent &&
-                    selectedEvent.is_completed &&
-                    selectedEvent.status !== "Cancelled"
-                    ? "activity"
-                    : "events"
-                );
-                setPage("ngo-dashboard");
-              }}
-              onConnect={(target) => {
-                setNgoChatTarget(target);
-                setPage("ngo-dashboard");
-              }}
-            />
-          )}
+              <Route
+                path="/register/ngo"
+                element={
+                  <NGORegisterForm
+                    showToast={showToast}
+                    setPage={setPage}
+                    onLogin={handleLogin}
+                  />
+                }
+              />
 
-          {page === "resolve-issue" && selectedIssue && dashboardEmail && (
-            <ResolveIssue
-              issue={selectedIssue}
-              ngoEmail={dashboardEmail}
-              showToast={showToast}
-              onBack={() => {
-                setNgoReturnTab("problems");
-                setPage("ngo-dashboard");
-              }}
-            />
-          )}
+              <Route
+                path="/login"
+                element={
+                  <DashboardLogin
+                    showToast={showToast}
+                    setPage={setPage}
+                    onLogin={handleLogin}
+                  />
+                }
+              />
 
-          {page === "volunteer" && (
-            <VolunteerForm showToast={showToast} />
-          )} 
-          {page === "results" && (
-            <ResultsPage showToast={showToast} />
-          )}
- 
-          {page === "report" && (
-            <ReportIssue
-              showToast={showToast}
-              onReportSuccess={handleReportSuccess}
-              reporterEmail={reporterEmail}
-              setPage={setPage}
-            />
-          )}
- 
-          {page === "report-results" && (
-            <ReportResultsPage
-              result={issueResult}
-              showToast={showToast}
-              onRestart={handleReportRestart}
-              reporterEmail={reporterEmail}
-              setPage={setPage}
-              onGoToMessages={() => goToVolunteerDashboard("messages")}
-              onGoToDashboard={() => goToVolunteerDashboard(null)}
-            />
+              <Route
+                path="/volunteer/dashboard"
+                element={
+                  <VolunteerDashboard
+                    email={dashboardEmail}
+                    showToast={showToast}
+                    setPage={setPage}
+                    onReportProblem={handleReportProblem}
+                    initialTab={volunteerInitialTab}
+                    onInitialConsumed={() => setVolunteerInitialTab(null)}
+                  />
+                }
+              />
+
+              <Route
+                path="/ngo/dashboard"
+                element={
+                  <NGODashboard
+                    email={dashboardEmail}
+                    showToast={showToast}
+                    setPage={setPage}
+                    onViewVolunteers={(ev) =>
+                      navigate(eventVolunteersPath(ev.id), { state: { event: ev } })
+                    }
+                    onMarkSolved={(iss) =>
+                      navigate(resolveIssuePath(iss.complaint_id), { state: { issue: iss } })
+                    }
+                    initialTab={ngoReturnTab}
+                    initialChat={ngoChatTarget}
+                    onInitialConsumed={() => {
+                      setNgoReturnTab(null);
+                      setNgoChatTarget(null);
+                    }}
+                  />
+                }
+              />
+
+              <Route
+                path="/ngo/events/:id/volunteers"
+                element={
+                  <EventVolunteersRoute
+                    ngoEmail={dashboardEmail}
+                    showToast={showToast}
+                    onBack={(event) => {
+                      setNgoReturnTab(
+                        event.is_completed && event.status !== "Cancelled"
+                          ? "activity"
+                          : "events"
+                      );
+                      setPage("ngo-dashboard");
+                    }}
+                    onConnect={(target) => {
+                      setNgoChatTarget(target);
+                      setPage("ngo-dashboard");
+                    }}
+                  />
+                }
+              />
+
+              <Route
+                path="/ngo/issues/:id/resolve"
+                element={
+                  <ResolveIssueRoute
+                    ngoEmail={dashboardEmail}
+                    showToast={showToast}
+                    onBack={() => {
+                      setNgoReturnTab("problems");
+                      setPage("ngo-dashboard");
+                    }}
+                  />
+                }
+              />
+
+              <Route
+                path="/features/matching"
+                element={<ResultsPage showToast={showToast} />}
+              />
+
+              <Route
+                path="/report"
+                element={
+                  <ReportIssue
+                    showToast={showToast}
+                    onReportSuccess={handleReportSuccess}
+                    reporterEmail={reporterEmail}
+                    setPage={setPage}
+                  />
+                }
+              />
+
+              <Route
+                path="/report/results"
+                element={
+                  <ReportResultsRoute>
+                    {(result) => (
+                      <ReportResultsPage
+                        result={result}
+                        showToast={showToast}
+                        onRestart={handleReportRestart}
+                        reporterEmail={reporterEmail}
+                        setPage={setPage}
+                        onGoToMessages={() => goToVolunteerDashboard("messages")}
+                        onGoToDashboard={() => goToVolunteerDashboard(null)}
+                      />
+                    )}
+                  </ReportResultsRoute>
+                }
+              />
+
+              {/* /news, /about, /contact and any unknown address go home for now. */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           )}
         </div>
       </main>
- 
+
       <Toast {...toast} />
     </>
   );

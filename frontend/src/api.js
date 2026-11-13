@@ -108,15 +108,28 @@ export async function loginUser(role, email, password) {
   return data;
 }
 
-/** Ask the server whether the stored session is still valid. */
+// How long the app waits for the server before it shows itself logged out.
+const RESTORE_TIMEOUT_MS = 8000;
+
+/**
+ * Ask the server whether the stored session is still valid.
+ *
+ * Only a definite "no" (401) removes the stored login. A timeout, a network
+ * error or any other failure returns null for this page load but keeps the
+ * stored token, so a later reload can still restore it.
+ */
 export async function restoreSession() {
   const stored = getSession();
 
   if (!stored) return null;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RESTORE_TIMEOUT_MS);
+
   try {
     const res = await fetch(`${API_BASE}/session`, {
       headers: { Authorization: `Bearer ${stored.token}` },
+      signal: controller.signal,
     });
 
     if (res.ok) {
@@ -129,6 +142,8 @@ export async function restoreSession() {
     if (res.status !== 401) return null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 
   clearSession();
