@@ -1,7 +1,11 @@
+import { useNavigate } from "react-router-dom";
+import { PATHS } from "../routes";
 import IssueReportForm from "./IssueReportForm";
 import "./ReportIssue.css";
 
-export default function ReportIssue({ showToast, onReportSuccess, reporterEmail, setPage }) {
+export default function ReportIssue({ showToast, onReportSuccess, reporterEmail }) {
+  const navigate = useNavigate();
+
   if (!reporterEmail) {
     return (
       <div className="page report-page">
@@ -15,7 +19,7 @@ export default function ReportIssue({ showToast, onReportSuccess, reporterEmail,
               </svg>
             </div>
             <h2 className="form-title">Report an Issue</h2>
-            <p className="form-subtitle">Register as a volunteer to report a problem</p>
+            <p className="form-subtitle">Log in or register as a volunteer to report a problem</p>
           </div>
 
           <p style={{ textAlign: "center", color: "var(--text-muted)", margin: "0.5rem 0 1.5rem", fontSize: "0.95rem", lineHeight: 1.5 }}>
@@ -25,13 +29,13 @@ export default function ReportIssue({ showToast, onReportSuccess, reporterEmail,
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             <button
               className="submit-btn"
-              onClick={() => setPage("volunteer-register")}
+              onClick={() => navigate(PATHS["volunteer-register"])}
             >
               Register as a volunteer
             </button>
             <button
               className="form-back-btn"
-              onClick={() => setPage("dashboard-login")}
+              onClick={() => navigate(PATHS["dashboard-login"])}
               style={{ width: "100%" }}
             >
               I already have an account

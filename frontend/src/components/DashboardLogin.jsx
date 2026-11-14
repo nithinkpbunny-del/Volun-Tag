@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./DashboardLogin.css";
 import { loginUser } from "../api";
+import { PATHS, dashboardFor } from "../routes";
 
-export default function DashboardLogin({ showToast, setPage, onLogin }) {
+export default function DashboardLogin({ showToast, onLogin }) {
+  const navigate = useNavigate();
   const [role, setRole] = useState("volunteer");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,7 +34,8 @@ export default function DashboardLogin({ showToast, setPage, onLogin }) {
       const account = await loginUser(role, trimmedEmail, attempt);
 
       onLogin({ role, email: account.email || trimmedEmail });
-      setPage(role === "volunteer" ? "volunteer-dashboard" : "ngo-dashboard");
+      // Replace the /login entry so Back does not return to the login form.
+      navigate(dashboardFor(role), { replace: true });
     } catch (err) {
       showToast(err.message || "Unable to connect to backend", "error");
     } finally {
@@ -111,7 +115,7 @@ export default function DashboardLogin({ showToast, setPage, onLogin }) {
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("landing")}
+              onClick={() => navigate(PATHS.landing)}
               type="button"
             >
               &#8592; Back

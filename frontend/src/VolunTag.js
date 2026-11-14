@@ -219,16 +219,16 @@ export default function VolunTag() {
   };
 
   const handleReportRestart = () => {
-    setPage("report");
+    navigate(PATHS.report);
   };
 
   const handleReportProblem = () => {
-    setPage("report");
+    navigate(PATHS.report);
   };
 
   const goToVolunteerDashboard = (tab) => {
     setVolunteerInitialTab(tab || null);
-    setPage("volunteer-dashboard");
+    navigate(PATHS["volunteer-dashboard"]);
   };
 
   return (
@@ -241,11 +241,11 @@ export default function VolunTag() {
 
           {!restoring && (
             <Routes>
-              <Route path="/" element={<LandingPage setPage={setPage} />} />
+              <Route path="/" element={<LandingPage />} />
 
-              <Route path="/register" element={<RoleSelect setPage={setPage} />} />
+              <Route path="/register" element={<RoleSelect />} />
 
-              <Route path="/features" element={<FeaturesPage setPage={setPage} />} />
+              <Route path="/features" element={<FeaturesPage />} />
 
               <Route
                 path="/register/volunteer"
@@ -277,7 +277,6 @@ export default function VolunTag() {
                   ) : (
                     <DashboardLogin
                       showToast={showToast}
-                      setPage={setPage}
                       onLogin={handleLogin}
                     />
                   )
@@ -377,7 +376,6 @@ export default function VolunTag() {
                     showToast={showToast}
                     onReportSuccess={handleReportSuccess}
                     reporterEmail={reporterEmail}
-                    setPage={setPage}
                   />
                 }
               />
@@ -392,7 +390,6 @@ export default function VolunTag() {
                         showToast={showToast}
                         onRestart={handleReportRestart}
                         reporterEmail={reporterEmail}
-                        setPage={setPage}
                         onGoToMessages={() => goToVolunteerDashboard("messages")}
                         onGoToDashboard={() => goToVolunteerDashboard(null)}
                       />
