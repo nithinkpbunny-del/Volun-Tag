@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Navigate,
   Route,
@@ -116,39 +116,10 @@ export default function VolunTag() {
   const [ngoReturnTab, setNgoReturnTab] = useState(null);
   const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
 
-  // Temporary bridge: screens still call setPage("page-name"); this turns it
-  // into a navigation. Its identity never changes, because the dashboards list
-  // it in effect dependencies and a new one every render would refetch them.
-  // (navigate itself changes whenever the address changes.)
+  // The 401 handler below is registered once, so it reaches navigate through a
+  // ref (navigate itself changes whenever the address changes).
   const navigateRef = useRef(navigate);
-  const pathRef = useRef(location.pathname);
   navigateRef.current = navigate;
-  pathRef.current = location.pathname;
-
-  const setPage = useCallback((name) => {
-    const target = PATHS[name];
-
-    if (!target) return;
-
-    const from = pageFromPath(pathRef.current);
-    const fromDashboard = from === "volunteer-dashboard" || from === "ngo-dashboard";
-
-    // A dashboard sending the user to the login screen (no login, or its data
-    // would not load) replaces its own history entry, so Back does not bounce
-    // between the two. showLogin tells /login to show the form even if the user
-    // is still logged in; otherwise a dashboard that cannot load would be sent
-    // back to itself by the "logged in, go to your dashboard" rule, forever.
-    if (name === "dashboard-login" && fromDashboard) {
-      navigateRef.current(target, { replace: true, state: { showLogin: true } });
-      return;
-    }
-
-    // Logging in leaves /login behind: the dashboard replaces the login entry,
-    // so Back goes to the page before the login screen.
-    const toDashboard = name === "volunteer-dashboard" || name === "ngo-dashboard";
-
-    navigateRef.current(target, { replace: from === "dashboard-login" && toDashboard });
-  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -252,7 +223,6 @@ export default function VolunTag() {
                 element={
                   <VolunteerRegisterForm
                     showToast={showToast}
-                    setPage={setPage}
                     onLogin={handleLogin}
                   />
                 }
@@ -263,7 +233,6 @@ export default function VolunTag() {
                 element={
                   <NGORegisterForm
                     showToast={showToast}
-                    setPage={setPage}
                     onLogin={handleLogin}
                   />
                 }
@@ -290,7 +259,6 @@ export default function VolunTag() {
                     <VolunteerDashboard
                       email={dashboardEmail}
                       showToast={showToast}
-                      setPage={setPage}
                       onReportProblem={handleReportProblem}
                       initialTab={volunteerInitialTab}
                       onInitialConsumed={() => setVolunteerInitialTab(null)}
@@ -306,7 +274,6 @@ export default function VolunTag() {
                     <NGODashboard
                       email={dashboardEmail}
                       showToast={showToast}
-                      setPage={setPage}
                       onViewVolunteers={(ev) =>
                         navigate(eventVolunteersPath(ev.id), { state: { event: ev } })
                       }
@@ -337,11 +304,11 @@ export default function VolunTag() {
                             ? "activity"
                             : "events"
                         );
-                        setPage("ngo-dashboard");
+                        navigate(PATHS["ngo-dashboard"]);
                       }}
                       onConnect={(target) => {
                         setNgoChatTarget(target);
-                        setPage("ngo-dashboard");
+                        navigate(PATHS["ngo-dashboard"]);
                       }}
                     />
                   </RequireRole>
@@ -357,7 +324,7 @@ export default function VolunTag() {
                       showToast={showToast}
                       onBack={() => {
                         setNgoReturnTab("problems");
-                        setPage("ngo-dashboard");
+                        navigate(PATHS["ngo-dashboard"]);
                       }}
                     />
                   </RequireRole>

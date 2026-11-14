@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./NGORegisterForm.css";
 import { API_BASE } from "../../config";
 import { loginUser } from "../../api";
+import { PATHS, dashboardFor } from "../../routes";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 
 const CATEGORIES = [
@@ -36,7 +38,8 @@ const DOC_FIELDS = [
   { key: "cert_fcra", label: "FCRA Certificate", required: false },
 ];
 
-export default function NGORegisterForm({ showToast, setPage, onLogin }) {
+export default function NGORegisterForm({ showToast, onLogin }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     legal_structure: "",
     name: "",
@@ -222,7 +225,7 @@ export default function NGORegisterForm({ showToast, setPage, onLogin }) {
       onLogin({ role: "ngo", email: account.email || form.email.trim() });
     } catch {
       showToast("Registered. Please log in to continue.", "success");
-      setPage("dashboard-login");
+      navigate(PATHS["dashboard-login"]);
       return;
     }
 
@@ -269,7 +272,7 @@ export default function NGORegisterForm({ showToast, setPage, onLogin }) {
             <div className="success-actions">
               <button
                 className="success-btn-primary"
-                onClick={() => setPage("results")}
+                onClick={() => navigate(PATHS.results)}
                 id="ngo-reg-view-matches"
               >
                 View Matches
@@ -277,7 +280,7 @@ export default function NGORegisterForm({ showToast, setPage, onLogin }) {
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("ngo-dashboard")}
+                onClick={() => navigate(dashboardFor("ngo"))}
                 id="ngo-reg-view-dashboard"
               >
                 Go to My Dashboard
@@ -285,7 +288,7 @@ export default function NGORegisterForm({ showToast, setPage, onLogin }) {
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("landing")}
+                onClick={() => navigate(PATHS.landing)}
                 id="ngo-reg-go-home"
               >
                 Back to Home
@@ -860,7 +863,7 @@ export default function NGORegisterForm({ showToast, setPage, onLogin }) {
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("role-select")}
+              onClick={() => navigate(PATHS["role-select"])}
               type="button"
             >
               &#8592; Back

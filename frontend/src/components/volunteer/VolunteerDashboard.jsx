@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
 import "./VolunteerDashboard.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
+import { PATHS } from "../../routes";
 
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
 const MAX_ISSUE_IMAGES = 6;
@@ -37,7 +39,13 @@ function IssuePhotoThumb({ src, alt }) {
   );
 }
 
-export default function VolunteerDashboard({ email, showToast, setPage, onReportProblem, initialTab, onInitialConsumed }) {
+export default function VolunteerDashboard({ email, showToast, onReportProblem, initialTab, onInitialConsumed }) {
+  const navigate = useNavigate();
+  // navigate changes whenever the address does; keep it out of effect
+  // dependencies so the data below is not reloaded by a navigation.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [ngos, setNgos] = useState([]);
@@ -223,11 +231,6 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
   }, [email, activeTab, activitySubView, loadMyIssues]);
 
   useEffect(() => {
-    if (!email) {
-      setPage("dashboard-login");
-      return;
-    }
-
     let cancelled = false;
 
     const fetchProfile = async () => {
@@ -250,7 +253,12 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
       } catch (err) {
         if (!cancelled) {
           showToast(err.message || "Unable to load dashboard", "error");
-          setPage("dashboard-login");
+          // Still logged in, so /login must show the form (showLogin), not
+          // send the user back to this dashboard.
+          navigateRef.current(PATHS["dashboard-login"], {
+            replace: true,
+            state: { showLogin: true },
+          });
         }
       } finally {
         if (!cancelled) {
@@ -264,7 +272,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
     return () => {
       cancelled = true;
     };
-  }, [email, setPage, showToast]);
+  }, [email, showToast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1372,7 +1380,7 @@ export default function VolunteerDashboard({ email, showToast, setPage, onReport
           <button
             className="form-back-btn"
             type="button"
-            onClick={() => setPage("landing")}
+            onClick={() => navigate(PATHS.landing)}
           >
             &#8592; Back to Home
           </button>

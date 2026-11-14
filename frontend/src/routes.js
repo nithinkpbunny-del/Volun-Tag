@@ -1,10 +1,9 @@
 // Route paths for the user-facing app (the admin console lives outside this
 // router, see App.js).
 //
-// PATHS maps the old `page` names to their URLs. Screens still call
-// setPage("some-page"); VolunTag.js turns that into a navigation. Screens that
-// need an id in the address (event volunteers, resolve issue) are not in
-// PATHS: they are reached with the helpers below.
+// PATHS maps the old `page` names to their URLs; screens navigate with
+// navigate(PATHS["some-page"]). Screens that need an id in the address
+// (event volunteers, resolve issue) are not in PATHS: they are reached with the helpers below.
 import { matchPath } from "react-router-dom";
 
 export const PATHS = {

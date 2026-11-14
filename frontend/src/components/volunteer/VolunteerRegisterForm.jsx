@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./VolunteerRegisterForm.css";
 import { API_BASE } from "../../config";
 import { loginUser } from "../../api";
+import { PATHS, dashboardFor } from "../../routes";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 
 const SKILL_SUGGESTIONS = [
@@ -20,7 +22,8 @@ const AVAILABILITY_OPTIONS = [
 
 const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
 
-export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
+export default function VolunteerRegisterForm({ showToast, onLogin }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -184,7 +187,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
         onLogin({ role: "volunteer", email: account.email || form.email.trim() });
       } catch {
         showToast("Registered. Please log in to continue.", "success");
-        setPage("dashboard-login");
+        navigate(PATHS["dashboard-login"]);
         return;
       }
 
@@ -230,7 +233,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
             <div className="success-actions">
               <button
                 className="success-btn-primary"
-                onClick={() => setPage("results")}
+                onClick={() => navigate(PATHS.results)}
                 id="volunteer-reg-view-matches"
               >
                 View Matches
@@ -238,7 +241,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("volunteer-dashboard")}
+                onClick={() => navigate(dashboardFor("volunteer"))}
                 id="volunteer-reg-view-dashboard"
               >
                 Go to My Dashboard
@@ -246,7 +249,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("landing")}
+                onClick={() => navigate(PATHS.landing)}
                 id="volunteer-reg-go-home"
               >
                 Back to Home
@@ -605,7 +608,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, onLogin }) {
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("role-select")}
+              onClick={() => navigate(PATHS["role-select"])}
               type="button"
             >
               &#8592; Back
