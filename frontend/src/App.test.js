@@ -41,12 +41,9 @@ test("/ shows the landing page and the public navbar in order", async () => {
   expect(menuItems(container)).toEqual([
     "Home",
     "Features",
-    "Report a problem",
-    "News",
     "About",
     "Contact",
     "Log in",
-    "Join",
   ]);
   expect(container.querySelector("#hero-section")).toBeInTheDocument();
 });

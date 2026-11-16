@@ -10,19 +10,16 @@ const ITEMS = {
   home: { label: "Home", to: "/" },
   features: { label: "Features", to: "/features", accent: true },
   dashboard: { label: "My Dashboard", accent: true },
-  report: { label: "Report a problem", to: "/report" },
-  news: { label: "News", to: "/news" },
   about: { label: "About", to: "/about" },
   contact: { label: "Contact", to: "/contact" },
   login: { label: "Log in", to: "/login" },
-  join: { label: "Join", to: "/register" },
   logout: { label: "Log out", button: true },
 };
 
 const MENUS = {
-  public: ["home", "features", "report", "news", "about", "contact", "login", "join"],
-  volunteer: ["home", "features", "dashboard", "report", "news", "about", "contact", "logout"],
-  ngo: ["home", "features", "dashboard", "news", "about", "contact", "logout"],
+  public: ["home", "features", "about", "contact", "login"],
+  volunteer: ["home", "features", "dashboard", "about", "contact", "logout"],
+  ngo: ["home", "features", "dashboard", "about", "contact", "logout"],
 };
 
 // At this width and below the links move into a drawer opened by the hamburger.

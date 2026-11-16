@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import RoleSelect from "./RoleSelect";
-import { PATHS } from "../routes";
 import "./LandingPage.css";
  
 function AnimatedCounter({ target, suffix = "", duration = 2000 }) {
@@ -34,8 +32,6 @@ function AnimatedCounter({ target, suffix = "", duration = 2000 }) {
 }
  
 export default function LandingPage() {
-  const navigate = useNavigate();
-
   return (
     <div className="landing visible">
       {/* ─── Hero ─────────────────────────────────────────── */}
@@ -48,11 +44,6 @@ export default function LandingPage() {
         </div>
  
         <div className="hero-content">
-          <div className="hero-badge">
-            <span className="hero-badge-dot" />
-            AI-Powered Matching Platform
-          </div>
- 
           <h1 className="hero-title">
             Connecting <em>People Who Care</em> With{" "}
             <span className="hero-title-highlight">Causes That Matter</span>
@@ -295,15 +286,6 @@ export default function LandingPage() {
           <div className="cta-content">
             <h2 className="cta-title">Ready to Make an Impact?</h2>
             <p className="cta-desc">Join hundreds of volunteers and NGOs already using VolunTag to create meaningful connections.</p>
-            <div className="cta-buttons">
-              <button className="hero-btn-secondary" onClick={() => navigate(PATHS["volunteer-register"])}>
-                <span>Join as Volunteer</span>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              <button className="hero-btn-secondary" onClick={() => navigate(PATHS["ngo-register"])}>
-                <span>Register NGO</span>
-              </button>
-            </div>
           </div>
         </div>
       </section>
