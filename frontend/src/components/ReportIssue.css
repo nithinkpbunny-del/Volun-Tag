@@ -79,3 +79,23 @@
     padding: 4rem 1rem 2rem;
   }
 }
+
+/* Server rejected the report (e.g. photo and description do not match). */
+.form-error-banner {
+  margin: 1rem 0 0.5rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #f2b8b5;
+  border-radius: var(--radius-md);
+  background: #fdecea;
+  color: #b3261e;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.form-error-banner p {
+  margin: 0;
+}
+
+.form-error-banner p + p {
+  margin-top: 0.35rem;
+}

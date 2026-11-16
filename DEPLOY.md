@@ -24,6 +24,17 @@ Backend (all optional, the defaults match a local laptop setup; see
 | `SEED_DEMO_DATA` | `true` (default) adds demo volunteers and NGOs to empty tables. Use `false` in production. |
 | `HF_HUB_OFFLINE` | `1` (default) uses only models already downloaded. Set `0` once to download them. |
 | `HF_HOME` | Where the model cache lives. Point it at a persistent disk. |
+| `APP_ENV` / `ENABLE_DOCS` | `APP_ENV=production` turns `/docs`, `/redoc` and `/openapi.json` off (unless `ENABLE_DOCS=true`). |
+| `TRUST_PROXY_HEADERS` | `true` only behind a proxy you control that sets `X-Forwarded-For`; rate limits then use that address. |
+| `MAX_REQUEST_BYTES`, `MAX_IMAGE_BYTES`, `MAX_DOCUMENT_BYTES`, `MAX_IMAGE_PIXELS`, `AI_IMAGE_MAX_SIDE` | Upload limits (40 MB per request, 10 MB per photo, 5 MB per document, 25 megapixels; photos are shrunk to 1024 px before the AI models). |
+| `REPORT_LIMIT_PER_HOUR`, `VOLUNTEER_SIGNUP_LIMIT_PER_HOUR`, `NGO_SIGNUP_LIMIT_PER_HOUR`, `CONTACT_LIMIT_*` | Rate limits (see "Limits" below). |
+| `MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` | Outgoing mail (see "Mail"). |
+| `FRONTEND_BASE_URL` | Public https address of the frontend; password reset links point here. |
+| `PASSWORD_RESET_MINUTES` | How long a reset link works (default 30). |
+| `CONTACT_INBOX` | Where contact-form messages go. Placeholder `contact@voluntag.example` until a real inbox exists. |
+| `IP_HASH_SALT` | Secret for hashing contact-form IP addresses. Set a long random value. |
+| `REPORT_MISMATCH_MODE`, `REPORT_MISMATCH_CLIP_MIN` | The photo/description check on reports (see below). Keep `log`. |
+| `MATCH_USE_RATINGS`, `MATCH_RATING_MIN_COUNT`, `MATCH_RATING_MAX_BONUS`, `MATCH_V2`, `MATCH_PUBLIC_ROW_LIMIT` | Matching options (see "Matching"). |
 
 Frontend:
 
@@ -71,8 +82,9 @@ the database or the models, so it only shows that the server process is up.
 - **HTTPS on both sides.** If the frontend is served over https, the backend
   must be https too, or browsers block the calls.
 - **One worker only.** SQLite does not handle several writer processes well,
-  and the admin login lockout is kept in memory, so each worker would have
-  its own counter.
+  and every rate limit (logins, admin login, reports, registrations,
+  password reset, contact form) is kept in memory, so each worker would have
+  its own counters and the limits would multiply.
 - **Never upload or deploy any `.db`, `.bak` or `.backup` file.** The local
   backups in `backend/` may hold plain-text passwords. Leave them out when
   you copy files or build an image, and start the server with an empty
@@ -117,3 +129,93 @@ Without this, reloading a page or opening a link directly returns a 404.
   check `git status` before every commit.
 - If real data is ever committed, rewrite the history or move to a fresh
   repository before continuing. Deleting the file in a new commit is not enough.
+
+## Database
+
+- Startup migrations run on every start and are safe to repeat: they add
+  missing columns, tables (`password_reset_tokens`, `contact_messages`) and
+  indexes, lowercase stored emails and add a unique index on `lower(email)`
+  for volunteers and NGOs. If any email would have to change, the database is
+  first copied to `voluntag.db.bak-before-email-normalise-<time>` next to it.
+  If two accounts would collide once lowercased, that table is skipped and a
+  warning is logged; fix the rows by hand and restart.
+- SQLite runs with `foreign_keys=ON`, `journal_mode=WAL` and a 5 second busy
+  timeout. WAL adds `voluntag.db-wal` and `voluntag.db-shm` next to the
+  database: back up with `sqlite3 voluntag.db ".backup 'backup.db'"` (not a
+  plain file copy while the server runs). These files are git-ignored.
+- Suggested nightly job: the `.backup` command above to a second disk.
+
+## Mail
+
+- Local: run Mailpit (`docker run -d --name voluntag-mailpit -p 127.0.0.1:1025:1025 -p 127.0.0.1:8025:8025 axllent/mailpit`).
+  The defaults (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025`) already point at it
+  and every message shows up at http://127.0.0.1:8025. Nothing leaves the machine.
+- Hosted: set `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_STARTTLS=true`,
+  `SMTP_USERNAME`, `SMTP_PASSWORD`, a `MAIL_FROM` on your own domain, and add
+  SPF and DKIM (and DMARC) records for that domain, or mail lands in spam.
+- Mail is sent after the HTTP answer. If the mail server is down, the answer
+  does not change: password reset still says "If an account exists...", and
+  contact messages are kept in `contact_messages` (`mail_sent = 0`).
+- Password reset: links work once, for `PASSWORD_RESET_MINUTES`, and a new
+  request cancels older links. A successful reset logs the account out
+  everywhere. Only a hash of each link is stored.
+
+## Limits
+
+| What | Limit | Over the limit |
+| --- | --- | --- |
+| `POST /report-issue` | 5 per hour per volunteer | 429 |
+| `POST /add-volunteer` | 10 per hour per IP | 429 |
+| `POST /add-ngo` | 5 per hour per IP | 429 |
+| `POST /contact` | 3 per hour per IP, 3 per day per email | 429 |
+| `POST /forgot-password` | 3 per hour per account, 10 per hour per IP | same 200, nothing sent |
+| `POST /reset-password(/verify)` | 10 per 10 minutes per IP | 429 |
+| Request body | 40 MB | 413 |
+| One photo / one document | 10 MB / 5 MB, real image or PDF/DOC/DOCX content | 413 / 400 |
+
+Behind a proxy, set `TRUST_PROXY_HEADERS=true` or every visitor shares the
+proxy's address (and its limits).
+
+## Report a problem: photo / description check
+
+`POST /report-issue` compares each photo with the description using CLIP
+(`"a photo of {description}"`, cut to CLIP's 77 tokens). The models already
+used for the report are reused, so a normal report costs no extra model.
+
+- `REPORT_MISMATCH_MODE=enforce`: when every photo scores below
+  `REPORT_MISMATCH_CLIP_MIN`, the report is refused with
+  `422 {"code": "image_description_mismatch", "message": ...}` and nothing is
+  stored (no issue row, uploaded files deleted).
+- `log` (**default**): the report is accepted and a mismatch is logged as a
+  warning. `off`: the check is not computed.
+
+**Limits of the check (measured, not guessed).** Calibration used the 13
+photos in the database (5 issue photos and 8 NGO "before" photos, each with
+the description of its own issue) and 130 cross-pairs with other issues'
+descriptions (`tools/report_calibration/calibrate.py`, run on a copy):
+
+| | n | min | median | max |
+| --- | --- | --- | --- | --- |
+| matching pairs | 13 | 0.150 | 0.208 | 0.329 |
+| other descriptions | 130 | 0.113 | 0.208 | 0.342 |
+
+The two groups overlap almost completely (AUC 0.56; a fixed bank of
+reference prompts and the BLIP-caption comparison did no better, AUC
+0.55-0.59), and even a blank or noise image scores 0.14-0.22. At the shipped
+threshold 0.14 no genuine photo would be refused, but almost no mismatch
+would be caught (99 % of cross-pairs pass). At 0.20, 23 % of genuine photos
+would be refused. So the check stays in `log` mode. Re-run the calibration
+when more real reports exist before switching to `enforce`.
+
+## Matching
+
+- `GET /match` (the public demo) returns no names, emails or locations: rows
+  are labelled "Volunteer 1", "Volunteer 2"... and capped at
+  `MATCH_PUBLIC_ROW_LIMIT` (24, max 50). `GET /ngos` needs a login.
+- Every match has an explanation (keywords matched, same city, rating bonus).
+- Ratings bonus (`MATCH_USE_RATINGS`, on): only a volunteer with at least
+  `MATCH_RATING_MIN_COUNT` (3) rated, attended events gets a bonus of at most
+  5 % of the score. Today no volunteer qualifies, so scores are unchanged.
+- `MATCH_V2` (off): hybrid scoring that shows events to volunteers without a
+  category keyword hit. On the self-made evaluation (`tools/match_eval`) it
+  lowered NDCG@5 from 0.95 to 0.89, so it is not used by default.

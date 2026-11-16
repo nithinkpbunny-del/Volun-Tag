@@ -4,7 +4,7 @@ import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
 import "./NGODashboard.css";
 import { API_BASE } from "../../config";
-import { authFetch, openAuthedFile } from "../../api";
+import { authFetch, errorText, openAuthedFile } from "../../api";
 import { PATHS } from "../../routes";
 
 // Looks like a link; opens a protected file through the login token.
@@ -339,7 +339,7 @@ export default function NGODashboard({
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Failed to create event");
+        throw new Error(errorText(err, "Failed to create event"));
       }
 
       showToast("Event created successfully!", "success");
@@ -382,7 +382,7 @@ export default function NGODashboard({
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Failed to update event");
+        throw new Error(errorText(err, "Failed to update event"));
       }
 
       showToast("Event updated successfully!", "success");

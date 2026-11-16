@@ -1,0 +1,3 @@
+# Test-only tools. Install with: pip install -r requirements-dev.txt
+# (httpx, used by FastAPI's TestClient, is already in requirements.txt)
+pytest==8.4.2

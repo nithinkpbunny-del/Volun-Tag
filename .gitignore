@@ -16,6 +16,10 @@ frontend/node_modules/
 *.sqlite3
 *.db.backup*
 *.db.bak-*
+# SQLite write-ahead log files (the backend uses WAL mode)
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Uploaded files (runtime data, not source)
 backend/uploads/

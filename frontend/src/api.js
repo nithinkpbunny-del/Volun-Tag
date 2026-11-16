@@ -206,3 +206,23 @@ export async function openAuthedFile(path) {
     throw err;
   }
 }
+
+/**
+ * A readable message from an error response body. FastAPI sends either
+ * {detail: "text"} or, for validation errors, {detail: [{msg, loc}, ...]}.
+ */
+export function errorText(data, fallback = "Something went wrong") {
+  if (!data) return fallback;
+  if (typeof data.message === "string" && data.message) return data.message;
+  if (typeof data.detail === "string" && data.detail) return data.detail;
+  if (Array.isArray(data.detail) && data.detail.length) {
+    return data.detail
+      .map((item) => {
+        const field = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : "";
+        const msg = String(item.msg || "").replace(/^Value error, /, "");
+        return field && field !== "body" ? `${String(field).replace(/_/g, " ")}: ${msg}` : msg;
+      })
+      .join(" · ");
+  }
+  return fallback;
+}

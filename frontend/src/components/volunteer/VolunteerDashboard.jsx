@@ -281,7 +281,8 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
       setLoadingNgos(true);
 
       try {
-        const res = await fetch(`${API_BASE}/ngos`);
+        // /ngos needs a login: it includes each NGO's contact email.
+        const res = await authFetch(`${API_BASE}/ngos`);
 
         if (!res.ok) {
           throw new Error("Could not load NGOs");

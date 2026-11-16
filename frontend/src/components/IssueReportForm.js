@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import ImagePreviewCard from "./ImagePreviewCard";
 import { API_BASE } from "../config";
-import { authFetch, getSession } from "../api";
+import { authFetch, errorText, getSession } from "../api";
 
 export default function IssueReportForm({ showToast, onReportSuccess }) {
   // The reporter is whoever is logged in as a volunteer; it is never typed in.
@@ -16,6 +16,10 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
   });
   const [images, setImages] = useState([]);
   const [errors, setErrors] = useState({});
+  // Server-side problem with the report shown inside the form (e.g. the
+  // photo and the description do not match). The typed text and the chosen
+  // photos stay, so the user can fix them and submit again.
+  const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
     return () => {
@@ -40,10 +44,12 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
       name: file.name,
     }));
     setImages((prev) => [...prev, ...nextImages].slice(0, 6));
+    setSubmitError("");
   };
 
   const removeImage = (index) => {
     setImages((prev) => prev.filter((_, idx) => idx !== index));
+    setSubmitError("");
   };
 
   const handleSubmit = async () => {
@@ -58,6 +64,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
     }
 
     setLoading(true);
+    setSubmitError("");
 
     const formData = new FormData();
     formData.append("user_description", form.user_description.trim());
@@ -73,9 +80,20 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
         body: formData,
       });
 
-      const payload = await response.json();
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+
+      if (response.status === 422 && payload.code === "image_description_mismatch") {
+        setSubmitError(payload.message);
+        return;
+      }
+
       if (!response.ok) {
-        throw new Error(payload.detail || "Could not submit the issue");
+        throw new Error(errorText(payload, "Could not submit the issue"));
       }
 
       showToast("Issue reported successfully!", "success");
@@ -203,6 +221,16 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
           }}>
             Your name and mobile number will be shared with the NGOs matched to this report.
           </p>
+
+          {submitError && (
+            <div className="form-error-banner" role="alert">
+              <p>{submitError}</p>
+              <p>
+                Your description and photos are still here: change the photo or go back to edit
+                the description, then submit again.
+              </p>
+            </div>
+          )}
 
           <div className="form-actions">
             <button className="form-back-btn" onClick={() => setStep(1)}>

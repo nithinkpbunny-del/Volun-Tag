@@ -1,7 +1,34 @@
+import re
 from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+try:
+    from .event_rules import to_storage
+except ImportError:
+    from event_rules import to_storage
+
+
+# Deliberately simple: one "@", no spaces, a dot in the domain.
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalise_email(value: str) -> str:
+    """Trim + lowercase an email and check its basic shape (raises ValueError)."""
+    value = (value or "").strip().lower()
+    if len(value) > 254 or not EMAIL_PATTERN.match(value):
+        raise ValueError("enter a valid email address")
+    return value
+
+
+def _required_text(value):
+    if value is None:
+        raise ValueError("must not be empty")
+    value = value.strip()
+    if not value:
+        raise ValueError("must not be empty or whitespace only")
+    return value
 
 
 # ─── Pydantic Models ───────────────────────────────────────────────
@@ -19,6 +46,11 @@ class Volunteer(BaseModel):
     location: str = Field(..., min_length=1)
     availability: str = Field(..., min_length=1)
     experience: Optional[str] = ""
+
+    @field_validator("email")
+    @classmethod
+    def email_is_valid(cls, value: str) -> str:
+        return normalise_email(value)
 
 
 class NGO(BaseModel):
@@ -158,11 +190,22 @@ class NGODashboardResponse(BaseModel):
 
 class EventCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = ""
-    required_skills: str = Field(..., min_length=1)
-    location: Optional[str] = ""
+    description: Optional[str] = Field(default="", max_length=5000)
+    required_skills: str = Field(..., min_length=1, max_length=1000)
+    location: Optional[str] = Field(default="", max_length=300)
+    # A day: "YYYY-MM-DD" or the browser's "YYYY-MM-DDT00:00:00.000Z".
     event_date: Optional[datetime] = None
-    spots_available: Optional[int] = None
+    spots_available: Optional[int] = Field(default=None, ge=1, le=10000)
+
+    @field_validator("title", "required_skills")
+    @classmethod
+    def required_text_not_blank(cls, value):
+        return _required_text(value)
+
+    @field_validator("event_date")
+    @classmethod
+    def date_only(cls, value):
+        return to_storage(value)
 
 
 class EventResponse(BaseModel):
@@ -182,6 +225,10 @@ class EventResponse(BaseModel):
     approved_count: int = 0
     is_completed: bool = False
     feedback_count: int = 0
+    # Server-computed, IST: "open" | "in_progress" | "completed".
+    phase: str = "open"
+    # The event day as "YYYY-MM-DD" (format it without any timezone shift).
+    event_day: Optional[str] = None
 
 
 class EventStatusUpdate(BaseModel):
@@ -189,12 +236,27 @@ class EventStatusUpdate(BaseModel):
 
 
 class EventUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    required_skills: Optional[str] = None
-    location: Optional[str] = None
+    """Partial update: only the fields sent are changed.
+
+    title and required_skills may be left out but never sent as null or blank.
+    """
+
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    required_skills: Optional[str] = Field(default=None, max_length=1000)
+    location: Optional[str] = Field(default=None, max_length=300)
     event_date: Optional[datetime] = None
-    spots_available: Optional[int] = None
+    spots_available: Optional[int] = Field(default=None, ge=1, le=10000)
+
+    @field_validator("title", "required_skills")
+    @classmethod
+    def required_text_not_blank(cls, value):
+        return _required_text(value)
+
+    @field_validator("event_date")
+    @classmethod
+    def date_only(cls, value):
+        return to_storage(value)
 
 
 class NGOEventsResponse(BaseModel):
@@ -228,6 +290,9 @@ class EventVolunteersResponse(BaseModel):
     approved_count: int
     volunteers: list[EventVolunteerEntry]
     is_completed: bool = False
+    phase: str = "open"
+    event_date: Optional[datetime] = None
+    event_day: Optional[str] = None
 
 
 class ApprovalResponse(BaseModel):
@@ -706,6 +771,22 @@ class RejectRequest(BaseModel):
         return value
 
 
+class MatchExplanation(BaseModel):
+    """How a match score was built; every part is in score units (0 to 1)."""
+
+    semantic: float
+    category_boost: float = 0.0
+    location_boost: float = 0.0
+    skill_overlap: float = 0.0
+    rating_bonus: float = 0.0
+    matched_keywords: list[str] = []
+    same_city: Optional[str] = None
+    rated_events: int = 0
+    average_rating: Optional[float] = None
+    scoring: str = "v1"
+    summary: str = ""
+
+
 class VolunteerMatchEntry(BaseModel):
     ngo_name: str
     ngo_category: Optional[str]
@@ -713,6 +794,7 @@ class VolunteerMatchEntry(BaseModel):
     event_title: Optional[str]
     match_percentage: Optional[float]
     level: Optional[str] = None
+    explanation: Optional["MatchExplanation"] = None
 
 
 class VolunteerMatchesResponse(BaseModel):
@@ -736,6 +818,9 @@ class VolunteerEventEntry(BaseModel):
     match_percentage: float
     joined: bool
     approved: bool = False
+    phase: str = "open"
+    event_day: Optional[str] = None
+    explanation: Optional["MatchExplanation"] = None
 
 
 class VolunteerActivityEntry(BaseModel):
@@ -754,6 +839,8 @@ class VolunteerActivityEntry(BaseModel):
     attendance_status: Optional[str] = None
     rating: Optional[int] = None
     feedback: Optional[str] = None
+    phase: str = "open"
+    event_day: Optional[str] = None
 
 
 class JoinRequest(BaseModel):
@@ -840,3 +927,97 @@ class MarkReadRequest(BaseModel):
 
 class MarkReadResponse(BaseModel):
     updated: int
+
+
+# ─── Admin: rating / attendance override ──────────────────────────
+class FeedbackOverrideRequest(BaseModel):
+    attendance: Literal["attended", "not_attended"]
+    rating: Optional[int] = None
+    feedback: Optional[str] = None
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_length(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must be at least 3 characters")
+        if len(value) > 500:
+            raise ValueError("reason must be 500 characters or fewer")
+        return value
+
+
+class FeedbackOverrideResponse(BaseModel):
+    event_id: int
+    volunteer_id: int
+    attendance_status: str
+    rating: Optional[int]
+    feedback: Optional[str]
+    previous: dict
+
+
+# ─── Password reset ───────────────────────────────────────────────
+class ForgotPasswordRequest(BaseModel):
+    role: Literal["volunteer", "ngo"]
+    # Not format-checked: a malformed address gets the same answer as any other.
+    email: str = Field(default="", max_length=320)
+
+
+class ResetTokenRequest(BaseModel):
+    token: str = Field(default="", max_length=200)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(default="", max_length=200)
+    new_password: str = Field(default="", max_length=256)
+
+
+# ─── Contact form ─────────────────────────────────────────────────
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _single_line(value: str) -> str:
+    """No line breaks or control characters (these end up in mail headers)."""
+    value = _CONTROL_CHARS.sub("", value.replace("\r", " ").replace("\n", " "))
+    return " ".join(value.split())
+
+
+class ContactRequest(BaseModel):
+    name: str = Field(..., max_length=200)
+    email: str = Field(..., max_length=320)
+    subject: Optional[str] = Field(default=None, max_length=300)
+    message: str = Field(..., max_length=4000)
+    role: Optional[Literal["volunteer", "ngo", "other"]] = None
+    # Honeypot: hidden in the form, so only bots fill it.
+    website: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def name_ok(cls, value: str) -> str:
+        value = _single_line(value)
+        if not 2 <= len(value) <= 100:
+            raise ValueError("name must be 2 to 100 characters")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def email_ok(cls, value: str) -> str:
+        return normalise_email(value)
+
+    @field_validator("subject")
+    @classmethod
+    def subject_ok(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = _single_line(value)
+        if len(value) > 150:
+            raise ValueError("subject must be 150 characters or fewer")
+        return value or None
+
+    @field_validator("message")
+    @classmethod
+    def message_ok(cls, value: str) -> str:
+        value = _CONTROL_CHARS.sub("", value.replace("\r\n", "\n")).strip()
+        if not 10 <= len(value) <= 2000:
+            raise ValueError("message must be 10 to 2000 characters")
+        return value

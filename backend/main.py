@@ -13,12 +13,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import numpy as np
 
@@ -50,12 +51,20 @@ try:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
         ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
-        RejectRequest,
+        RejectRequest, MatchExplanation, normalise_email,
     )
-    from .migrations import ensure_signup_columns
+    from .migrations import run_migrations
+    from . import event_rules
+    from . import rate_limit
+    from . import uploads
+    from .contact import router as contact_router
+    from .password_reset import router as password_reset_router
+    from .issue_ai_pipeline import analyse_images
     from .password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from .password_policy import password_policy_error
-    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, score_match
+    from .matching_config import MATCHABLE_NGO_STATUSES, MIN_EVENT_MATCH
+    from . import settings
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
     from .user_auth import (
         create_user_session, delete_session_for_header, ensure_own_email,
@@ -63,8 +72,9 @@ try:
         same_email,
     )
     from .settings import (
-        ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
-        SEED_DEMO_DATA, UPLOAD_DIR,
+        ALLOWED_ORIGINS, DATABASE_PATH, ENABLE_DOCS, MAX_DOCUMENT_BYTES,
+        MAX_IMAGE_BYTES, MAX_REQUEST_BYTES, MESSAGES_UPLOAD_DIR,
+        RESOLUTIONS_UPLOAD_DIR, SEED_DEMO_DATA, UPLOAD_DIR,
     )
 except ImportError:
     from admin import router as admin_router
@@ -94,12 +104,20 @@ except ImportError:
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
         MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
         ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
-        RejectRequest,
+        RejectRequest, MatchExplanation, normalise_email,
     )
-    from migrations import ensure_signup_columns
+    from migrations import run_migrations
+    import event_rules
+    import rate_limit
+    import uploads
+    from contact import router as contact_router
+    from password_reset import router as password_reset_router
+    from issue_ai_pipeline import analyse_images
     from password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from password_policy import password_policy_error
-    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, score_match
+    from matching_config import MATCHABLE_NGO_STATUSES, MIN_EVENT_MATCH
+    import settings
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
     from user_auth import (
         create_user_session, delete_session_for_header, ensure_own_email,
@@ -107,8 +125,9 @@ except ImportError:
         same_email,
     )
     from settings import (
-        ALLOWED_ORIGINS, MESSAGES_UPLOAD_DIR, RESOLUTIONS_UPLOAD_DIR,
-        SEED_DEMO_DATA, UPLOAD_DIR,
+        ALLOWED_ORIGINS, DATABASE_PATH, ENABLE_DOCS, MAX_DOCUMENT_BYTES,
+        MAX_IMAGE_BYTES, MAX_REQUEST_BYTES, MESSAGES_UPLOAD_DIR,
+        RESOLUTIONS_UPLOAD_DIR, SEED_DEMO_DATA, UPLOAD_DIR,
     )
 
 
@@ -142,17 +161,56 @@ ALLOWED_RESOLUTION_DOCUMENT_TYPES = {
 }
 
 MAX_IMAGES = 6
-MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB per file
-MAX_DOCUMENT_SIZE = 5 * 1024 * 1024  # 5 MB per solution document
+MAX_IMAGE_SIZE = MAX_IMAGE_BYTES  # per image (MAX_IMAGE_BYTES, default 10 MB)
+MAX_DOCUMENT_SIZE = MAX_DOCUMENT_BYTES  # per document (default 5 MB)
 
-MIN_EVENT_MATCH = 0.45  # minimum final score for an event to be shown
+# NGO registration documents: extension -> how the content is checked.
+NGO_DOCUMENT_KINDS = {".pdf": "magic", ".jpg": "image", ".png": "image"}
+RESOLUTION_DOCUMENT_KINDS = {".pdf": "magic", ".doc": "magic", ".docx": "magic"}
+
+# MIN_EVENT_MATCH (minimum final score for an event to be shown) lives in matching_config.py.
+
+MISMATCH_CODE = "image_description_mismatch"
+MISMATCH_MESSAGE = (
+    "The photo and the description do not seem to describe the same problem. "
+    "Please check that you picked the right photo and that the description "
+    "says what the photo shows, then submit again."
+)
+
+report_limiter = rate_limit.make_limiter(settings.REPORT_LIMIT_PER_HOUR, 3600, "report-issue")
+volunteer_signup_limiter = rate_limit.make_limiter(
+    settings.VOLUNTEER_SIGNUP_LIMIT_PER_HOUR, 3600, "add-volunteer",
+)
+ngo_signup_limiter = rate_limit.make_limiter(settings.NGO_SIGNUP_LIMIT_PER_HOUR, 3600, "add-ngo")
 
 
 app = FastAPI(
     title="VolunTag API",
     description="AI-powered volunteer-NGO matching platform",
     version="2.0.0",
+    # ENABLE_DOCS=false (the default when APP_ENV=production) hides /docs,
+    # /redoc and /openapi.json.
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Refuse bodies larger than MAX_REQUEST_BYTES before they are read."""
+    length = request.headers.get("content-length")
+    if length and length.isdigit() and int(length) > MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "detail": (
+                    f"The upload is too large (limit "
+                    f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB per request)."
+                ),
+            },
+        )
+    return await call_next(request)
 
 
 app.add_middleware(
@@ -164,6 +222,8 @@ app.add_middleware(
 )
 
 app.include_router(admin_router)
+app.include_router(password_reset_router)
+app.include_router(contact_router)
 
 
 # ─── Startup / Seed Data ───────────────────────────────────────────
@@ -174,56 +234,25 @@ def seed_data():
         run_seed()
     else:
         Base.metadata.create_all(bind=engine)
-    ensure_signup_columns(engine)
+    run_migrations(engine, DATABASE_PATH)
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
-async def save_ngo_file(
+def save_ngo_file(
     upload: Optional[UploadFile],
     field_name: str,
+    saved: uploads.SavedFiles,
 ) -> Optional[str]:
-    """Save one optional NGO verification document."""
+    """Save one optional NGO verification document (PDF, JPG or PNG, max 5 MB)."""
 
-    if upload is None:
+    if upload is None or not upload.filename:
         return None
 
-    if upload.content_type not in ALLOWED_DOCUMENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{field_name} must be a PDF, JPG, JPEG, "
-                f"or PNG file."
-            ),
-        )
-
-    contents = await upload.read()
-
-    if len(contents) > MAX_IMAGE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{field_name} exceeds the "
-                f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB size limit."
-            ),
-        )
-
-    ext = Path(upload.filename or "").suffix.lower()
-
-    if ext not in {
-        ".pdf",
-        ".jpg",
-        ".jpeg",
-        ".png",
-    }:
-        ext = ".pdf"
-
-    safe_name = f"ngo_{uuid.uuid4().hex}{ext}"
-    destination = UPLOAD_DIR / safe_name
-
-    with open(destination, "wb") as file:
-        file.write(contents)
-
-    return safe_name
+    stored_name, _ = uploads.save_document(
+        upload, UPLOAD_DIR, "ngo_", NGO_DOCUMENT_KINDS,
+        MAX_DOCUMENT_SIZE, field_name, saved,
+    )
+    return stored_name
 
 
 def safe_upload_path(base_dir: Path, stored_name) -> Optional[Path]:
@@ -249,104 +278,25 @@ def save_image_upload(
     dest_dir: Path,
     prefix: str,
 ) -> tuple[str, Path]:
-    """Validate and save one image; return (stored filename, full path)."""
+    """Validate (by content) and save one image; return (stored filename, full path)."""
 
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File '{file.filename}' is not a supported "
-                f"image type. Allowed: JPEG, PNG, GIF, "
-                f"WebP, BMP, TIFF."
-            ),
-        )
-
-    contents = file.file.read()
-
-    if not contents:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File '{file.filename}' is empty.",
-        )
-
-    if len(contents) > MAX_IMAGE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File '{file.filename}' exceeds the "
-                f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
-                f"size limit."
-            ),
-        )
-
-    ext = Path(file.filename or "").suffix.lower() if file.filename else ""
-
-    if ext not in {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".webp",
-        ".bmp",
-        ".tiff",
-        ".tif",
-    }:
-        ext = ".jpg"
-
-    stored_name = f"{prefix}{uuid.uuid4().hex}{ext}"
-    dest = dest_dir / stored_name
-
-    with open(dest, "wb") as out:
-        out.write(contents)
-
-    return stored_name, dest
+    return uploads.save_image(file, dest_dir, prefix, MAX_IMAGE_SIZE)
 
 
 def save_document_upload(
     file: UploadFile,
     dest_dir: Path,
 ) -> tuple[str, str, Path]:
-    """Validate and save a solution document.
+    """Validate (by content) and save a solution document.
 
     Returns (stored filename, original filename, full path).
     """
 
     original_name = Path(file.filename or "").name
-    ext = Path(original_name).suffix.lower()
-
-    if (
-        ext not in ALLOWED_RESOLUTION_DOCUMENT_TYPES
-        or file.content_type != ALLOWED_RESOLUTION_DOCUMENT_TYPES[ext]
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="The document must be a PDF, DOC, or DOCX file.",
-        )
-
-    contents = file.file.read()
-
-    if not contents:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File '{original_name}' is empty.",
-        )
-
-    if len(contents) > MAX_DOCUMENT_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File '{original_name}' exceeds the "
-                f"{MAX_DOCUMENT_SIZE // (1024 * 1024)} MB "
-                f"size limit."
-            ),
-        )
-
-    stored_name = f"doc_{uuid.uuid4().hex}{ext}"
-    dest = dest_dir / stored_name
-
-    with open(dest, "wb") as out:
-        out.write(contents)
-
+    stored_name, dest = uploads.save_document(
+        file, dest_dir, "doc_", RESOLUTION_DOCUMENT_KINDS,
+        MAX_DOCUMENT_SIZE, "The document",
+    )
     return stored_name, original_name[:255], dest
 
 
@@ -450,16 +400,50 @@ def count_approved(db: Session, event_id: int) -> int:
     ).scalar()
 
 
-def is_past(event: ActivityDB) -> bool:
-    return bool(event.event_date and event.event_date <= datetime.utcnow())
-
-
 def is_completed(event: ActivityDB) -> bool:
-    """True from the day after the event date, using the IST calendar date."""
-    if not event.event_date:
-        return False
-    today_ist = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
-    return event.event_date.date() < today_ist
+    """True from the day after the event date (IST). See event_rules.py."""
+    return event_rules.is_completed(event)
+
+
+def require_open(event: ActivityDB) -> None:
+    """400 unless registration is still open (the event day has not started, IST)."""
+    if not event_rules.is_open(event):
+        raise HTTPException(
+            status_code=400,
+            detail="Registration for this event has closed",
+        )
+
+
+def event_response(event: ActivityDB, **counts) -> EventResponse:
+    """EventResponse with the server-computed phase and day."""
+    item = EventResponse.model_validate(event)
+    for key, value in counts.items():
+        setattr(item, key, value)
+    item.phase = event_rules.event_phase(event)
+    item.event_day = event_rules.event_day_text(event)
+    item.is_completed = item.phase == event_rules.COMPLETED
+    return item
+
+
+def volunteer_rating_stats(db: Session, volunteer_ids: list[int]) -> dict[int, tuple[int, float]]:
+    """{volunteer_id: (rated attended events, mean rating)} in one grouped query."""
+    if not volunteer_ids or not settings.MATCH_USE_RATINGS:
+        return {}
+    rows = (
+        db.query(
+            ActivitySignupDB.volunteer_id,
+            func.count(ActivitySignupDB.id),
+            func.avg(ActivitySignupDB.rating),
+        )
+        .filter(
+            ActivitySignupDB.volunteer_id.in_(volunteer_ids),
+            ActivitySignupDB.attendance_status == "attended",
+            ActivitySignupDB.rating.isnot(None),
+        )
+        .group_by(ActivitySignupDB.volunteer_id)
+        .all()
+    )
+    return {vid: (int(count), float(mean)) for vid, count, mean in rows}
 
 
 def is_full(event: ActivityDB, approved_count: int) -> bool:
@@ -542,83 +526,79 @@ def report_issue(
     reporter_name = volunteer.name
     contact_information = volunteer.contact_number
 
+    # Empty file parts (no file chosen) count as not provided.
+    images = [img for img in images if img.filename]
+
     if len(images) > MAX_IMAGES:
         raise HTTPException(
             status_code=400,
             detail=f"Too many images. Maximum is {MAX_IMAGES}.",
         )
 
-    for img in images:
-        if img.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"File '{img.filename}' is not a supported "
-                    f"image type. Allowed: JPEG, PNG, GIF, "
-                    f"WebP, BMP, TIFF."
-                ),
-            )
+    # Per-user limit on the expensive AI work (BLIP + CLIP + MiniLM).
+    report_limiter.check(
+        ("volunteer", session.user_id),
+        "You have sent several reports in the last hour. "
+        "Please wait a while before sending another one.",
+    )
 
-    saved_paths: list[str] = []
-    saved_full_paths: list[Path] = []
+    saved = uploads.SavedFiles()
 
     try:
-        for img in images:
-            contents = img.file.read()
-
-            if len(contents) > MAX_IMAGE_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"File '{img.filename}' exceeds the "
-                        f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
-                        f"size limit."
-                    ),
-                )
-
-            ext = (
-                Path(img.filename or "").suffix.lower()
-                if img.filename
-                else ""
-            )
-
-            if ext not in {
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".gif",
-                ".webp",
-                ".bmp",
-                ".tiff",
-                ".tif",
-            }:
-                ext = ".jpg"
-
-            safe_name = f"{uuid.uuid4().hex}{ext}"
-            dest = UPLOAD_DIR / safe_name
-
-            with open(dest, "wb") as file:
-                file.write(contents)
-
-            saved_paths.append(safe_name)
-            saved_full_paths.append(dest)
-
+        saved_paths = [
+            uploads.save_image(img, UPLOAD_DIR, "", MAX_IMAGE_SIZE, saved)[0]
+            for img in images
+        ]
     except HTTPException:
-        for path in saved_full_paths:
-            path.unlink(missing_ok=True)
-
+        saved.cleanup()
         raise
-
     except Exception:
-        for path in saved_full_paths:
-            path.unlink(missing_ok=True)
-
+        saved.cleanup()
         logger.exception("Failed to save uploaded images")
-
         raise HTTPException(
             status_code=500,
             detail="Failed to save uploaded images.",
         )
+
+    # ── Photo / description check, before anything is stored ─────
+    analysis = None
+
+    if saved_paths:
+        try:
+            analysis = analyse_images(
+                saved_paths,
+                description=(
+                    user_description
+                    if settings.REPORT_MISMATCH_MODE != "off" else None
+                ),
+            )
+        except Exception:
+            logger.exception("Image analysis failed; continuing without it")
+            analysis = None
+
+        best = analysis.best_similarity if analysis else None
+
+        if best is not None and settings.REPORT_MISMATCH_MODE != "off":
+            mismatch = best < settings.REPORT_MISMATCH_CLIP_MIN
+            (logger.warning if mismatch else logger.info)(
+                "Report photo check: best CLIP similarity %.3f (threshold %.3f, "
+                "mode %s) -> %s",
+                best, settings.REPORT_MISMATCH_CLIP_MIN,
+                settings.REPORT_MISMATCH_MODE,
+                "mismatch" if mismatch else "match",
+            )
+
+            if mismatch and settings.REPORT_MISMATCH_MODE == "enforce":
+                saved.cleanup()
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "code": MISMATCH_CODE,
+                        "message": MISMATCH_MESSAGE,
+                        # Older clients read "detail".
+                        "detail": MISMATCH_MESSAGE,
+                    },
+                )
 
     issue_data = {
         "user_description": user_description,
@@ -629,10 +609,16 @@ def report_issue(
         "image_paths": saved_paths if saved_paths else None,
     }
 
-    issue = create_issue(db, issue_data)
+    try:
+        issue = create_issue(db, issue_data)
+    except Exception:
+        db.rollback()
+        saved.cleanup()
+        logger.exception("Failed to store the issue")
+        raise HTTPException(status_code=500, detail="Failed to save the report.")
 
     try:
-        result = process_issue(issue, db)
+        result = process_issue(issue, db, image_analysis=analysis)
 
         issue.ai_image_caption = result["ai_image_caption"]
         issue.ai_scene_category = result["ai_scene_category"]
@@ -1581,8 +1567,14 @@ def get_resolution_file(
 @app.post("/add-volunteer")
 def add_volunteer(
     volunteer: Volunteer,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    volunteer_signup_limiter.check(
+        rate_limit.client_ip(request),
+        "Too many registrations from this network. Please try again later.",
+    )
+
     password_error = password_policy_error(volunteer.password)
 
     if password_error:
@@ -1633,7 +1625,15 @@ def add_volunteer(
 
     db.add(new_volunteer)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with an identical registration (unique name / email index).
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="This name or email is already registered",
+        )
 
     # Pre-compute the skills vector so the first dashboard load is fast.
     if new_volunteer.skills:
@@ -1659,7 +1659,8 @@ def add_volunteer(
 
 # ─── NGO Registration ──────────────────────────────────────────────
 @app.post("/add-ngo")
-async def add_ngo(
+def add_ngo(
+    request: Request,
     name: str = Form(...),
     email: str = Form(...),
     contact_number: str = Form(...),
@@ -1713,9 +1714,14 @@ async def add_ngo(
     New NGOs are created with Pending verification status.
     """
 
+    ngo_signup_limiter.check(
+        rate_limit.client_ip(request),
+        "Too many registrations from this network. Please try again later.",
+    )
+
     # ── Clean text fields ──────────────────────────────────────────
     name = name.strip()
-    email = email.strip()
+    email = email.strip().lower()
     contact_number = contact_number.strip()
     category = category.strip()
     location = location.strip()
@@ -1739,6 +1745,14 @@ async def add_ngo(
         raise HTTPException(
             status_code=422,
             detail="Email address is required",
+        )
+
+    try:
+        email = normalise_email(email)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid email address",
         )
 
     if not contact_number:
@@ -1809,58 +1823,6 @@ async def add_ngo(
             detail=f"Email '{email}' is already registered",
         )
 
-    # ── Save optional verification documents ───────────────────────
-    registration_certificate = await save_ngo_file(
-        registration_cert,
-        "Registration Certificate",
-    )
-
-    saved_pan_card = await save_ngo_file(
-        pan_card,
-        "PAN Card",
-    )
-
-    saved_12a = await save_ngo_file(
-        cert_12a,
-        "12A Certificate",
-    )
-
-    saved_80g = await save_ngo_file(
-        cert_80g,
-        "80G Certificate",
-    )
-
-    saved_fcra = await save_ngo_file(
-        cert_fcra,
-        "FCRA Certificate",
-    )
-
-    saved_trust_deed = await save_ngo_file(
-        trust_deed,
-        "Trust Deed",
-    )
-
-    saved_society_registration_certificate = await save_ngo_file(
-        society_registration_certificate,
-        "Society Registration Certificate",
-    )
-
-    saved_society_moa = await save_ngo_file(
-        society_moa,
-        "Society MOA",
-    )
-
-    saved_section8_incorporation_certificate = await save_ngo_file(
-        section8_incorporation_certificate,
-        "Section 8 Incorporation Certificate",
-    )
-
-    saved_section8_moa_aoa = await save_ngo_file(
-        section8_moa_aoa,
-        "Section 8 MOA/AOA",
-    )
-
-    # ── Save optional NGO work images ───────────────────────────────
     if len(work_images) > MAX_IMAGES:
         raise HTTPException(
             status_code=400,
@@ -1869,56 +1831,40 @@ async def add_ngo(
             ),
         )
 
-    saved_work_images: list[str] = []
+    # ── Save optional documents and work images ────────────────────
+    # Every file written is tracked so a failure removes them all.
+    saved = uploads.SavedFiles()
 
-    for image in work_images:
-        if image.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{image.filename}' is not a supported "
-                    f"image type."
-                ),
-            )
-
-        contents = await image.read()
-
-        if len(contents) > MAX_IMAGE_SIZE:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{image.filename}' exceeds the "
-                    f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
-                    f"size limit."
-                ),
-            )
-
-        ext = Path(
-            image.filename or ""
-        ).suffix.lower()
-
-        if ext not in {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".gif",
-            ".webp",
-            ".bmp",
-            ".tiff",
-            ".tif",
-        }:
-            ext = ".jpg"
-
-        safe_name = (
-            f"ngo_work_{uuid.uuid4().hex}{ext}"
+    try:
+        registration_certificate = save_ngo_file(
+            registration_cert, "Registration Certificate", saved,
+        )
+        saved_pan_card = save_ngo_file(pan_card, "PAN Card", saved)
+        saved_12a = save_ngo_file(cert_12a, "12A Certificate", saved)
+        saved_80g = save_ngo_file(cert_80g, "80G Certificate", saved)
+        saved_fcra = save_ngo_file(cert_fcra, "FCRA Certificate", saved)
+        saved_trust_deed = save_ngo_file(trust_deed, "Trust Deed", saved)
+        saved_society_registration_certificate = save_ngo_file(
+            society_registration_certificate,
+            "Society Registration Certificate", saved,
+        )
+        saved_society_moa = save_ngo_file(society_moa, "Society MOA", saved)
+        saved_section8_incorporation_certificate = save_ngo_file(
+            section8_incorporation_certificate,
+            "Section 8 Incorporation Certificate", saved,
+        )
+        saved_section8_moa_aoa = save_ngo_file(
+            section8_moa_aoa, "Section 8 MOA/AOA", saved,
         )
 
-        destination = UPLOAD_DIR / safe_name
-
-        with open(destination, "wb") as file:
-            file.write(contents)
-
-        saved_work_images.append(safe_name)
+        saved_work_images = [
+            uploads.save_image(image, UPLOAD_DIR, "ngo_work_", MAX_IMAGE_SIZE, saved)[0]
+            for image in work_images
+            if image.filename
+        ]
+    except BaseException:
+        saved.cleanup()
+        raise
 
     # ── Create NGO record ──────────────────────────────────────────
     ngo = NGODB(
@@ -1960,7 +1906,21 @@ async def add_ngo(
     )
 
     db.add(ngo)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        saved.cleanup()
+        raise HTTPException(
+            status_code=400,
+            detail="This NGO name or email is already registered",
+        )
+    except BaseException:
+        db.rollback()
+        saved.cleanup()
+        raise
+
     db.refresh(ngo)
 
     total_ngos = db.query(
@@ -2006,6 +1966,11 @@ def organize_event(
             detail=f"No NGO found with email '{email}'",
         )
 
+    date_problem = event_rules.date_problem(event.event_date)
+
+    if date_problem:
+        raise HTTPException(status_code=422, detail=date_problem)
+
     activity = ActivityDB(
         ngo_id=ngo.id,
         title=event.title,
@@ -2031,7 +1996,7 @@ def organize_event(
         except Exception:
             logger.exception("Could not store event skills embedding")
 
-    return activity
+    return event_response(activity)
 
 
 # ─── NGO Events ────────────────────────────────────────────────────
@@ -2120,14 +2085,15 @@ def get_ngo_events(
             .all()
         )
 
-    event_responses = []
-    for ev in events:
-        item = EventResponse.model_validate(ev)
-        item.joined_count = joined_counts.get(ev.id, 0)
-        item.approved_count = approved_counts.get(ev.id, 0)
-        item.feedback_count = feedback_counts.get(ev.id, 0)
-        item.is_completed = is_completed(ev)
-        event_responses.append(item)
+    event_responses = [
+        event_response(
+            ev,
+            joined_count=joined_counts.get(ev.id, 0),
+            approved_count=approved_counts.get(ev.id, 0),
+            feedback_count=feedback_counts.get(ev.id, 0),
+        )
+        for ev in events
+    ]
 
     return NGOEventsResponse(
         ngo_name=ngo.name,
@@ -2215,6 +2181,9 @@ def get_event_volunteers(
         approved_count=sum(1 for v in volunteers if v.approved),
         volunteers=volunteers,
         is_completed=is_completed(event),
+        phase=event_rules.event_phase(event),
+        event_date=event.event_date,
+        event_day=event_rules.event_day_text(event),
     )
 
 
@@ -2237,11 +2206,7 @@ def approve_event_volunteer(
             detail="Only an active event can have volunteers approved",
         )
 
-    if is_past(event):
-        raise HTTPException(
-            status_code=400,
-            detail="This event has already passed",
-        )
+    require_open(event)
 
     signup = db.query(ActivitySignupDB).filter(
         ActivitySignupDB.activity_id == event.id,
@@ -2292,11 +2257,7 @@ def unapprove_event_volunteer(
 ):
     event = get_owned_event(db, event_id, session.email)
 
-    if is_past(event):
-        raise HTTPException(
-            status_code=400,
-            detail="This event has already passed",
-        )
+    require_open(event)
 
     signup = db.query(ActivitySignupDB).filter(
         ActivitySignupDB.activity_id == event.id,
@@ -2540,6 +2501,16 @@ def update_event_status(
             detail="This event has already been completed and can no longer be changed",
         )
 
+    if (
+        status_update.status == "Active"
+        and event.status != "Active"
+        and not event_rules.is_open(event)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="An event cannot be reopened once its date has started",
+        )
+
     if status_update.status == "Filled":
         if event.status != "Active":
             raise HTTPException(
@@ -2568,7 +2539,7 @@ def update_event_status(
     db.commit()
     db.refresh(event)
 
-    return event
+    return event_response(event)
 
 
 # ─── Update Event (partial) ────────────────────────────────────────
@@ -2587,7 +2558,25 @@ def update_event(
             detail="This event has already been completed and can no longer be changed",
         )
 
-    for field, value in event_update.model_dump(exclude_unset=True).items():
+    changes = event_update.model_dump(exclude_unset=True)
+
+    if "event_date" in changes and changes["event_date"] != event.event_date:
+        date_problem = event_rules.date_problem(changes["event_date"])
+        if date_problem:
+            raise HTTPException(status_code=422, detail=date_problem)
+
+    if changes.get("spots_available") is not None:
+        approved = count_approved(db, event.id)
+        if changes["spots_available"] < approved:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{approved} volunteer{'s are' if approved != 1 else ' is'} "
+                    f"already approved, so the event needs at least {approved} spots"
+                ),
+            )
+
+    for field, value in changes.items():
         setattr(event, field, value)
 
     db.commit()
@@ -2604,7 +2593,7 @@ def update_event(
         except Exception:
             logger.exception("Could not store event skills embedding")
 
-    return event
+    return event_response(event)
 
 
 # ─── Data Retrieval ────────────────────────────────────────────────
@@ -2657,10 +2646,11 @@ def get_volunteer_dashboard(
     return volunteer
 
 
-@app.get("/ngos")
+@app.get("/ngos", dependencies=[Depends(require_user)])
 def get_ngos(
     db: Session = Depends(get_db),
 ):
+    """Every NGO with its contact email; logged-in volunteers and NGOs only."""
     ngos = (
         db.query(NGODB)
         .order_by(NGODB.id)
@@ -2872,11 +2862,7 @@ def get_volunteer_matches(
     # NGOs with Approved/Pending status
     ngos = (
         db.query(NGODB)
-        .filter(
-            NGODB.verification_status.in_(
-                ["Approved", "Pending"]
-            )
-        )
+        .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
         .order_by(NGODB.id)
         .all()
     )
@@ -2887,24 +2873,27 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # For each NGO, check for its latest active event;
-    # fall back to NGO motto if no active event exists.
+    # Each NGO's latest open, active event (one query for all NGOs);
+    # fall back to the NGO motto if it has none.
+    open_events = (
+        db.query(ActivityDB)
+        .filter(
+            ActivityDB.ngo_id.in_([n.id for n in ngos]),
+            ActivityDB.status == "Active",
+            (ActivityDB.event_date.is_(None))
+            | (ActivityDB.event_date >= event_rules.first_open_day_start()),
+        )
+        .order_by(ActivityDB.created_at.desc(), ActivityDB.id.desc())
+        .all()
+    )
+    latest_by_ngo: dict[int, ActivityDB] = {}
+    for ev in open_events:
+        latest_by_ngo.setdefault(ev.ngo_id, ev)
+
     candidates = []
 
     for ngo in ngos:
-        latest_event = (
-            db.query(ActivityDB)
-            .filter(
-                ActivityDB.ngo_id == ngo.id,
-                ActivityDB.status == "Active",
-                (ActivityDB.event_date.is_(None))
-                | (ActivityDB.event_date > datetime.utcnow()),
-            )
-            .order_by(
-                ActivityDB.created_at.desc()
-            )
-            .first()
-        )
+        latest_event = latest_by_ngo.get(ngo.id)
 
         if latest_event and latest_event.required_skills and latest_event.required_skills.strip():
             candidates.append(
@@ -2953,24 +2942,23 @@ def get_volunteer_matches(
         candidate_embeddings,
     )[0]
 
+    rating_stats = volunteer_rating_stats(db, [volunteer.id]).get(volunteer.id, (0, None))
+
     matches = []
 
     for idx, c in enumerate(candidates):
         ngo = c["ngo"]
         event = c["event"]
-        score = float(scores[idx])
 
-        boost = compute_category_boost(
-            volunteer.skills or "",
-            ngo.category or "",
+        final_score, explanation = score_match(
+            semantic=float(scores[idx]),
+            volunteer_skills=volunteer.skills,
+            target_text=c["match_text"],
+            ngo_category=ngo.category,
+            volunteer_location=volunteer.location,
+            target_location=ngo.location,
+            rating_stats=rating_stats,
         )
-
-        location_boost = compute_location_boost(
-            volunteer.location or "",
-            ngo.location or "",
-        )
-
-        final_score = max(0.0, min(score + boost + location_boost, 1.0))
 
         matches.append(
             VolunteerMatchEntry(
@@ -2981,7 +2969,8 @@ def get_volunteer_matches(
                 match_percentage=round(
                     final_score * 100, 1
                 ),
-                level=compute_match_level(final_score, boost),
+                level=compute_match_level(final_score, explanation["category_boost"]),
+                explanation=MatchExplanation(**explanation),
             )
         )
 
@@ -3006,9 +2995,9 @@ def get_volunteer_events(
     session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
-    ensure_own_email(session, email)
-
     """Return scored & filtered events for a volunteer, sorted by match."""
+
+    ensure_own_email(session, email)
 
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
@@ -3024,19 +3013,18 @@ def get_volunteer_events(
     if not volunteer.skills:
         return []
 
-    # Active events whose date hasn't passed, from Approved/Pending NGOs.
-    now = datetime.utcnow()
-
+    # Active, not yet completed events from Approved/Pending NGOs (IST).
+    # Events on today's date are kept only for volunteers who joined them.
     events = (
         db.query(ActivityDB, NGODB)
         .join(NGODB, ActivityDB.ngo_id == NGODB.id)
         .filter(
             ActivityDB.status == "Active",
-            NGODB.verification_status.in_(["Approved", "Pending"]),
+            NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES),
         )
         .filter(
             (ActivityDB.event_date.is_(None))
-            | (ActivityDB.event_date > now)
+            | (ActivityDB.event_date >= event_rules.today_start())
         )
         .all()
     )
@@ -3085,25 +3073,31 @@ def get_volunteer_events(
         .all()
     )
 
+    rating_stats = volunteer_rating_stats(db, [volunteer.id]).get(volunteer.id, (0, None))
+
     results: list[VolunteerEventEntry] = []
 
     for idx, (ev, ngo) in enumerate(events):
-        score = float(scores[idx])
+        phase = event_rules.event_phase(ev)
 
-        boost = compute_category_boost(
-            volunteer.skills or "",
-            ngo.category or "",
+        if phase != event_rules.OPEN and ev.id not in my_signups:
+            continue
+
+        final_score, explanation = score_match(
+            semantic=float(scores[idx]),
+            volunteer_skills=volunteer.skills,
+            target_text=ev.required_skills or "",
+            ngo_category=ngo.category,
+            volunteer_location=volunteer.location,
+            target_location=ngo.location,
+            rating_stats=rating_stats,
         )
 
-        location_boost = compute_location_boost(
-            volunteer.location or "",
-            ngo.location or "",
-        )
-
-        final_score = max(0.0, min(score + boost + location_boost, 1.0))
-
-        # An event is shown only when the score is high enough AND the volunteer's skills hit a keyword of the NGO's category.
-        if final_score < MIN_EVENT_MATCH or boost <= 0:
+        # v1: shown only when the score is high enough AND the volunteer's
+        # skills hit a keyword of the NGO's category. v2 drops the keyword rule.
+        if final_score < MIN_EVENT_MATCH:
+            continue
+        if explanation["scoring"] == "v1" and explanation["category_boost"] <= 0:
             continue
 
         # Hide full events from volunteers who have not joined them.
@@ -3127,6 +3121,9 @@ def get_volunteer_events(
                 match_percentage=round(final_score * 100, 1),
                 joined=ev.id in my_signups,
                 approved=my_signups.get(ev.id) is not None,
+                phase=phase,
+                event_day=event_rules.event_day_text(ev),
+                explanation=MatchExplanation(**explanation),
             )
         )
 
@@ -3207,6 +3204,8 @@ def get_volunteer_activity(
                 attendance_status=signup.attendance_status,
                 rating=signup.rating if attended else None,
                 feedback=signup.feedback if attended else None,
+                phase=event_rules.event_phase(ev),
+                event_day=event_rules.event_day_text(ev),
             )
         )
 
@@ -3257,6 +3256,17 @@ def join_activity(
             detail=f"Activity {activity_id} not found",
         )
 
+    # Same NGO rule as the events list: rejected NGOs' events cannot be joined.
+    ngo_status = db.query(NGODB.verification_status).filter(
+        NGODB.id == activity.ngo_id,
+    ).scalar()
+
+    if ngo_status not in MATCHABLE_NGO_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is not available",
+        )
+
     if activity.status == "Filled":
         raise HTTPException(
             status_code=400,
@@ -3269,11 +3279,7 @@ def join_activity(
             detail="This activity is no longer active",
         )
 
-    if activity.event_date and activity.event_date <= datetime.utcnow():
-        raise HTTPException(
-            status_code=400,
-            detail="This event has already passed",
-        )
+    require_open(activity)
 
     # Idempotent: if already joined, return success without duplicating.
     existing = db.query(ActivitySignupDB).filter(
@@ -3337,11 +3343,7 @@ def leave_activity(
             detail=f"Activity {activity_id} not found",
         )
 
-    if activity.event_date and activity.event_date <= datetime.utcnow():
-        raise HTTPException(
-            status_code=400,
-            detail="This event has already passed",
-        )
+    require_open(activity)
 
     signup = db.query(ActivitySignupDB).filter(
         ActivitySignupDB.activity_id == activity_id,
@@ -3371,11 +3373,12 @@ def leave_activity(
     return JoinResponse(joined=False, activity_id=activity_id)
 
 
-# ─── Volunteer ↔ NGO Matching ─────────────────────────────────────
+# ─── Volunteer ↔ NGO Matching (public demo, anonymised) ────────────
 @app.get("/match")
 def match_volunteers(
     category: Optional[str] = Query(
         None,
+        max_length=50,
         description="Filter by NGO category",
     ),
     min_score: Optional[float] = Query(
@@ -3387,15 +3390,26 @@ def match_volunteers(
     top_n: Optional[int] = Query(
         3,
         ge=1,
-        le=10,
+        le=5,
         description="Number of top matches per volunteer",
     ),
     sort_by: Optional[str] = Query(
         "score",
-        description="Sort by: score, name",
+        max_length=20,
+        description="score (best first) or label; 'name' is accepted as 'label'",
+    ),
+    limit: int = Query(
+        settings.MATCH_PUBLIC_ROW_LIMIT,
+        ge=1,
+        le=50,
+        description="Maximum number of volunteer rows returned",
     ),
     db: Session = Depends(get_db),
 ):
+    """Public matching demo. No volunteer names, emails or locations are returned:
+    each row is labelled "Volunteer N" and shows only skills and scores.
+    """
+
     volunteers = (
         db.query(VolunteerDB)
         .filter(VolunteerDB.skills.isnot(None))
@@ -3404,14 +3418,9 @@ def match_volunteers(
         .all()
     )
 
-    # Only approved NGOs participate in matching.
     ngos = (
         db.query(NGODB)
-        .filter(
-            NGODB.verification_status.in_(
-                ["Approved", "Pending"]
-            )
-        )
+        .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
         .order_by(NGODB.id)
         .all()
     )
@@ -3420,9 +3429,13 @@ def match_volunteers(
         return {
             "message": "Add volunteers and NGOs first",
             "matches": [],
+            "total_volunteers": len(volunteers),
+            "total_ngos": len(ngos),
+            "total_matches": 0,
+            "returned": 0,
+            "anonymised": True,
         }
 
-    # Filter NGOs by category.
     filtered_ngos = ngos
 
     if category:
@@ -3436,11 +3449,13 @@ def match_volunteers(
 
         if not filtered_ngos:
             return {
-                "message": (
-                    f"No NGOs found in category "
-                    f"'{category}'"
-                ),
+                "message": "No NGOs found in that category",
                 "matches": [],
+                "total_volunteers": len(volunteers),
+                "total_ngos": 0,
+                "total_matches": 0,
+                "returned": 0,
+                "anonymised": True,
             }
 
     vol_embeddings = get_vectors(
@@ -3459,101 +3474,82 @@ def match_volunteers(
         ],
     )
 
-    similarity_matrix = cosine_similarity(
+    semantic = cosine_similarity(
         vol_embeddings,
         ngo_embeddings,
     )
 
-    # Apply category boost.
-    for i, volunteer in enumerate(volunteers):
-        for j, ngo in enumerate(filtered_ngos):
-            boost = compute_category_boost(
-                volunteer.skills or "",
-                ngo.category or "",
-            )
+    rating_stats = volunteer_rating_stats(db, [v.id for v in volunteers])
 
-            similarity_matrix[i][j] = min(
-                similarity_matrix[i][j] + boost,
-                1.0,
-            )
-
+    # Score every pair. Explanations are built only for the rows returned.
     results = []
 
     for i, volunteer in enumerate(volunteers):
-        scores = similarity_matrix[i]
+        stats = rating_stats.get(volunteer.id, (0, None))
+        scored = []
 
-        top_indices = np.argsort(scores)[::-1][:top_n]
+        for j, ngo in enumerate(filtered_ngos):
+            score, explanation = score_match(
+                semantic=float(semantic[i][j]),
+                volunteer_skills=volunteer.skills,
+                target_text=ngo.motto or "",
+                ngo_category=ngo.category,
+                use_location=False,
+                rating_stats=stats,
+            )
+            scored.append((score, j, explanation))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
 
         volunteer_matches = []
 
-        for idx in top_indices:
-            score = float(scores[idx])
-
-            if (
-                min_score is not None
-                and score < min_score
-            ):
+        for score, j, explanation in scored[:top_n]:
+            if min_score is not None and score < min_score:
                 continue
 
-            matched_ngo = filtered_ngos[idx]
+            matched_ngo = filtered_ngos[j]
 
             volunteer_matches.append(
                 {
                     "ngo": matched_ngo.name,
-                    "ngo_category": (
-                        matched_ngo.category
-                        or "Uncategorized"
-                    ),
-                    "ngo_motto": (
-                        matched_ngo.motto
-                    ),
+                    "ngo_category": matched_ngo.category or "Uncategorized",
+                    "ngo_motto": matched_ngo.motto,
                     "score": round(score, 4),
-                    "percentage": round(
-                        score * 100,
-                        1,
-                    ),
-                    "confidence": classify_confidence(
-                        score
-                    ),
+                    "percentage": round(score * 100, 1),
+                    "confidence": classify_confidence(score),
+                    "explanation": explanation,
                 }
             )
 
         if volunteer_matches:
             results.append(
                 {
-                    "volunteer": volunteer.name,
-                    "volunteer_skills": (
-                        volunteer.skills
-                    ),
-                    "volunteer_location": (
-                        volunteer.location or ""
-                    ),
+                    "volunteer_skills": volunteer.skills,
                     "matches": volunteer_matches,
-                    "best_score": (
-                        volunteer_matches[0]["score"]
-                    ),
-                    "best_match": (
-                        volunteer_matches[0]["ngo"]
-                    ),
+                    "best_score": volunteer_matches[0]["score"],
+                    "best_match": volunteer_matches[0]["ngo"],
                 }
             )
 
     if sort_by == "score":
-        results.sort(
-            key=lambda x: x["best_score"],
-            reverse=True,
-        )
+        results.sort(key=lambda x: x["best_score"], reverse=True)
 
-    elif sort_by == "name":
-        results.sort(
-            key=lambda x: x["volunteer"]
-        )
+    total_matches = len(results)
+    results = results[:limit]
+
+    # Labels follow the order shown, so they reveal nothing about ids.
+    for number, row in enumerate(results, start=1):
+        row["label"] = f"Volunteer {number}"
+        # Kept for older clients that read "volunteer"; never a real name.
+        row["volunteer"] = row["label"]
 
     return {
         "matches": results,
         "total_volunteers": len(volunteers),
         "total_ngos": len(filtered_ngos),
-        "total_matches": len(results),
+        "total_matches": total_matches,
+        "returned": len(results),
+        "anonymised": True,
     }
 
 

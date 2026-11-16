@@ -312,3 +312,54 @@ class AdminActionDB(Base):
     details = Column(Text, nullable=True)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PasswordResetTokenDB(Base):
+    """A one-time password reset link. Only a sha256 hash of the token is stored."""
+
+    __tablename__ = "password_reset_tokens"
+
+    __table_args__ = (
+        Index("ix_password_reset_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class ContactMessageDB(Base):
+    """A message sent through the public contact form."""
+
+    __tablename__ = "contact_messages"
+
+    __table_args__ = (
+        Index("ix_contact_messages_created_at", "created_at"),
+        Index("ix_contact_messages_email", "email"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    name = Column(String(100), nullable=False)
+    email = Column(String(255), nullable=False)  # lowercase
+    subject = Column(String(150), nullable=True)
+    message = Column(Text, nullable=False)
+    role = Column(String(20), nullable=True)  # "volunteer" | "ngo" | "other" | NULL
+
+    # sha256 of (salt + client IP); the raw address is never stored.
+    ip_hash = Column(String(64), nullable=True)
+    # sha256 of (email + message), used to drop exact repeats within 24 hours.
+    content_hash = Column(String(64), nullable=False)
+
+    status = Column(String(20), nullable=False, default="new")  # new | read | replied
+    mail_sent = Column(Integer, nullable=False, default=0)  # 1 once mailed to the inbox
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    handled_at = Column(DateTime, nullable=True)

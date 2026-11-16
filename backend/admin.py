@@ -22,8 +22,8 @@ try:
     )
     from .database import get_db
     from .db_models import (
-        ActivityDB, ActivitySignupDB, AdminActionDB, AdminSessionDB, IssueDB,
-        IssueResolutionDB, MessageDB, NGODB, VolunteerDB,
+        ActivityDB, ActivitySignupDB, AdminActionDB, AdminSessionDB, ContactMessageDB,
+        IssueDB, IssueResolutionDB, MessageDB, NGODB, VolunteerDB,
     )
     from .issue_service import get_issue_by_complaint_id
     from .schemas import (
@@ -39,7 +39,7 @@ try:
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
         AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
         AdminVolunteerListItem, AdminVolunteerProblem, AdminVolunteerProfile,
-        AdminVolunteerStats,
+        AdminVolunteerStats, FeedbackOverrideRequest, FeedbackOverrideResponse,
     )
 except ImportError:
     from admin_auth import (
@@ -54,8 +54,8 @@ except ImportError:
     )
     from database import get_db
     from db_models import (
-        ActivityDB, ActivitySignupDB, AdminActionDB, AdminSessionDB, IssueDB,
-        IssueResolutionDB, MessageDB, NGODB, VolunteerDB,
+        ActivityDB, ActivitySignupDB, AdminActionDB, AdminSessionDB, ContactMessageDB,
+        IssueDB, IssueResolutionDB, MessageDB, NGODB, VolunteerDB,
     )
     from issue_service import get_issue_by_complaint_id
     from schemas import (
@@ -71,7 +71,7 @@ except ImportError:
         AdminResolutionDetail, AdminResolutionIssue, AdminResolutionNGO,
         AdminSignupCounts, AdminVolunteerActivity, AdminVolunteerDetail,
         AdminVolunteerListItem, AdminVolunteerProblem, AdminVolunteerProfile,
-        AdminVolunteerStats,
+        AdminVolunteerStats, FeedbackOverrideRequest, FeedbackOverrideResponse,
     )
 
 
@@ -1291,3 +1291,128 @@ def list_admin_actions(
         ))
 
     return entries
+
+
+# ─── Rating / attendance override ─────────────────────────────────
+@router.post(
+    "/events/{event_id}/volunteers/{volunteer_id}/feedback-override",
+    response_model=FeedbackOverrideResponse,
+    dependencies=[Depends(require_admin)],
+)
+def override_volunteer_feedback(
+    event_id: int,
+    volunteer_id: int,
+    payload: FeedbackOverrideRequest,
+    db: Session = Depends(get_db),
+):
+    """Correct an NGO's attendance/rating for one approved volunteer.
+
+    Works on a completed, not cancelled event, whether or not feedback was
+    given before. The old and new values and the reason go to the audit log
+    in the same commit.
+    """
+
+    event = db.query(ActivityDB).filter(ActivityDB.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Event '{event_id}' not found")
+
+    if event.status == "Cancelled":
+        raise HTTPException(status_code=400, detail="Cancelled events cannot be rated")
+
+    if not _app().is_completed(event):
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback can be given only after the event date has passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(status_code=404, detail="This volunteer has not joined this event")
+
+    if signup.approved_at is None:
+        raise HTTPException(status_code=400, detail="Only approved volunteers can be rated")
+
+    previous = {
+        "attendance_status": signup.attendance_status,
+        "rating": signup.rating,
+        "feedback": signup.feedback,
+    }
+
+    if payload.attendance == "attended":
+        rating = payload.rating
+        if not isinstance(rating, int) or isinstance(rating, bool) or not 1 <= rating <= 5:
+            raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+
+        feedback = (payload.feedback or "").strip()
+        if not feedback:
+            raise HTTPException(status_code=400, detail="Feedback text is required")
+        if len(feedback) > 1000:
+            raise HTTPException(status_code=400, detail="Feedback must be 1000 characters or fewer")
+
+        signup.attendance_status = "attended"
+        signup.attended_at = signup.attended_at or datetime.utcnow()
+        signup.rating = rating
+        signup.feedback = feedback
+    else:
+        signup.attendance_status = "not_attended"
+        signup.attended_at = None
+        signup.rating = None
+        signup.feedback = None
+
+    log_admin_action(db, "override_feedback", "signup", f"{event.id}:{volunteer_id}", {
+        "event_id": event.id,
+        "volunteer_id": volunteer_id,
+        "reason": payload.reason,
+        "previous": previous,
+        "new": {
+            "attendance_status": signup.attendance_status,
+            "rating": signup.rating,
+            "feedback": signup.feedback,
+        },
+    })
+
+    db.commit()
+
+    return FeedbackOverrideResponse(
+        event_id=event.id,
+        volunteer_id=volunteer_id,
+        attendance_status=signup.attendance_status,
+        rating=signup.rating,
+        feedback=signup.feedback,
+        previous=previous,
+    )
+
+
+# ─── Contact messages (read-only) ─────────────────────────────────
+@router.get("/contact-messages", dependencies=[Depends(require_admin)])
+def list_contact_messages(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Messages from the public contact form, newest first."""
+
+    rows = (
+        db.query(ContactMessageDB)
+        .order_by(ContactMessageDB.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "email": r.email,
+            "subject": r.subject,
+            "message": r.message,
+            "role": r.role,
+            "status": r.status,
+            "mail_sent": bool(r.mail_sent),
+            "created_at": _fmt_utc(r.created_at),
+        }
+        for r in rows
+    ]

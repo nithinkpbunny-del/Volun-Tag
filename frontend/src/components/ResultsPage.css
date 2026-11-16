@@ -574,3 +574,17 @@
     margin-top: -2.5rem;
   }
 }
+
+/* Anonymised demo rows: skills and the server's match explanation. */
+.match-skills,
+.match-explanation {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.match-explanation {
+  font-style: italic;
+}

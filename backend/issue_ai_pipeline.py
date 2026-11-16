@@ -22,7 +22,10 @@ Usage (by the caller)::
 from __future__ import annotations
 
 import logging
+import re
 import threading
+from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -32,13 +35,21 @@ from sqlalchemy.orm import Session
 try:
     from .db_models import IssueDB, NGODB
     from .embedding_store import get_vectors
-    from .matching import MODEL_LOCK, encode_texts
-    from .settings import UPLOAD_DIR
+    from .matching import classify_confidence, encode_texts
+    from .matching_config import (
+        CATEGORY_BOOST, ISSUE_CATEGORY_KEYWORDS, ISSUE_TOP_N,
+        MATCHABLE_NGO_STATUSES, MIN_ISSUE_MATCH,
+    )
+    from .settings import AI_IMAGE_MAX_SIDE, UPLOAD_DIR
 except ImportError:
     from db_models import IssueDB, NGODB
     from embedding_store import get_vectors
-    from matching import MODEL_LOCK, encode_texts
-    from settings import UPLOAD_DIR
+    from matching import classify_confidence, encode_texts
+    from matching_config import (
+        CATEGORY_BOOST, ISSUE_CATEGORY_KEYWORDS, ISSUE_TOP_N,
+        MATCHABLE_NGO_STATUSES, MIN_ISSUE_MATCH,
+    )
+    from settings import AI_IMAGE_MAX_SIDE, UPLOAD_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +64,13 @@ _blip_load_lock = threading.Lock()
 _clip_processor = None
 _clip_model = None
 _clip_load_lock = threading.Lock()
+
+# One BLIP/CLIP inference at a time. Separate from matching.MODEL_LOCK
+# (MiniLM), so a slow photo report does not block volunteer matching.
+IMAGE_MODEL_LOCK = threading.Lock()
+
+# CLIP reads at most 77 tokens of text.
+CLIP_MAX_TOKENS = 77
 
 
 def _get_blip():
@@ -97,59 +115,35 @@ def _get_clip():
     return _clip_processor, _clip_model
 
 
-# ─── Category keywords (mirrors main.py, kept local to avoid import) ─
+# ─── Keywords and thresholds come from matching_config.py ──────────
 
-CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "Education": [
-        "teaching", "tutoring", "mentoring", "training", "curriculum",
-        "literacy", "school", "education", "learning", "academic",
-        "student", "instructor",
-    ],
-    "Health": [
-        "medical", "nursing", "health", "wellness", "therapy", "first aid",
-        "mental health", "counseling", "healthcare", "clinical",
-        "nutrition", "fitness",
-    ],
-    "Environment": [
-        "conservation", "recycling", "sustainability", "ecology", "wildlife",
-        "climate", "green", "environmental", "nature", "cleanup",
-        "reforestation", "pollution",
-    ],
-    "Animal Welfare": [
-        "animal", "pet", "shelter", "veterinary", "rescue", "wildlife",
-        "adoption", "foster", "canine", "feline", "habitat", "species",
-    ],
-    "Social Services": [
-        "community", "outreach", "support", "welfare", "advocacy", "housing",
-        "food bank", "poverty", "homeless", "elderly", "youth", "disability",
-    ],
-}
-
+CATEGORY_KEYWORDS = ISSUE_CATEGORY_KEYWORDS
 CATEGORY_LABELS = list(CATEGORY_KEYWORDS.keys())
-
-CATEGORY_BOOST = 0.15
-TOP_N = 3
-MIN_ISSUE_MATCH = 0.45  # every NGO at or above this score is also flagged
+TOP_N = ISSUE_TOP_N
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
 
-def _classify_confidence(score: float) -> str:
-    """Same thresholds as the volunteer-NGO matcher."""
-    if score >= 0.70:
-        return "high"
-    if score >= 0.50:
-        return "medium"
-    return "low"
+_classify_confidence = classify_confidence  # same thresholds as volunteer matching
+
+
+@lru_cache(maxsize=256)
+def _issue_keyword_pattern(keyword: str):
+    # Starts on a word boundary and allows a plural ending, so "pet" matches
+    # "pets" but no longer "carpet", and "school" matches "schools".
+    return re.compile(r"\b" + re.escape(keyword) + r"(?:s|es)?\b")
+
+
+def _issue_keywords(issue_text: str, category: str) -> list[str]:
+    if not category or category not in CATEGORY_KEYWORDS:
+        return []
+    text_lower = (issue_text or "").lower()
+    return [kw for kw in CATEGORY_KEYWORDS[category] if _issue_keyword_pattern(kw).search(text_lower)]
 
 
 def _compute_category_boost(issue_text: str, category: str) -> float:
     """Return a score boost when the issue text contains category keywords."""
-    if not category or category not in CATEGORY_KEYWORDS:
-        return 0.0
-    keywords = CATEGORY_KEYWORDS[category]
-    text_lower = issue_text.lower()
-    matches = sum(1 for kw in keywords if kw in text_lower)
+    matches = len(_issue_keywords(issue_text, category))
     if matches == 0:
         return 0.0
     return min(matches / 3.0, 1.0) * CATEGORY_BOOST
@@ -157,13 +151,39 @@ def _compute_category_boost(issue_text: str, category: str) -> float:
 
 # ─── Image understanding ───────────────────────────────────────────
 
+@dataclass
+class ImageAnalysis:
+    """What BLIP and CLIP saw in a report's photos (computed once per report)."""
+
+    caption: Optional[str] = None
+    category: Optional[str] = None
+    # CLIP cosine similarity of each readable photo with the description.
+    similarities: list = field(default_factory=list)
+    images_read: int = 0
+
+    @property
+    def best_similarity(self) -> Optional[float]:
+        return max(self.similarities) if self.similarities else None
+
+
+def load_ai_image(filepath):
+    """Open a photo as RGB, shrunk to fit AI_IMAGE_MAX_SIDE (keeps memory and time bounded)."""
+    from PIL import Image
+
+    with Image.open(filepath) as img:
+        img.draft("RGB", (AI_IMAGE_MAX_SIDE, AI_IMAGE_MAX_SIDE))  # cheap JPEG downscale
+        rgb = img.convert("RGB")
+    rgb.thumbnail((AI_IMAGE_MAX_SIDE, AI_IMAGE_MAX_SIDE))
+    return rgb
+
+
 def _caption_image(image) -> Optional[str]:
     """Generate a BLIP caption for a PIL Image.  Returns None on failure."""
     try:
         import torch
         processor, model = _get_blip()
         inputs = processor(images=image, return_tensors="pt")
-        with MODEL_LOCK, torch.no_grad():
+        with IMAGE_MODEL_LOCK, torch.no_grad():
             output = model.generate(**inputs, max_new_tokens=50)
         caption = processor.decode(output[0], skip_special_tokens=True).strip()
         return caption if caption else None
@@ -172,67 +192,105 @@ def _caption_image(image) -> Optional[str]:
         return None
 
 
-def _classify_image_category(image) -> Optional[str]:
-    """Use CLIP zero-shot to pick the best VolunTag category for a PIL Image."""
+def description_prompt(description: str) -> str:
+    return f"a photo of {' '.join((description or '').split())}"
+
+
+def _clip_image_scores(image, description: Optional[str]):
+    """One CLIP pass: (best category label, similarity to description or None)."""
     try:
         import torch
         processor, model = _get_clip()
-        text_labels = [f"a photo related to {cat}" for cat in CATEGORY_LABELS]
+        texts = [f"a photo related to {cat}" for cat in CATEGORY_LABELS]
+        with_description = bool(description and description.strip())
+        if with_description:
+            texts.append(description_prompt(description))
+
         inputs = processor(
-            text=text_labels, images=image, return_tensors="pt", padding=True,
+            text=texts, images=image, return_tensors="pt",
+            padding=True, truncation=True, max_length=CLIP_MAX_TOKENS,
         )
-        with MODEL_LOCK, torch.no_grad():
+        with IMAGE_MODEL_LOCK, torch.no_grad():
             outputs = model(**inputs)
-        # logits_per_image shape: (1, num_labels)
-        probs = outputs.logits_per_image.softmax(dim=1)[0]
-        best_idx = int(torch.argmax(probs))
-        return CATEGORY_LABELS[best_idx]
+
+        n_labels = len(CATEGORY_LABELS)
+        # Category: softmax over the label prompts only (unchanged behaviour).
+        label_logits = outputs.logits_per_image[0][:n_labels]
+        best_idx = int(torch.argmax(label_logits.softmax(dim=0)))
+        category = CATEGORY_LABELS[best_idx]
+
+        similarity = None
+        if with_description:
+            img = outputs.image_embeds[0]
+            txt = outputs.text_embeds[-1]
+            similarity = float(
+                torch.nn.functional.cosine_similarity(img, txt, dim=0)
+            )
+        return category, similarity
     except Exception:
-        logger.exception("CLIP classification failed for an image")
-        return None
+        logger.exception("CLIP failed for an image")
+        return None, None
 
 
-def _process_images(image_paths: list[str]) -> tuple[Optional[str], Optional[str]]:
-    """Process uploaded images and return (combined_caption, best_category).
+def _classify_image_category(image) -> Optional[str]:
+    """Use CLIP zero-shot to pick the best VolunTag category for a PIL Image."""
+    category, _ = _clip_image_scores(image, None)
+    return category
 
-    Each image is opened and run through BLIP + CLIP independently.
-    Failures on individual images are skipped gracefully.
+
+def analyse_images(
+    image_paths: list[str],
+    description: Optional[str] = None,
+    base_dir=None,
+    caption: bool = True,
+) -> ImageAnalysis:
+    """Run BLIP (caption) and CLIP (category + description similarity) once per photo.
+
+    Unreadable photos are skipped. The caller decides what a low similarity means.
     """
-    from PIL import Image
+    from collections import Counter
 
+    base_dir = base_dir or UPLOAD_DIR
     captions: list[str] = []
     categories: list[str] = []
+    result = ImageAnalysis()
 
-    for filename in image_paths:
-        filepath = UPLOAD_DIR / filename
+    for filename in image_paths or []:
+        filepath = base_dir / filename
         if not filepath.is_file():
-            logger.warning("Image file not found, skipping: %s", filepath)
+            logger.warning("Image file not found, skipping: %s", filepath.name)
             continue
 
         try:
-            img = Image.open(filepath).convert("RGB")
+            img = load_ai_image(filepath)
         except Exception:
-            logger.exception("Could not open image, skipping: %s", filepath)
+            logger.exception("Could not open image, skipping: %s", filepath.name)
             continue
 
-        caption = _caption_image(img)
-        if caption:
-            captions.append(caption)
+        result.images_read += 1
 
-        category = _classify_image_category(img)
+        if caption:
+            text = _caption_image(img)
+            if text:
+                captions.append(text)
+
+        category, similarity = _clip_image_scores(img, description)
         if category:
             categories.append(category)
+        if similarity is not None:
+            result.similarities.append(similarity)
 
-    combined_caption = "; ".join(captions) if captions else None
-
-    # Pick the most frequently detected category across all images.
-    best_category: Optional[str] = None
+    result.caption = "; ".join(captions) if captions else None
     if categories:
-        from collections import Counter
-        counter = Counter(categories)
-        best_category = counter.most_common(1)[0][0]
+        result.category = Counter(categories).most_common(1)[0][0]
 
-    return combined_caption, best_category
+    return result
+
+
+def _process_images(image_paths: list[str]) -> tuple[Optional[str], Optional[str]]:
+    """Process uploaded images and return (combined_caption, best_category)."""
+    analysis = analyse_images(image_paths)
+    return analysis.caption, analysis.category
 
 
 # ─── Issue text builder ─────────────────────────────────────────────
@@ -275,9 +333,7 @@ def _generate_explanation(
     category_keywords_matched: list[str] = []
     if ngo_category and ngo_category in CATEGORY_KEYWORDS:
         issue_lower = issue_text.lower()
-        category_keywords_matched = [
-            kw for kw in CATEGORY_KEYWORDS[ngo_category] if kw in issue_lower
-        ]
+        category_keywords_matched = _issue_keywords(issue_lower, ngo_category)
 
     # Strength descriptor
     if confidence == "high":
@@ -317,7 +373,11 @@ def _generate_explanation(
 
 # ─── Main pipeline ──────────────────────────────────────────────────
 
-def process_issue(issue: IssueDB, db: Session) -> dict:
+def process_issue(
+    issue: IssueDB,
+    db: Session,
+    image_analysis: Optional[ImageAnalysis] = None,
+) -> dict:
     """Analyse a reported issue and recommend the relevant NGOs.
 
     Parameters
@@ -361,7 +421,10 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
     ai_caption: Optional[str] = None
     ai_category: Optional[str] = None
 
-    if issue.image_paths and isinstance(issue.image_paths, list) and len(issue.image_paths) > 0:
+    if image_analysis is not None:
+        # Already computed by the caller (the report's photo check); reuse it.
+        ai_caption, ai_category = image_analysis.caption, image_analysis.category
+    elif issue.image_paths and isinstance(issue.image_paths, list) and len(issue.image_paths) > 0:
         try:
             ai_caption, ai_category = _process_images(issue.image_paths)
         except Exception:
@@ -377,7 +440,13 @@ def process_issue(issue: IssueDB, db: Session) -> dict:
         return empty_result
 
     # 3. Load NGOs
-    ngos = db.query(NGODB).order_by(NGODB.id).all()
+    # Same NGOs as every other matching screen (rejected NGOs never get reports).
+    ngos = (
+        db.query(NGODB)
+        .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .order_by(NGODB.id)
+        .all()
+    )
     if not ngos:
         return {
             **empty_result,
