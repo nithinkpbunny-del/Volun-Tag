@@ -39,6 +39,13 @@ class VolunteerDB(Base):
     # row being rewritten. New registrations set it explicitly.
     email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
 
+    # Settings (account_settings.py). Display only: matching does not use them.
+    bio = Column(Text, nullable=True)
+    cause_interests = Column(String, nullable=True)  # "Education, Health"
+
+    # Set when the owner deactivates the account (soft, nothing is deleted).
+    deactivated_at = Column(DateTime, nullable=True)
+
 
 class NGODB(Base):
     __tablename__ = "ngos"
@@ -97,6 +104,12 @@ class NGODB(Base):
     # that existed before email verification counts as verified without any
     # row being rewritten. New registrations set it explicitly.
     email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
+
+    # Postal address, edited in Settings (optional).
+    address = Column(Text, nullable=True)
+
+    # Set when the owner deactivates the account (soft, nothing is deleted).
+    deactivated_at = Column(DateTime, nullable=True)
 
 
 class ActivityDB(Base):
@@ -308,6 +321,10 @@ class UserSessionDB(Base):
     expires_at = Column(DateTime, nullable=False)
     last_used_at = Column(DateTime, nullable=True)
 
+    # A short "Chrome on macOS" label made from the User-Agent at login (the
+    # raw header is not stored). NULL for sessions created before Settings.
+    device_label = Column(String(60), nullable=True)
+
 
 class AdminActionDB(Base):
     """Audit log of actions taken in the admin console."""
@@ -398,6 +415,33 @@ class EmailVerificationTokenDB(Base):
     user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
     user_id = Column(Integer, nullable=False)
     email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class EmailChangeTokenDB(Base):
+    """A one-time "confirm your new email address" link (Settings).
+
+    Same design as EmailVerificationTokenDB: only a sha256 hash of the token
+    is stored, it expires, it works once, and a newer request replaces older ones.
+    """
+
+    __tablename__ = "email_change_tokens"
+
+    __table_args__ = (
+        Index("ix_email_change_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    old_email = Column(String, nullable=False)  # lowercase
+    new_email = Column(String, nullable=False)  # lowercase
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)

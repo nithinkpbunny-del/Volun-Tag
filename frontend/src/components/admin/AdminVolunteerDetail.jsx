@@ -10,6 +10,7 @@ import AdminNGODetail, {
 } from "./AdminNGODetail";
 import { StatusPill } from "./AdminProofDetail";
 import { formatIST, getVolunteer, orNotProvided } from "./adminApi";
+import { ReactivateControl } from "./AdminReactivate";
 
 const TABS = [
   { id: "profile", label: "Profile" },
@@ -175,6 +176,19 @@ export default function AdminVolunteerDetail({
           <p className="adm-eyebrow">Volunteer #{data.id}</p>
           <h1 className="adm-page-title" id="adm-volunteer-title">{profile.name}</h1>
           <p className="adm-page-sub">{orNotProvided(profile.email, "No email on file")}</p>
+        </div>
+        <div className="adm-header-actions">
+          <ReactivateControl
+            kind="volunteer"
+            id={data.id}
+            name={profile.name}
+            deactivatedAt={profile.deactivated_at}
+            showToast={showToast}
+            onReactivated={() => {
+              if (onDataChanged) onDataChanged();
+              load();
+            }}
+          />
         </div>
       </header>
 

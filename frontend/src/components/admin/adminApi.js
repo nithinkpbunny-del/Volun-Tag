@@ -137,6 +137,12 @@ export function rejectNGO(id, reason) {
   });
 }
 
+/** Reactivate an account its owner deactivated in Settings. kind: "ngo" | "volunteer". */
+export function reactivateAccount(kind, id) {
+  const base = kind === "ngo" ? "/admin/ngos" : "/admin/volunteers";
+  return adminFetch(`${base}/${encodeURIComponent(id)}/reactivate`, { method: "POST" });
+}
+
 /** Fetch one NGO registration document or work photo; returns { blob, contentType }. */
 export async function getNGODocumentBlob(id, key) {
   const res = await authorizedFetch(

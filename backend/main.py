@@ -60,6 +60,7 @@ try:
     from .contact import router as contact_router
     from .password_reset import router as password_reset_router
     from . import email_verification
+    from . import account_settings
     from .security_headers import SecurityHeadersMiddleware
     from .issue_ai_pipeline import analyse_images
     from .password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
@@ -115,6 +116,7 @@ except ImportError:
     from contact import router as contact_router
     from password_reset import router as password_reset_router
     import email_verification
+    import account_settings
     from security_headers import SecurityHeadersMiddleware
     from issue_ai_pipeline import analyse_images
     from password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
@@ -223,6 +225,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Lets Settings > Download my data read the file name.
+    expose_headers=["Content-Disposition"],
 )
 
 # Added last, so it is the outermost layer and also covers CORS preflights
@@ -233,6 +237,7 @@ app.include_router(admin_router)
 app.include_router(password_reset_router)
 app.include_router(contact_router)
 app.include_router(email_verification.router)
+app.include_router(account_settings.router)
 
 
 # ─── Startup / Seed Data ───────────────────────────────────────────
@@ -2724,9 +2729,10 @@ def get_volunteer_dashboard(
 def get_ngos(
     db: Session = Depends(get_db),
 ):
-    """Every NGO with its contact email; logged-in volunteers and NGOs only."""
+    """Every active NGO with its contact email; logged-in volunteers and NGOs only."""
     ngos = (
         db.query(NGODB)
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -2853,10 +2859,16 @@ def volunteer_login(
     )
 
     # Only after a correct password, so this never shows which emails exist.
+    if account_settings.is_deactivated(volunteer):
+        return account_settings.inactive_login_response()
+
     if not email_verification.is_verified(volunteer):
         return email_verification.not_verified_response()
 
-    token, _ = create_user_session(db, "volunteer", volunteer.id, volunteer.email)
+    token, _ = create_user_session(
+        db, "volunteer", volunteer.id, volunteer.email,
+        user_agent=request.headers.get("user-agent"),
+    )
     db.commit()
 
     result = VolunteerLoginResponse.model_validate(volunteer, from_attributes=True)
@@ -2886,10 +2898,16 @@ def ngo_login(
     check_login_with_limit("ngo", email, ngo, payload.password, rate_limit.client_ip(request))
 
     # Only after a correct password, so this never shows which emails exist.
+    if account_settings.is_deactivated(ngo):
+        return account_settings.inactive_login_response()
+
     if not email_verification.is_verified(ngo):
         return email_verification.not_verified_response()
 
-    token, _ = create_user_session(db, "ngo", ngo.id, ngo.email)
+    token, _ = create_user_session(
+        db, "ngo", ngo.id, ngo.email,
+        user_agent=request.headers.get("user-agent"),
+    )
     db.commit()
 
     result = NGOLoginResponse.model_validate(ngo, from_attributes=True)
@@ -2946,10 +2964,11 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # NGOs with Approved/Pending status
+    # NGOs with Approved/Pending status (deactivated NGOs are left out)
     ngos = (
         db.query(NGODB)
         .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -3108,6 +3127,7 @@ def get_volunteer_events(
         .filter(
             ActivityDB.status == "Active",
             NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES),
+            NGODB.deactivated_at.is_(None),
         )
         .filter(
             (ActivityDB.event_date.is_(None))
@@ -3346,6 +3366,7 @@ def join_activity(
     # Same NGO rule as the events list: rejected NGOs' events cannot be joined.
     ngo_status = db.query(NGODB.verification_status).filter(
         NGODB.id == activity.ngo_id,
+        NGODB.deactivated_at.is_(None),
     ).scalar()
 
     if ngo_status not in MATCHABLE_NGO_STATUSES:
@@ -3501,6 +3522,7 @@ def match_volunteers(
         db.query(VolunteerDB)
         .filter(VolunteerDB.skills.isnot(None))
         .filter(VolunteerDB.skills != "")
+        .filter(VolunteerDB.deactivated_at.is_(None))
         .order_by(VolunteerDB.id)
         .all()
     )
@@ -3508,6 +3530,7 @@ def match_volunteers(
     ngos = (
         db.query(NGODB)
         .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -3645,16 +3668,18 @@ def match_volunteers(
 def get_stats(
     db: Session = Depends(get_db),
 ):
-    """Return platform statistics."""
+    """Return platform statistics (deactivated accounts are not counted)."""
 
     volunteers = (
         db.query(VolunteerDB)
+        .filter(VolunteerDB.deactivated_at.is_(None))
         .order_by(VolunteerDB.id)
         .all()
     )
 
     ngos = (
         db.query(NGODB)
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -3785,6 +3810,16 @@ def _ngo_may_message_volunteer(
     return False
 
 
+def _ensure_recipient_active(role: str, email: str, db: Session) -> None:
+    """Old conversations stay readable, but a deactivated account gets no new messages."""
+    model = VolunteerDB if role == "volunteer" else NGODB
+    if db.query(model.id).filter(
+        func.lower(model.email) == email,
+        model.deactivated_at.isnot(None),
+    ).first():
+        raise HTTPException(status_code=400, detail="This account is no longer active")
+
+
 def _validate_pair(
     sender_email: str,
     recipient_email: str,
@@ -3808,6 +3843,8 @@ def _validate_pair(
 
     sender_role, _ = _resolve_role(s_email, db)
     recipient_role, _ = _resolve_role(r_email, db)
+
+    _ensure_recipient_active(recipient_role, r_email, db)
 
     # Same-role check
     if sender_role == recipient_role:
@@ -3852,6 +3889,7 @@ def send_message(
 
     sender_role, sender_name = _resolve_role(sender_email, db)
     recipient_role, recipient_name = _resolve_role(recipient_email, db)
+    _ensure_recipient_active(recipient_role, recipient_email, db)
 
     # Same-role check
     if sender_role == recipient_role:

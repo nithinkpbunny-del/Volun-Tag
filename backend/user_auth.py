@@ -14,11 +14,13 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 try:
+    from . import settings
     from .admin_auth import _session_from_header as _admin_session_from_header
     from .admin_auth import hash_token
     from .database import get_db
     from .db_models import UserSessionDB
 except ImportError:
+    import settings
     from admin_auth import _session_from_header as _admin_session_from_header
     from admin_auth import hash_token
     from database import get_db
@@ -31,12 +33,46 @@ LOGIN_AGAIN_DETAIL = "Please log in again"
 NOT_YOURS_DETAIL = "You can only access your own data"
 
 
+# ─── Device label ─────────────────────────────────────────────────
+# Checked in order; the first match wins (Edge and Opera also say "Chrome").
+_BROWSERS = (
+    ("Edg/", "Edge"), ("EdgA/", "Edge"), ("OPR/", "Opera"),
+    ("SamsungBrowser/", "Samsung Internet"), ("Firefox/", "Firefox"),
+    ("FxiOS/", "Firefox"), ("CriOS/", "Chrome"), ("Chrome/", "Chrome"),
+    ("Safari/", "Safari"),
+)
+_SYSTEMS = (
+    ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+    ("Windows", "Windows"), ("Mac OS X", "macOS"), ("Macintosh", "macOS"),
+    ("CrOS", "ChromeOS"), ("Linux", "Linux"),
+)
+
+
+def device_label(user_agent: Optional[str]) -> Optional[str]:
+    """A short "Chrome on macOS" label for the sessions list, or None.
+
+    Only this label is stored, never the raw User-Agent header.
+    """
+
+    text = (user_agent or "")[:512]
+    if not text.strip():
+        return None
+
+    browser = next((name for token, name in _BROWSERS if token in text), None)
+    system = next((name for token, name in _SYSTEMS if token in text), None)
+
+    if browser and system:
+        return f"{browser} on {system}"
+    return browser or system or "Unknown device"
+
+
 # ─── Sessions ─────────────────────────────────────────────────────
 def create_user_session(
     db: Session,
     role: str,
     user_id: int,
     email: str,
+    user_agent: Optional[str] = None,
 ) -> tuple[str, UserSessionDB]:
     """Add a session for a volunteer or NGO and return (token, row).
 
@@ -60,6 +96,7 @@ def create_user_session(
         created_at=now,
         expires_at=now + SESSION_LIFETIME,
         last_used_at=now,
+        device_label=device_label(user_agent),
     )
 
     db.add(session)
@@ -95,8 +132,12 @@ def _live_session(authorization: str, db: Session) -> Optional[UserSessionDB]:
     if session is None or session.expires_at <= now:
         return None
 
-    session.last_used_at = now
-    db.commit()
+    # Written at most once per SESSION_TOUCH_SECONDS, so ordinary requests
+    # (dashboards poll every few seconds) do not each take the write lock.
+    last = session.last_used_at
+    if last is None or (now - last).total_seconds() >= settings.SESSION_TOUCH_SECONDS:
+        session.last_used_at = now
+        db.commit()
 
     return session
 

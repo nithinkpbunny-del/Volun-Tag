@@ -565,6 +565,7 @@ def list_admin_ngos(
             category=ngo.category,
             location=ngo.location,
             verification_status=ngo.verification_status,
+            deactivated_at=ngo.deactivated_at,
             **counts[ngo.id],
         )
         for ngo in ngos
@@ -730,6 +731,8 @@ def get_admin_ngo(
             verification_status=ngo.verification_status,
             verification_notes=ngo.verification_notes,
             verified_at=ngo.verified_at,
+            address=ngo.address,
+            deactivated_at=ngo.deactivated_at,
         ),
         documents=documents,
         stats=AdminNGOStats(
@@ -876,6 +879,45 @@ def reject_ngo(
     return _decide_ngo(db, ngo_id, "Rejected", "reject_ngo", "reason", payload.reason)
 
 
+# ─── Reactivation (accounts deactivated in Settings) ──────────────
+def _reactivate(db: Session, model, account_id: int, kind: str) -> dict:
+    """Clear deactivated_at and write the audit row in the same commit."""
+
+    account = db.query(model).filter(model.id == account_id).first()
+
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"{'NGO' if kind == 'ngo' else 'Volunteer'} not found")
+
+    if account.deactivated_at is None:
+        raise HTTPException(status_code=409, detail="This account is already active")
+
+    deactivated_at = account.deactivated_at
+    account.deactivated_at = None
+
+    log_admin_action(db, f"reactivate_{kind}", kind, str(account.id), {
+        "name": account.name,
+        "deactivated_at": deactivated_at,
+    })
+
+    db.commit()
+
+    return {"id": account.id, "name": account.name, "deactivated_at": None}
+
+
+@router.post("/ngos/{ngo_id}/reactivate", dependencies=[Depends(require_admin)])
+def reactivate_ngo(ngo_id: int, db: Session = Depends(get_db)):
+    """Let a deactivated NGO log in again and appear in lists and matching."""
+
+    return _reactivate(db, NGODB, ngo_id, "ngo")
+
+
+@router.post("/volunteers/{volunteer_id}/reactivate", dependencies=[Depends(require_admin)])
+def reactivate_volunteer(volunteer_id: int, db: Session = Depends(get_db)):
+    """Let a deactivated volunteer log in again and appear in matching."""
+
+    return _reactivate(db, VolunteerDB, volunteer_id, "volunteer")
+
+
 # ─── Volunteers ───────────────────────────────────────────────────
 def _signup_status(signup: ActivitySignupDB, completed: bool) -> str:
     """Same rule as GET /admin/events/{id}: approved, else not selected once the event is over."""
@@ -994,6 +1036,7 @@ def list_admin_volunteers(
             signups_approved=counts[volunteer.id]["signups_approved"],
             events_attended=counts[volunteer.id]["events_attended"],
             issues_reported=counts[volunteer.id]["issues_reported"],
+            deactivated_at=volunteer.deactivated_at,
         )
         for volunteer in volunteers
     ]
@@ -1082,6 +1125,9 @@ def get_admin_volunteer(
             location=volunteer.location,
             availability=volunteer.availability,
             experience=volunteer.experience,
+            bio=volunteer.bio,
+            cause_interests=volunteer.cause_interests,
+            deactivated_at=volunteer.deactivated_at,
         ),
         stats=AdminVolunteerStats(
             **counts,

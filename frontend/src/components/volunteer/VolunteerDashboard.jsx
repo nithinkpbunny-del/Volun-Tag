@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
 import PhaseBadge from "../PhaseBadge";
+import AccountSettings from "../settings/AccountSettings";
 import "./VolunteerDashboard.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
@@ -75,7 +76,7 @@ function IssuePhotoThumb({ src, alt, onOpenError }) {
   );
 }
 
-export default function VolunteerDashboard({ email, showToast, onReportProblem }) {
+export default function VolunteerDashboard({ email, showToast, onReportProblem, onAccountDeactivated }) {
   const navigate = useNavigate();
   // navigate changes whenever the address does; keep it out of effect
   // dependencies so the data below is not reloaded by a navigation.
@@ -113,6 +114,8 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
   const [editImages, setEditImages] = useState([]);
   const [savingIssue, setSavingIssue] = useState(false);
   const [deletingIssueId, setDeletingIssueId] = useState(null);
+  // Bumped when Settings saves skills or location, so NGO matches reload.
+  const [matchesVersion, setMatchesVersion] = useState(0);
   // Bumped after a save or delete so an older in-flight refresh cannot overwrite the result.
   const issuesEpochRef = useRef(0);
 
@@ -384,7 +387,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
     return () => {
       cancelled = true;
     };
-  }, [email]);
+  }, [email, matchesVersion]);
 
   const matchMap = new Map(
     matches.map((m) => [m.ngo_name, m])
@@ -1075,9 +1078,19 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
         )}
 
         {activeTab === "settings" && (
-          <EmptyState icon="spark" title="Settings">
-            Account settings are coming soon.
-          </EmptyState>
+          <AccountSettings
+            role="volunteer"
+            email={email}
+            showToast={showToast}
+            onDeactivated={onAccountDeactivated}
+            onProfileSaved={(saved, { matchingChanged } = {}) => {
+              setProfile((prev) => ({ ...prev, ...saved }));
+              if (matchingChanged) {
+                loadEvents();
+                setMatchesVersion((v) => v + 1);
+              }
+            }}
+          />
         )}
 
         {activeTab === "profile" && (

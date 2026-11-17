@@ -4,6 +4,7 @@ import AdminDocumentViewer from "./AdminDocumentViewer";
 import AdminProofDetail, { StatusPill, solutionTypeLabel } from "./AdminProofDetail";
 import { approveNGO, formatIST, getEvent, getNGO, orNotProvided, rejectNGO } from "./adminApi";
 import { safeExternalUrl } from "../../safeUrl";
+import { ReactivateControl } from "./AdminReactivate";
 
 const TABS = [
   { id: "profile", label: "Profile" },
@@ -497,6 +498,17 @@ export default function AdminNGODetail({
           <p className="adm-page-sub">{orNotProvided(profile.email, "No email on file")}</p>
         </div>
         <div className="adm-header-actions">
+          <ReactivateControl
+            kind="ngo"
+            id={data.id}
+            name={profile.name}
+            deactivatedAt={profile.deactivated_at}
+            showToast={showToast}
+            onReactivated={() => {
+              if (onDataChanged) onDataChanged();
+              load();
+            }}
+          />
           <StatusPill status={profile.verification_status} />
           {profile.verification_status !== "Approved" && (
             <button

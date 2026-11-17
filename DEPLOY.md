@@ -39,6 +39,9 @@ Backend (all optional, the defaults match a local laptop setup; see
 | `IP_HASH_SALT` | Secret for hashing contact-form IP addresses. Set a long random value. |
 | `REPORT_MISMATCH_MODE`, `REPORT_MISMATCH_CLIP_MIN` | The photo/description check on reports (see below). Keep `log`. |
 | `MATCH_USE_RATINGS`, `MATCH_RATING_MIN_COUNT`, `MATCH_RATING_MAX_BONUS`, `MATCH_V2`, `MATCH_PUBLIC_ROW_LIMIT` | Matching options (see "Matching"). |
+| `CHANGE_PASSWORD_LIMIT_PER_HOUR`, `EMAIL_CHANGE_LIMIT_PER_HOUR`, `DATA_EXPORT_LIMIT_PER_HOUR`, `DEACTIVATE_LIMIT_PER_HOUR`, `ACCOUNT_ACTION_LIMIT_PER_IP_PER_HOUR` | Limits for the Settings actions that need the password (see "Account settings"). |
+| `EMAIL_CHANGE_HOURS` | How long a "confirm your new email address" link works (default 24). |
+| `SESSION_TOUCH_SECONDS` | A login's "last used" time is written at most once per this many seconds (default 60), so busy dashboards do not write on every request. |
 
 Frontend:
 
@@ -203,7 +206,9 @@ token, so the defence is to keep injected scripts out:
   new raw-HTML sink, `window.open`, location change or unreviewed `href` /
   `src` expression appears;
 - the token expires after 12 hours, ends on logout, and every session of an
-  account ends after a password reset.
+  account ends after a password reset (a password or email change in
+  Settings ends every other session; Settings can also log out every other
+  session on demand).
 
 ## Email verification
 
@@ -232,6 +237,51 @@ token, so the defence is to keep injected scripts out:
   answer tells anyone which emails have accounts. Accounts created while the
   setting was `true` and never confirmed still cannot log in; they can use
   "Send a new link" or reset their password.
+
+## Account settings
+
+Volunteers and NGOs have a Settings tab in their dashboard
+(`?tab=settings`, sections Profile, Security, Email, Your data, Account).
+Every Settings request works on the account behind the login token; there
+is no email or id in the address, so nobody can reach another account.
+
+- **Profile.** Volunteers edit name, phone, age, gender, designation,
+  city, skills, availability, experience, a short bio and the causes they
+  care about, with the same rules as registration. A skills change
+  re-encodes that volunteer's matching vector at once, so their event list
+  and the NGOs' matches change straight away. NGOs edit their mission
+  (motto), category, city, address, phone and website (http/https only).
+  The organisation name, legal structure, year founded and documents are
+  read-only (the admin approved them), and editing never changes the
+  approval status. A category change asks for confirmation, because it
+  changes which volunteers see the NGO's events.
+- **Security.** Change password (current password required, same rules
+  as registration, must differ from the current one). This device stays
+  logged in; every other session ends and a notice is mailed. "Where
+  you're logged in" lists the account's sessions with a short device label
+  ("Chrome on macOS", made from the User-Agent at login; the raw header is
+  not stored) and can log out every other session.
+- **Email.** A link is mailed to the NEW address; the address changes only
+  when it is opened (once, within `EMAIL_CHANGE_HOURS`). The answer is the
+  same whether or not the address is taken; a taken address gets no link.
+  After the change, the old address gets a short notice, every other
+  session ends, and the account's messages and reports move to the new
+  address. Only a hash of each link is stored (`email_change_tokens`).
+- **Your data.** After the password, a JSON file with the account's own
+  profile, sign-ups and ratings received (volunteers), events with
+  sign-up counts (NGOs), reports or submitted solutions, and the messages
+  the user sent. Never passwords, tokens, matching vectors or other
+  people's private details.
+- **Account (deactivate).** Password plus typing `DEACTIVATE`. Soft only:
+  `deactivated_at` is set and nothing is deleted. Login is refused
+  (`403 account_inactive`, only after a correct password), every session
+  ends, no reset link is sent, NGOs cannot start new messages to it, and
+  the account leaves matching, event lists, the NGO list, the public
+  `/match` demo and the `/stats` counts. An NGO with upcoming events (not
+  completed, not cancelled) must cancel them first. In the admin console
+  the volunteer and NGO tables show a "Deactivated" badge, and the detail
+  page has **Reactivate** (written to the audit log as
+  `reactivate_volunteer` / `reactivate_ngo`).
 
 ## Behind a proxy
 
@@ -283,9 +333,13 @@ Rate limits need the real client address. One helper (`client_ip()` in
   to repeat: they add missing columns (including `contact_messages.read_at`
   and `contact_messages.archived_at`, both nullable, and
   `volunteers.email_verified` / `ngos.email_verified`, `NOT NULL DEFAULT 1`
-  so every existing account counts as confirmed; no row is rewritten),
+  so every existing account counts as confirmed; no row is rewritten;
+  and, for Settings, the nullable `volunteers.bio`,
+  `volunteers.cause_interests`, `volunteers.deactivated_at`, `ngos.address`,
+  `ngos.deactivated_at` and `user_sessions.device_label`, so every existing
+  account stays active),
   tables (`password_reset_tokens`, `contact_messages`,
-  `email_verification_tokens`) and indexes, lowercase stored emails and add a unique index on `lower(email)`
+  `email_verification_tokens`, `email_change_tokens`) and indexes, lowercase stored emails and add a unique index on `lower(email)`
   for volunteers and NGOs. If any email would have to change, the database is
   first copied to `voluntag.db.bak-before-email-normalise-<time>` next to it.
   If two accounts would collide once lowercased, that table is skipped and a
@@ -351,6 +405,11 @@ Rate limits need the real client address. One helper (`client_ip()` in
 | `POST /contact` | 3 per hour per IP, 3 per day per email | 429 |
 | `POST /forgot-password` | 3 per hour per account, 10 per hour per IP | same 200, nothing sent |
 | `POST /reset-password(/verify)` | 10 per 10 minutes per IP | 429 |
+| `POST /account/password` | 5 per hour per account | 429 |
+| `POST /account/email` | 3 per hour per account | 429 |
+| `POST /account/export`, `POST /account/deactivate` | 5 per hour per account | 429 |
+| All four above together | 30 per hour per IP | 429 |
+| `POST /confirm-email-change` | 20 per 10 minutes per IP | 429 |
 | Request body | 40 MB | 413 |
 | One photo / one document | 10 MB / 5 MB, real image or PDF/DOC/DOCX content | 413 / 400 |
 

@@ -121,6 +121,9 @@ def forgot_password(
         return {"message": FORGOT_MESSAGE}
 
     account = _find_account(db, payload.role, email)
+    # A deactivated account cannot log in, so it gets no reset link (same answer).
+    if account is not None and getattr(account, "deactivated_at", None) is not None:
+        account = None
 
     now = datetime.utcnow()
     db.query(PasswordResetTokenDB).filter(

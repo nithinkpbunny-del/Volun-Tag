@@ -34,6 +34,24 @@ ACCOUNT_COLUMNS = {
     "email_verified": "INTEGER NOT NULL DEFAULT 1",
 }
 
+# Account settings (account_settings.py). All nullable without a default, so
+# adding them rewrites no row and every existing account stays active
+# (deactivated_at IS NULL).
+SETTINGS_COLUMNS = {
+    "volunteers": {
+        "bio": "TEXT",
+        "cause_interests": "VARCHAR",
+        "deactivated_at": "DATETIME",
+    },
+    "ngos": {
+        "address": "TEXT",
+        "deactivated_at": "DATETIME",
+    },
+    "user_sessions": {
+        "device_label": "VARCHAR(60)",
+    },
+}
+
 # (index name, table, column expression). Created only if missing.
 INDEXES = (
     ("ix_activities_status_event_date", "activities", "status, event_date"),
@@ -105,6 +123,26 @@ def ensure_verification_table(engine) -> None:
         from db_models import EmailVerificationTokenDB
 
     EmailVerificationTokenDB.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_settings_columns(engine) -> dict:
+    """Add the Settings columns (profile extras, deactivation, session label)."""
+
+    return {
+        table: _add_missing_columns(engine, table, columns)
+        for table, columns in SETTINGS_COLUMNS.items()
+    }
+
+
+def ensure_email_change_table(engine) -> None:
+    """Create email_change_tokens if missing (create_all also does this)."""
+
+    try:
+        from .db_models import EmailChangeTokenDB
+    except ImportError:
+        from db_models import EmailChangeTokenDB
+
+    EmailChangeTokenDB.__table__.create(bind=engine, checkfirst=True)
 
 
 def ensure_indexes(engine):
@@ -224,5 +262,7 @@ def run_migrations(engine, db_path: Path) -> dict:
     ensure_contact_columns(engine)
     ensure_verification_columns(engine)
     ensure_verification_table(engine)
+    ensure_settings_columns(engine)
+    ensure_email_change_table(engine)
     ensure_indexes(engine)
     return normalize_emails(engine, db_path)

@@ -6,14 +6,9 @@ import { errorText, loginUser } from "../../api";
 import { PATHS, dashboardFor } from "../../routes";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 import { CheckEmail } from "../EmailVerification";
+import { NGO_CATEGORIES, validateNgoProfile } from "./ngoFields";
 
-const CATEGORIES = [
-  "Education",
-  "Health",
-  "Environment",
-  "Animal Welfare",
-  "Social Services",
-];
+const CATEGORIES = NGO_CATEGORIES;
 
 const LEGAL_STRUCTURES = ["Trust", "Society", "Section 8 Company"];
 
@@ -111,6 +106,13 @@ export default function NGORegisterForm({ showToast, onLogin }) {
   };
 
   const validate = () => {
+    // Category, location, motto and phone rules are shared with Settings (ngoFields.js).
+    const shared = validateNgoProfile({
+      contact_number: form.phone,
+      category: form.category,
+      location: form.location,
+      motto: form.motto,
+    });
     const errs = {};
 
     if (!form.legal_structure) {
@@ -125,8 +127,8 @@ export default function NGORegisterForm({ showToast, onLogin }) {
       errs.email = "Email address is required";
     }
 
-    if (!form.phone.trim()) {
-      errs.phone = "Contact number is required";
+    if (shared.contact_number) {
+      errs.phone = shared.contact_number;
     }
 
     if (!form.password.trim()) {
@@ -135,17 +137,9 @@ export default function NGORegisterForm({ showToast, onLogin }) {
       errs.password = "Password does not meet all the rules below";
     }
 
-    if (!form.category) {
-      errs.category = "Please select a category";
-    }
-
-    if (!form.location.trim()) {
-      errs.location = "Location is required";
-    }
-
-    if (!form.motto.trim()) {
-      errs.motto = "Motto is required";
-    }
+    if (shared.category) errs.category = shared.category;
+    if (shared.location) errs.location = shared.location;
+    if (shared.motto) errs.motto = shared.motto;
 
     setErrors(errs);
 

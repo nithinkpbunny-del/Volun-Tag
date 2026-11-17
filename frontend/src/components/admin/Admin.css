@@ -263,6 +263,45 @@
   color: var(--ink-soft);
 }
 
+/* An account its owner deactivated in Settings. */
+.adm-pill--deactivated {
+  background: var(--adm-red-light);
+  border-color: var(--adm-red-light);
+  color: var(--adm-red-dark);
+}
+
+.adm-name-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.adm-reactivate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.adm-reactivate-confirm {
+  flex-basis: 100%;
+  max-width: 420px;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--mist);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.adm-reactivate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
 /* ─── Login ──────────────────────────────────────────────────────── */
 
 .adm-login-page {

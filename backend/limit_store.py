@@ -93,8 +93,18 @@ class LimitStore:
             conn = sqlite3.connect(
                 str(self.path), timeout=5, isolation_level=None, check_same_thread=False,
             )
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
+            # Switching a new file to WAL needs a brief exclusive lock and
+            # SQLite may answer "locked" at once (without waiting) while
+            # another process does the same, so retry for a short while.
+            for attempt in range(50):
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError:
+                    if attempt == 49:
+                        raise
+                    time.sleep(0.05)
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(SCHEMA)
             self._local.conn = conn

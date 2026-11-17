@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AdminVolunteerDetail from "./AdminVolunteerDetail";
 import { getVolunteers, orNotProvided } from "./adminApi";
+import { DeactivatedPill } from "./AdminReactivate";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -129,6 +130,11 @@ export default function AdminVolunteers({ showToast, onDataChanged }) {
                       {orNotProvided(volunteer.name, "Unnamed volunteer")}
                     </button>
                     <span className="adm-table-sub">{orNotProvided(volunteer.email, "No email")}</span>
+                    {volunteer.deactivated_at && (
+                      <span className="adm-name-pills">
+                        <DeactivatedPill deactivatedAt={volunteer.deactivated_at} />
+                      </span>
+                    )}
                   </td>
                   <td className="adm-cell-wrap">{orNotProvided(volunteer.location, "—")}</td>
                   <td className="adm-num">

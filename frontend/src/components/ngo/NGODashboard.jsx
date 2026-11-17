@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
 import EventCard from "./EventCard";
+import AccountSettings from "../settings/AccountSettings";
 import { Badge, EmptyState, Icon, SkeletonList } from "../ui/ui";
 import "./NGODashboard.css";
 import { API_BASE } from "../../config";
@@ -145,6 +146,7 @@ export default function NGODashboard({
   onMarkSolved,
   initialChat,
   onInitialConsumed,
+  onAccountDeactivated,
 }) {
   const navigate = useNavigate();
   // navigate changes whenever the address does; keep it out of effect
@@ -863,11 +865,16 @@ export default function NGODashboard({
           </>
         )}
 
-        {/* ── Settings placeholder ─────────────────────────────── */}
+        {/* ── Settings ─────────────────────────────────────────── */}
         {activeTab === "settings" && (
-          <EmptyState icon="spark" title="Settings">
-            Account settings are coming soon.
-          </EmptyState>
+          <AccountSettings
+            role="ngo"
+            email={email}
+            showToast={showToast}
+            onDeactivated={onAccountDeactivated}
+            onOpenEvents={() => setActiveTab("events")}
+            onProfileSaved={(saved) => setProfile((prev) => ({ ...prev, ...saved }))}
+          />
         )}
 
         {/* ── Profile tab ─────────────────────────────────────── */}

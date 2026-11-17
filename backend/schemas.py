@@ -1,8 +1,9 @@
 import re
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 try:
     from .event_rules import to_storage
@@ -32,19 +33,27 @@ def _required_text(value):
 
 
 # ─── Pydantic Models ───────────────────────────────────────────────
+# ─── Volunteer profile field rules ────────────────────────────────
+# One definition, used by registration (Volunteer) and by Settings
+# (VolunteerProfileUpdate), so the two can never drift apart.
+VolunteerName = Annotated[str, Field(min_length=1, max_length=100)]
+VolunteerText = Annotated[str, Field(min_length=1)]
+VolunteerAge = Annotated[int, Field(ge=1, le=120)]
+
+
 class Volunteer(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
+    name: VolunteerName
     email: str = Field(..., min_length=1)
-    contact_number: str = Field(..., min_length=1)
+    contact_number: VolunteerText
     password: str = Field(..., min_length=1)
-    age: int = Field(..., ge=1, le=120)
-    designation: str = Field(..., min_length=1)
-    gender: str = Field(..., min_length=1)
+    age: VolunteerAge
+    designation: VolunteerText
+    gender: VolunteerText
 
     # Existing matching fields.
-    skills: str = Field(..., min_length=1)
-    location: str = Field(..., min_length=1)
-    availability: str = Field(..., min_length=1)
+    skills: VolunteerText
+    location: VolunteerText
+    availability: VolunteerText
     experience: Optional[str] = ""
 
     @field_validator("email")
@@ -501,6 +510,7 @@ class AdminNGOListItem(BaseModel):
     events_cancelled: int
     problems_solved: int
     proofs_pending: int
+    deactivated_at: Optional[datetime] = None
 
 
 class AdminNGOProfile(BaseModel):
@@ -516,6 +526,8 @@ class AdminNGOProfile(BaseModel):
     verification_status: str
     verification_notes: Optional[str]
     verified_at: Optional[datetime]
+    address: Optional[str] = None
+    deactivated_at: Optional[datetime] = None
 
 
 class AdminNGODocument(BaseModel):
@@ -633,6 +645,7 @@ class AdminVolunteerListItem(BaseModel):
     signups_approved: int
     events_attended: int
     issues_reported: int
+    deactivated_at: Optional[datetime] = None
 
 
 class AdminVolunteerProfile(BaseModel):
@@ -647,6 +660,9 @@ class AdminVolunteerProfile(BaseModel):
     location: Optional[str]
     availability: Optional[str]
     experience: Optional[str]
+    bio: Optional[str] = None
+    cause_interests: Optional[str] = None
+    deactivated_at: Optional[datetime] = None
 
 
 class AdminVolunteerStats(BaseModel):
@@ -1031,3 +1047,229 @@ class ContactRequest(BaseModel):
         if not 10 <= len(value) <= 2000:
             raise ValueError("message must be 10 to 2000 characters")
         return value
+
+
+# ─── Account settings (account_settings.py) ───────────────────────
+# Causes a volunteer can follow and the categories an NGO can pick: the same
+# five categories as the registration forms and matching_config.CATEGORY_KEYWORDS.
+CAUSE_CATEGORIES = ("Education", "Health", "Environment", "Animal Welfare", "Social Services")
+MAX_CAUSES = 5
+BIO_MAX = 1000
+WEBSITE_MAX = 300
+ADDRESS_MAX = 300
+NGO_TEXT_MAX = 1000
+
+# Fields that registration requires: in an update they may be left out, but
+# not sent as null or blank.
+_VOLUNTEER_REQUIRED = (
+    "name", "contact_number", "age", "designation", "gender",
+    "skills", "location", "availability",
+)
+
+
+def _strip_if_text(value):
+    return value.strip() if isinstance(value, str) else value
+
+
+def _reject_null(model: BaseModel, required) -> None:
+    missing = [name for name in required if name in model.model_fields_set and getattr(model, name) is None]
+    if missing:
+        raise ValueError(f"{', '.join(missing)} cannot be empty")
+
+
+def normalise_skills(value: str) -> str:
+    """"a,  b , ,A" -> "a, b": trimmed, no empty items, no repeats (any case)."""
+    seen = set()
+    items = []
+    for part in (value or "").split(","):
+        item = " ".join(part.split())
+        if item and item.lower() not in seen:
+            seen.add(item.lower())
+            items.append(item)
+    return ", ".join(items)
+
+
+def normalise_website(value: Optional[str]) -> Optional[str]:
+    """An http(s) address with a dotted host, or None for blank. Raises ValueError otherwise.
+
+    A bare domain ("example.org") becomes https://example.org, like
+    safeExternalUrl() in the frontend.
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    if len(text) > WEBSITE_MAX or re.search(r"[\s<>\"\\\\]", text) or text.startswith("/"):
+        raise ValueError("enter a website address such as https://example.org")
+    if not re.match(r"^[a-z][a-z0-9+.-]*:", text, re.IGNORECASE):
+        text = f"https://{text}"
+    try:
+        parts = urlsplit(text)
+        host = parts.hostname or ""
+    except ValueError:
+        raise ValueError("enter a website address such as https://example.org")
+    if parts.scheme.lower() not in ("http", "https") or "." not in host or "@" in parts.netloc:
+        raise ValueError("the website must start with http:// or https://")
+    return text
+
+
+class VolunteerProfileUpdate(BaseModel):
+    """PATCH /volunteer/me. Only these fields can change; anything else is a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[VolunteerName] = None
+    contact_number: Optional[VolunteerText] = None
+    age: Optional[VolunteerAge] = None
+    designation: Optional[VolunteerText] = None
+    gender: Optional[VolunteerText] = None
+    skills: Optional[VolunteerText] = None
+    location: Optional[VolunteerText] = None
+    availability: Optional[VolunteerText] = None
+    experience: Optional[str] = Field(default=None, max_length=100)
+    bio: Optional[str] = Field(default=None, max_length=BIO_MAX)
+    cause_interests: Optional[list[str]] = Field(default=None, max_length=MAX_CAUSES)
+
+    # Trimmed before the length rules run, so "   " fails min_length=1.
+    @field_validator(
+        "name", "contact_number", "designation", "gender", "skills",
+        "location", "availability", "experience", "bio", mode="before",
+    )
+    @classmethod
+    def trim(cls, value):
+        return _strip_if_text(value)
+
+    @field_validator("skills")
+    @classmethod
+    def skills_list(cls, value):
+        if value is None:
+            return value
+        value = normalise_skills(value)
+        if not value:
+            raise ValueError("add at least one skill")
+        return value
+
+    @field_validator("cause_interests")
+    @classmethod
+    def known_causes(cls, value):
+        if value is None:
+            return value
+        cleaned = []
+        for item in value:
+            item = (item or "").strip()
+            if item not in CAUSE_CATEGORIES:
+                raise ValueError(f"choose causes from: {', '.join(CAUSE_CATEGORIES)}")
+            if item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+    @model_validator(mode="after")
+    def required_not_null(self):
+        _reject_null(self, _VOLUNTEER_REQUIRED)
+        return self
+
+
+class VolunteerProfileResponse(BaseModel):
+    name: str
+    email: str
+    contact_number: Optional[str]
+    age: Optional[int]
+    designation: Optional[str]
+    gender: Optional[str]
+    skills: Optional[str]
+    location: Optional[str]
+    availability: Optional[str]
+    experience: Optional[str]
+    bio: Optional[str]
+    cause_interests: list[str]
+
+
+class NGOProfileUpdate(BaseModel):
+    """PATCH /ngo/me. Name, email, documents and approval status are not here (422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    motto: Optional[str] = Field(default=None, min_length=1, max_length=NGO_TEXT_MAX)
+    location: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    address: Optional[str] = Field(default=None, max_length=ADDRESS_MAX)
+    contact_number: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    website_url: Optional[str] = Field(default=None, max_length=WEBSITE_MAX)
+    category: Optional[str] = None
+
+    @field_validator("motto", "location", "address", "contact_number", "website_url", "category", mode="before")
+    @classmethod
+    def trim(cls, value):
+        return _strip_if_text(value)
+
+    @field_validator("website_url")
+    @classmethod
+    def website(cls, value):
+        return normalise_website(value)
+
+    @field_validator("category")
+    @classmethod
+    def known_category(cls, value):
+        if value is not None and value not in CAUSE_CATEGORIES:
+            raise ValueError(f"choose a category from: {', '.join(CAUSE_CATEGORIES)}")
+        return value
+
+    @model_validator(mode="after")
+    def required_not_null(self):
+        _reject_null(self, ("motto", "location", "contact_number", "category"))
+        return self
+
+
+class NGODocumentOnFile(BaseModel):
+    kind: str
+    label: str
+
+
+class NGOProfileResponse(BaseModel):
+    name: str
+    email: Optional[str]
+    contact_number: Optional[str]
+    category: Optional[str]
+    location: Optional[str]
+    address: Optional[str]
+    website_url: Optional[str]
+    motto: Optional[str]
+    legal_structure: Optional[str]
+    year_founded: Optional[int]
+    verification_status: str
+    documents: list[NGODocumentOnFile]
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(default="", max_length=200)
+    new_password: str = Field(default="", max_length=200)
+
+
+class SessionEntry(BaseModel):
+    id: int
+    device: Optional[str]
+    created_at: str
+    last_used_at: Optional[str]
+    expires_at: str
+    current: bool
+
+
+class ChangeEmailRequest(BaseModel):
+    password: str = Field(default="", max_length=200)
+    new_email: str = Field(..., min_length=1, max_length=254)
+
+    @field_validator("new_email")
+    @classmethod
+    def email_is_valid(cls, value: str) -> str:
+        return normalise_email(value)
+
+
+class EmailChangeTokenRequest(BaseModel):
+    token: str = Field(default="", max_length=200)
+
+
+class PasswordConfirmRequest(BaseModel):
+    password: str = Field(default="", max_length=200)
+
+
+class DeactivateRequest(BaseModel):
+    password: str = Field(default="", max_length=200)
+    confirm: str = Field(default="", max_length=50)

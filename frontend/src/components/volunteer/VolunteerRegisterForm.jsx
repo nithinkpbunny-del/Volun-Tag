@@ -6,22 +6,15 @@ import { errorText, loginUser } from "../../api";
 import { PATHS, dashboardFor } from "../../routes";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
 import { CheckEmail } from "../EmailVerification";
-
-const SKILL_SUGGESTIONS = [
-  "Teaching", "Tutoring", "Mentoring", "First Aid", "Web Development",
-  "Graphic Design", "Writing", "Public Speaking", "Photography",
-  "Counseling", "Data Analysis", "Event Planning", "Fundraising",
-  "Social Media", "Translation", "Nursing", "Cooking", "Driving",
-  "Construction", "Legal Aid", "Music", "Sports Coaching",
-];
-
-const GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"];
-
-const AVAILABILITY_OPTIONS = [
-  "Flexible", "Weekdays", "Weekends", "Part-time", "Full-time",
-];
-
-const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
+import {
+  AVAILABILITY_OPTIONS,
+  EXPERIENCE_OPTIONS,
+  GENDER_OPTIONS,
+  SKILL_SUGGESTIONS,
+  hasSkill,
+  toggleSkill as toggleSkillText,
+  validateVolunteerProfile,
+} from "./volunteerFields";
 
 export default function VolunteerRegisterForm({ showToast, onLogin }) {
   const navigate = useNavigate();
@@ -55,29 +48,10 @@ export default function VolunteerRegisterForm({ showToast, onLogin }) {
     }
   };
 
-  const isSkillSelected = (skill) =>
-    form.skills
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .includes(skill.toLowerCase());
+  const isSkillSelected = (skill) => hasSkill(form.skills, skill);
 
   const toggleSkill = (skill) => {
-    setForm((prev) => {
-      const current = prev.skills
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-      const exists = current.some(
-        (s) => s.toLowerCase() === skill.toLowerCase()
-      );
-
-      const updated = exists
-        ? current.filter((s) => s.toLowerCase() !== skill.toLowerCase())
-        : [...current, skill];
-
-      return { ...prev, skills: updated.join(", ") };
-    });
+    setForm((prev) => ({ ...prev, skills: toggleSkillText(prev.skills, skill) }));
 
     if (errors.skills) {
       setErrors((prev) => ({ ...prev, skills: "" }));
@@ -85,53 +59,17 @@ export default function VolunteerRegisterForm({ showToast, onLogin }) {
   };
 
   const validate = () => {
-    const errs = {};
-
-    if (!form.name.trim()) {
-      errs.name = "Name is required";
-    }
+    // Profile rules are shared with Settings (volunteerFields.js).
+    const errs = validateVolunteerProfile(form);
 
     if (!form.email.trim()) {
       errs.email = "Email is required";
-    }
-
-    if (!form.contact_number.trim()) {
-      errs.contact_number = "Contact number is required";
     }
 
     if (!form.password) {
       errs.password = "Password is required";
     } else if (!passwordOk) {
       errs.password = "Password does not meet all the rules below";
-    }
-
-    if (!form.age) {
-      errs.age = "Age is required";
-    } else if (
-      Number(form.age) < 1 ||
-      Number(form.age) > 120
-    ) {
-      errs.age = "Age must be between 1 and 120";
-    }
-
-    if (!form.designation.trim()) {
-      errs.designation = "Designation is required";
-    }
-
-    if (!form.gender.trim()) {
-      errs.gender = "Gender is required";
-    }
-
-    if (!form.skills.trim()) {
-      errs.skills = "Skills are required";
-    }
-
-    if (!form.location.trim()) {
-      errs.location = "Location is required";
-    }
-
-    if (!form.availability.trim()) {
-      errs.availability = "Availability is required";
     }
 
     setErrors(errs);

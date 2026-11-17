@@ -168,6 +168,18 @@ RESEND_LIMIT_PER_IP_PER_HOUR = _env_int("RESEND_LIMIT_PER_IP_PER_HOUR", 10, 1)
 # "Someone tried to register with your address" notices, per address.
 REGISTER_NOTICE_LIMIT_PER_DAY = _env_int("REGISTER_NOTICE_LIMIT_PER_DAY", 3, 1)
 
+# ─── Account settings (account_settings.py) ──────────────────────
+# Attempts that need the current password (change password, change email,
+# download data, deactivate) are limited per account and per client IP.
+CHANGE_PASSWORD_LIMIT_PER_HOUR = _env_int("CHANGE_PASSWORD_LIMIT_PER_HOUR", 5, 1)
+EMAIL_CHANGE_LIMIT_PER_HOUR = _env_int("EMAIL_CHANGE_LIMIT_PER_HOUR", 3, 1)
+EMAIL_CHANGE_HOURS = _env_int("EMAIL_CHANGE_HOURS", 24, 1)
+DATA_EXPORT_LIMIT_PER_HOUR = _env_int("DATA_EXPORT_LIMIT_PER_HOUR", 5, 1)
+DEACTIVATE_LIMIT_PER_HOUR = _env_int("DEACTIVATE_LIMIT_PER_HOUR", 5, 1)
+ACCOUNT_ACTION_LIMIT_PER_IP_PER_HOUR = _env_int("ACCOUNT_ACTION_LIMIT_PER_IP_PER_HOUR", 30, 1)
+# A session's last_used_at is written at most once per this many seconds.
+SESSION_TOUCH_SECONDS = _env_int("SESSION_TOUCH_SECONDS", 60, 0)
+
 # ─── Mail ─────────────────────────────────────────────────────────
 MAIL_ENABLED = _env_bool("MAIL_ENABLED", True)
 SMTP_HOST = _env_text("SMTP_HOST") or "127.0.0.1"

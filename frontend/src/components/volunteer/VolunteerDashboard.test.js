@@ -101,7 +101,7 @@ beforeEach(() => {
 test("the tab comes from ?tab= and clicking a tab updates the address", async () => {
   await renderDashboard("/volunteer/dashboard?tab=settings");
 
-  expect(screen.getByText("Account settings are coming soon.")).toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-current", "page");
 
   fireEvent.click(screen.getByRole("button", { name: "My Activity" }));

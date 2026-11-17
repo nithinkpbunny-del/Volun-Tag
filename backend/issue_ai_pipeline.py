@@ -444,6 +444,7 @@ def process_issue(
     ngos = (
         db.query(NGODB)
         .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )

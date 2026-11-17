@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AdminNGODetail from "./AdminNGODetail";
 import { StatusPill } from "./AdminProofDetail";
 import { getNGOs, orNotProvided } from "./adminApi";
+import { DeactivatedPill } from "./AdminReactivate";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -148,6 +149,11 @@ export default function AdminNGOs({ showToast, onDataChanged }) {
                         {ngo.name}
                       </button>
                       <span className="adm-table-sub">{orNotProvided(ngo.email, "No email")}</span>
+                      {ngo.deactivated_at && (
+                        <span className="adm-name-pills">
+                          <DeactivatedPill deactivatedAt={ngo.deactivated_at} />
+                        </span>
+                      )}
                     </td>
                     <td>{orNotProvided(ngo.category, "—")}</td>
                     <td className="adm-cell-wrap">{orNotProvided(ngo.location, "—")}</td>

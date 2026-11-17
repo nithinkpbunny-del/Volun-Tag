@@ -15,6 +15,7 @@ import Contact from "./components/Contact";
 import ForgotPassword from "./components/ForgotPassword";
 import ResetPassword from "./components/ResetPassword";
 import VerifyEmail from "./components/VerifyEmail";
+import ConfirmEmailChange from "./components/ConfirmEmailChange";
 import { RequireRole } from "./components/RouteGuards";
 import LandingPage from "./components/LandingPage";
 // The old VolunteerForm screen is no longer routed, but its stylesheet holds the
@@ -36,6 +37,7 @@ import NGODashboard from "./components/ngo/NGODashboard";
 import EventVolunteers from "./components/ngo/EventVolunteers";
 import ResolveIssue from "./components/ngo/ResolveIssue";
 import {
+  clearSession,
   getSession,
   logoutUser,
   restoreSession,
@@ -200,6 +202,15 @@ export default function VolunTag() {
     showToast("Logged out", "success");
   };
 
+  // Settings > Account: the server has already ended every session.
+  const handleAccountDeactivated = () => {
+    clearSession();
+    setDashboardEmail("");
+    setDashboardRole("");
+    navigate(PATHS.landing);
+    showToast("Your account has been deactivated", "success");
+  };
+
   const handleReportSuccess = (payload) => {
     navigate(PATHS["report-results"], { state: { result: payload } });
   };
@@ -278,6 +289,7 @@ export default function VolunTag() {
                       email={dashboardEmail}
                       showToast={showToast}
                       onReportProblem={handleReportProblem}
+                      onAccountDeactivated={handleAccountDeactivated}
                     />
                   </RequireRole>
                 }
@@ -290,6 +302,7 @@ export default function VolunTag() {
                     <NGODashboard
                       email={dashboardEmail}
                       showToast={showToast}
+                      onAccountDeactivated={handleAccountDeactivated}
                       onViewVolunteers={(ev) =>
                         navigate(eventVolunteersPath(ev.id), { state: { event: ev } })
                       }
@@ -384,6 +397,11 @@ export default function VolunTag() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
 
               <Route path={PATHS["verify-email"]} element={<VerifyEmail />} />
+
+              <Route
+                path={PATHS["confirm-email-change"]}
+                element={<ConfirmEmailChange onEmailChanged={handleLogin} />}
+              />
 
               <Route
                 path="/reset-password"
