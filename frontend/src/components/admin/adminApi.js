@@ -176,6 +176,51 @@ export function getConversation(a, b) {
   );
 }
 
+// ─── Contact messages ──────────────────────────────────────────────
+/** status: "inbox" (unread + read) | "unread" | "read" | "archived" | "all". */
+export function getContactMessages({ status = "inbox", q = "", page = 1, pageSize = 20 } = {}) {
+  const params = new URLSearchParams({
+    status,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (q) params.set("q", q);
+  return adminFetch(`/admin/contact-messages?${params.toString()}`);
+}
+
+export function getContactMessage(id) {
+  return adminFetch(`/admin/contact-messages/${encodeURIComponent(id)}`);
+}
+
+export function getContactUnreadCount() {
+  return adminFetch("/admin/contact-messages/unread-count");
+}
+
+/** action: "read" | "unread" | "archive" | "unarchive". */
+export function changeContactMessage(id, action) {
+  return adminFetch(
+    `/admin/contact-messages/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
+    { method: "POST" }
+  );
+}
+
+/**
+ * A plain address that is safe to put after "mailto:": letters, digits and
+ * . _ + - only, so it can never carry ?, &, # or extra recipients.
+ */
+const SAFE_EMAIL = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+export function isSafeEmail(value) {
+  return typeof value === "string" && value.length <= 254 && SAFE_EMAIL.test(value);
+}
+
+/** mailto: link for a validated address, or null when the address is not safe. */
+export function replyMailto(email, subject) {
+  if (!isSafeEmail(email)) return null;
+  const topic = (subject || "").trim() || "Your message to VolunTag";
+  return `mailto:${email}?subject=${encodeURIComponent(`Re: ${topic}`)}`;
+}
+
 /** Exchange the password for a token. Not routed through adminFetch: a 401 here is a wrong password. */
 export async function loginRequest(password) {
   let res;

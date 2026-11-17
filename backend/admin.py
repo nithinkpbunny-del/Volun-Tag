@@ -1387,32 +1387,196 @@ def override_volunteer_feedback(
     )
 
 
-# ─── Contact messages (read-only) ─────────────────────────────────
+# ─── Contact messages ─────────────────────────────────────────────
+# A message is "read" once read_at is set; rows whose legacy status is
+# already "read"/"replied" also count as read, so no row is rewritten.
+# Archived messages (archived_at set) leave the inbox but are never deleted.
+CONTACT_STATUSES = ("inbox", "unread", "read", "archived", "all")
+CONTACT_PAGE_SIZE_MAX = 100
+CONTACT_PREVIEW_CHARS = 140
+
+
+def _contact_is_read():
+    return or_(
+        ContactMessageDB.read_at.isnot(None),
+        func.coalesce(ContactMessageDB.status, "new") != "new",
+    )
+
+
+def _contact_unread_count(db: Session) -> int:
+    return (
+        db.query(func.count(ContactMessageDB.id))
+        .filter(ContactMessageDB.archived_at.is_(None), ~_contact_is_read())
+        .scalar()
+        or 0
+    )
+
+
+def _contact_preview(message: str) -> str:
+    text = " ".join((message or "").split())
+    if len(text) <= CONTACT_PREVIEW_CHARS:
+        return text
+    return text[: CONTACT_PREVIEW_CHARS - 1].rstrip() + "…"
+
+
+def _contact_item(row: ContactMessageDB, full: bool) -> dict:
+    """One message as JSON. Text is returned exactly as stored (plain text)."""
+
+    item = {
+        "id": row.id,
+        "name": row.name,
+        "email": row.email,
+        "subject": row.subject,
+        "preview": _contact_preview(row.message),
+        "role": row.role,
+        "is_read": row.read_at is not None or (row.status or "new") != "new",
+        "is_archived": row.archived_at is not None,
+        "read_at": _fmt_utc(row.read_at) if row.read_at else None,
+        "archived_at": _fmt_utc(row.archived_at) if row.archived_at else None,
+        "mail_sent": bool(row.mail_sent),
+        "created_at": _fmt_utc(row.created_at),
+    }
+    if full:
+        item["message"] = row.message
+    return item
+
+
+def _get_contact(db: Session, message_id: int) -> ContactMessageDB:
+    row = db.query(ContactMessageDB).filter(ContactMessageDB.id == message_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Contact message '{message_id}' not found")
+    return row
+
+
 @router.get("/contact-messages", dependencies=[Depends(require_admin)])
 def list_contact_messages(
-    limit: int = Query(default=50, ge=1, le=200),
+    status: str = Query(default="inbox"),
+    q: str = Query(default="", max_length=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=CONTACT_PAGE_SIZE_MAX),
     db: Session = Depends(get_db),
 ):
-    """Messages from the public contact form, newest first."""
+    """Contact-form messages, newest first, with the inbox unread count.
 
+    status: inbox (default: unread + read, not archived) | unread | read |
+    archived | all. q searches name, email, subject and message.
+    """
+
+    status = (status or "inbox").strip().lower() or "inbox"
+    if status not in CONTACT_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of: {', '.join(CONTACT_STATUSES)}",
+        )
+
+    query = db.query(ContactMessageDB)
+
+    if status == "archived":
+        query = query.filter(ContactMessageDB.archived_at.isnot(None))
+    elif status != "all":
+        query = query.filter(ContactMessageDB.archived_at.is_(None))
+        if status == "unread":
+            query = query.filter(~_contact_is_read())
+        elif status == "read":
+            query = query.filter(_contact_is_read())
+
+    term = q.strip().lower()
+    if term:
+        pattern = _like_pattern(term)
+        query = query.filter(or_(
+            *[
+                func.lower(func.coalesce(column, "")).like(pattern, escape="\\")
+                for column in (
+                    ContactMessageDB.name, ContactMessageDB.email,
+                    ContactMessageDB.subject, ContactMessageDB.message,
+                )
+            ]
+        ))
+
+    total = query.count()
     rows = (
-        db.query(ContactMessageDB)
-        .order_by(ContactMessageDB.id.desc())
-        .limit(limit)
+        query.order_by(ContactMessageDB.created_at.desc(), ContactMessageDB.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
 
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "email": r.email,
-            "subject": r.subject,
-            "message": r.message,
-            "role": r.role,
-            "status": r.status,
-            "mail_sent": bool(r.mail_sent),
-            "created_at": _fmt_utc(r.created_at),
-        }
-        for r in rows
-    ]
+    return {
+        "items": [_contact_item(r, full=False) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "unread_count": _contact_unread_count(db),
+    }
+
+
+@router.get("/contact-messages/unread-count", dependencies=[Depends(require_admin)])
+def contact_unread_count(db: Session = Depends(get_db)):
+    """Unread, not archived messages (the console's nav badge)."""
+
+    return {"unread_count": _contact_unread_count(db)}
+
+
+@router.get("/contact-messages/{message_id}", dependencies=[Depends(require_admin)])
+def get_contact_message(message_id: int, db: Session = Depends(get_db)):
+    """One message with its full text. Viewing does not mark it read."""
+
+    return _contact_item(_get_contact(db, message_id), full=True)
+
+
+def _change_contact(db: Session, message_id: int, action: str) -> dict:
+    """Apply one state change; logs it in the audit log only if it changed."""
+
+    row = _get_contact(db, message_id)
+    now = datetime.utcnow()
+    was_read = row.read_at is not None or (row.status or "new") != "new"
+    was_archived = row.archived_at is not None
+    changed = False
+
+    if action == "mark_read" and not was_read:
+        row.read_at = now
+        row.status = "read"
+        changed = True
+    elif action == "mark_unread" and was_read:
+        row.read_at = None
+        row.status = "new"
+        changed = True
+    elif action == "archive" and not was_archived:
+        row.archived_at = now
+        changed = True
+    elif action == "unarchive" and was_archived:
+        row.archived_at = None
+        changed = True
+
+    if changed:
+        log_admin_action(db, f"contact_{action}", "contact_message", row.id, {
+            "from": row.email,
+            "subject": row.subject,
+        })
+        db.commit()
+        db.refresh(row)
+
+    item = _contact_item(row, full=True)
+    item["changed"] = changed
+    item["unread_count"] = _contact_unread_count(db)
+    return item
+
+
+@router.post("/contact-messages/{message_id}/read", dependencies=[Depends(require_admin)])
+def mark_contact_read(message_id: int, db: Session = Depends(get_db)):
+    return _change_contact(db, message_id, "mark_read")
+
+
+@router.post("/contact-messages/{message_id}/unread", dependencies=[Depends(require_admin)])
+def mark_contact_unread(message_id: int, db: Session = Depends(get_db)):
+    return _change_contact(db, message_id, "mark_unread")
+
+
+@router.post("/contact-messages/{message_id}/archive", dependencies=[Depends(require_admin)])
+def archive_contact(message_id: int, db: Session = Depends(get_db)):
+    return _change_contact(db, message_id, "archive")
+
+
+@router.post("/contact-messages/{message_id}/unarchive", dependencies=[Depends(require_admin)])
+def unarchive_contact(message_id: int, db: Session = Depends(get_db)):
+    return _change_contact(db, message_id, "unarchive")

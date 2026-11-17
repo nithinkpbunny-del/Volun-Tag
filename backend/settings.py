@@ -141,6 +141,9 @@ MAIL_FROM = _env_text("MAIL_FROM") or "VolunTag <no-reply@voluntag.local>"
 FRONTEND_BASE_URL = (_env_text("FRONTEND_BASE_URL") or "http://localhost:3000").rstrip("/")
 PASSWORD_RESET_MINUTES = _env_int("PASSWORD_RESET_MINUTES", 30, 1)
 CONTACT_INBOX = _env_text("CONTACT_INBOX") or "contact@voluntag.example"
+# Contact-form messages are always stored and read in the admin console
+# ("Contact messages"). Set this to true to ALSO mail each one to CONTACT_INBOX.
+CONTACT_SEND_EMAIL = _env_bool("CONTACT_SEND_EMAIL", False)
 # Secret mixed into the hash of contact-form IP addresses. Blank = a random
 # value per server start (hashes then cannot be compared across restarts).
 IP_HASH_SALT = _env_text("IP_HASH_SALT")

@@ -359,7 +359,12 @@ class ContactMessageDB(Base):
     # sha256 of (email + message), used to drop exact repeats within 24 hours.
     content_hash = Column(String(64), nullable=False)
 
-    status = Column(String(20), nullable=False, default="new")  # new | read | replied
+    # Legacy status kept in step with read_at: "new" while unread, "read" once
+    # read ("replied" is never set by the app but is treated as read).
+    status = Column(String(20), nullable=False, default="new")
     mail_sent = Column(Integer, nullable=False, default=0)  # 1 once mailed to the inbox
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     handled_at = Column(DateTime, nullable=True)
+    # Admin console state (added by migrations.ensure_contact_columns).
+    read_at = Column(DateTime, nullable=True)
+    archived_at = Column(DateTime, nullable=True)

@@ -21,6 +21,12 @@ SIGNUP_COLUMNS = {
     "attendance_status": "VARCHAR(20)",
 }
 
+# Admin console state for contact-form messages (both nullable, no backfill).
+CONTACT_COLUMNS = {
+    "read_at": "DATETIME",
+    "archived_at": "DATETIME",
+}
+
 # (index name, table, column expression). Created only if missing.
 INDEXES = (
     ("ix_activities_status_event_date", "activities", "status, event_date"),
@@ -33,28 +39,45 @@ INDEXES = (
 EMAIL_TABLES = ("volunteers", "ngos")
 
 
-def ensure_signup_columns(engine):
-    """Add any missing activity_signups columns. Safe to run on every startup."""
+def _add_missing_columns(engine, table: str, columns: dict) -> list[str]:
+    """ALTER TABLE ... ADD COLUMN for each missing column; returns the added names.
+
+    Adding a nullable column without a default leaves every existing row
+    untouched. A table that does not exist yet is skipped (create_all makes it).
+    """
+
+    added = []
 
     with engine.begin() as conn:
         existing = {
             row[1]
-            for row in conn.execute(
-                text("PRAGMA table_info(activity_signups)")
-            )
+            for row in conn.execute(text(f"PRAGMA table_info({table})"))
         }
 
-        for name, col_type in SIGNUP_COLUMNS.items():
+        if not existing:
+            return added
+
+        for name, col_type in columns.items():
             if name in existing:
                 continue
 
-            conn.execute(
-                text(
-                    f"ALTER TABLE activity_signups "
-                    f"ADD COLUMN {name} {col_type}"
-                )
-            )
-            logger.info("Added activity_signups.%s (%s)", name, col_type)
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))
+            logger.info("Added %s.%s (%s)", table, name, col_type)
+            added.append(name)
+
+    return added
+
+
+def ensure_signup_columns(engine):
+    """Add any missing activity_signups columns. Safe to run on every startup."""
+
+    return _add_missing_columns(engine, "activity_signups", SIGNUP_COLUMNS)
+
+
+def ensure_contact_columns(engine):
+    """Add read_at / archived_at to contact_messages if missing (no row rewrite)."""
+
+    return _add_missing_columns(engine, "contact_messages", CONTACT_COLUMNS)
 
 
 def ensure_indexes(engine):
@@ -171,5 +194,6 @@ def run_migrations(engine, db_path: Path) -> dict:
     """Every startup migration, in order."""
 
     ensure_signup_columns(engine)
+    ensure_contact_columns(engine)
     ensure_indexes(engine)
     return normalize_emails(engine, db_path)

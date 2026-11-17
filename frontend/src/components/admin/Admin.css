@@ -1928,3 +1928,243 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ─── Contact messages ───────────────────────────────────────────── */
+
+.adm-cm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.adm-cm-detail-pane {
+  position: sticky;
+  top: 1.5rem;
+  min-width: 0;
+}
+
+.adm-cm-list-pane {
+  min-width: 0;
+}
+
+.adm-cm-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.adm-cm-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.adm-cm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.85rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.adm-cm-row:hover {
+  background: var(--mist);
+}
+
+.adm-cm-row--open,
+.adm-cm-row--open:hover {
+  background: var(--sage-light);
+  box-shadow: inset 3px 0 0 var(--sage);
+}
+
+.adm-cm-dot {
+  flex: 0 0 0.55rem;
+  height: 0.55rem;
+  margin-top: 0.4rem;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.adm-cm-row--unread .adm-cm-dot {
+  background: var(--clay);
+}
+
+.adm-cm-row-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.adm-cm-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.adm-cm-sender {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-cm-row--unread .adm-cm-sender {
+  font-weight: 700;
+}
+
+.adm-cm-date {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.adm-cm-subject {
+  overflow: hidden;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-cm-row--unread .adm-cm-subject {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.adm-cm-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.adm-cm-pager-text {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.adm-cm-placeholder {
+  min-height: 12rem;
+}
+
+.adm-cm-back {
+  display: none;
+}
+
+.adm-cm-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.adm-cm-detail-title {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 400;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.adm-cm-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.adm-cm-email {
+  overflow-wrap: anywhere;
+}
+
+/* Plain text: line breaks kept, long words wrapped, long messages scroll. */
+.adm-cm-body {
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: 0.9rem 1rem;
+  background: var(--mist);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.adm-cm-actions {
+  align-items: center;
+  margin-top: 1.25rem;
+}
+
+.adm-cm-actions .adm-btn {
+  min-height: 44px;
+}
+
+.adm-cm-note {
+  font-size: 0.82rem;
+}
+
+/* One pane at a time once the two columns no longer fit. */
+@media (max-width: 1100px) {
+  .adm-cm-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-cm-detail-pane {
+    position: static;
+    display: none;
+  }
+
+  .adm-cm-layout--detail .adm-cm-detail-pane {
+    display: block;
+  }
+
+  .adm-cm-layout--detail .adm-cm-list-pane {
+    display: none;
+  }
+
+  .adm-cm-back {
+    display: inline-flex;
+  }
+}
+
+/* Phone layout: the top bar keeps its own height on short pages (with
+   min-height: 100vh the spare height was shared with the bar's grid row). */
+@media (max-width: 700px) {
+  .adm-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .adm-cm-actions .adm-btn {
+    flex: 1 1 calc(50% - 0.75rem);
+  }
+}

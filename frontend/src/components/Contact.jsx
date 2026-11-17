@@ -42,7 +42,7 @@ function validate(form) {
   if (name.length < LIMITS.nameMin) errors.name = "Please enter your name (at least 2 characters).";
   else if (name.length > LIMITS.nameMax) errors.name = `Please keep your name under ${LIMITS.nameMax} characters.`;
 
-  if (!email) errors.email = "Please enter your email so we can reply.";
+  if (!email) errors.email = "Please enter your email so we can get back to you.";
   else if (!EMAIL_PATTERN.test(email)) errors.email = "Please enter a valid email address.";
 
   if (form.subject.trim().length > LIMITS.subjectMax) {
@@ -175,7 +175,7 @@ export default function Contact() {
               <div className="form-step fade-in">
                 <div className="auth-message auth-message--success" role="status">
                   <p>Thanks, we received your message.</p>
-                  <p>We will reply to the email address you gave us.</p>
+                  <p>We’ll read it and get back to you.</p>
                 </div>
                 <button
                   type="button"

@@ -36,7 +36,7 @@ test("submitting an empty form shows field errors and sends nothing", () => {
   send();
 
   expect(screen.getByText(/Please enter your name/)).toBeInTheDocument();
-  expect(screen.getByText(/Please enter your email/)).toBeInTheDocument();
+  expect(screen.getByText(/Please enter your email so we can get back to you/)).toBeInTheDocument();
   expect(screen.getByText(/Please write a little more/)).toBeInTheDocument();
   expect(global.fetch).not.toHaveBeenCalled();
 });
@@ -48,6 +48,9 @@ test("a valid message is sent with an empty honeypot and the form is cleared", a
   send();
 
   expect(await screen.findByText("Thanks, we received your message.")).toBeInTheDocument();
+  // Honest wording: no promise of an email reply.
+  expect(screen.getByText(/get back to you/)).toBeInTheDocument();
+  expect(screen.queryByText(/reply/i)).not.toBeInTheDocument();
   const [url, options] = global.fetch.mock.calls[0];
   expect(url).toMatch(/\/contact$/);
   expect(JSON.parse(options.body)).toEqual({

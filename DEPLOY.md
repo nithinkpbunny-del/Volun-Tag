@@ -31,7 +31,8 @@ Backend (all optional, the defaults match a local laptop setup; see
 | `MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` | Outgoing mail (see "Mail"). |
 | `FRONTEND_BASE_URL` | Public https address of the frontend; password reset links point here. |
 | `PASSWORD_RESET_MINUTES` | How long a reset link works (default 30). |
-| `CONTACT_INBOX` | Where contact-form messages go. Placeholder `contact@voluntag.example` until a real inbox exists. |
+| `CONTACT_SEND_EMAIL` | `false` (default): contact-form messages are only stored and read in the admin console (`/admin` → "Contact messages"). `true`: each one is also mailed to `CONTACT_INBOX`. |
+| `CONTACT_INBOX` | Where contact-form messages are mailed when `CONTACT_SEND_EMAIL=true`. Placeholder `contact@voluntag.example` until a real inbox exists. |
 | `IP_HASH_SALT` | Secret for hashing contact-form IP addresses. Set a long random value. |
 | `REPORT_MISMATCH_MODE`, `REPORT_MISMATCH_CLIP_MIN` | The photo/description check on reports (see below). Keep `log`. |
 | `MATCH_USE_RATINGS`, `MATCH_RATING_MIN_COUNT`, `MATCH_RATING_MAX_BONUS`, `MATCH_V2`, `MATCH_PUBLIC_ROW_LIMIT` | Matching options (see "Matching"). |
@@ -133,8 +134,9 @@ Without this, reloading a page or opening a link directly returns a 404.
 ## Database
 
 - Startup migrations run on every start and are safe to repeat: they add
-  missing columns, tables (`password_reset_tokens`, `contact_messages`) and
-  indexes, lowercase stored emails and add a unique index on `lower(email)`
+  missing columns (including `contact_messages.read_at` and
+  `contact_messages.archived_at`, both nullable, so no row is rewritten),
+  tables (`password_reset_tokens`, `contact_messages`) and indexes, lowercase stored emails and add a unique index on `lower(email)`
   for volunteers and NGOs. If any email would have to change, the database is
   first copied to `voluntag.db.bak-before-email-normalise-<time>` next to it.
   If two accounts would collide once lowercased, that table is skipped and a
@@ -156,6 +158,27 @@ Without this, reloading a page or opening a link directly returns a 404.
 - Mail is sent after the HTTP answer. If the mail server is down, the answer
   does not change: password reset still says "If an account exists...", and
   contact messages are kept in `contact_messages` (`mail_sent = 0`).
+
+## Contact messages
+
+- Every valid message from the Contact page is stored in `contact_messages`
+  first (name, email, optional subject and role, message, time, a salted hash
+  of the sender's IP). The honeypot, duplicate check and rate limits apply
+  before that.
+- Read them in the admin console: `/admin` → "Contact messages". The nav item
+  shows the unread count. You can search (name, email, subject, message),
+  filter (Inbox = unread + read, Unread, Read, Archived, All), mark a message
+  read or unread, archive or unarchive it, copy the sender's address, or open
+  a reply in your own mail program. Nothing can be deleted from the console.
+  Every state change is written to the audit log (filter "Contact").
+- Message text is shown as plain text only (never as HTML).
+- Mail is off by default (`CONTACT_SEND_EMAIL=false`), so nothing depends on
+  an SMTP server. With `CONTACT_SEND_EMAIL=true` each message is also mailed
+  to `CONTACT_INBOX` (Reply-To = the visitor) after it is stored; a mail
+  failure never loses the stored message. There is no auto-reply to the
+  visitor.
+- Replies are written by hand from your own mailbox; the site does not send
+  them.
 - Password reset: links work once, for `PASSWORD_RESET_MINUTES`, and a new
   request cancels older links. A successful reset logs the account out
   everywhere. Only a hash of each link is stored.

@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import AdminAuditLog from "./AdminAuditLog";
+import AdminContactMessages from "./AdminContactMessages";
 import AdminNGOs from "./AdminNGOs";
 import AdminOverview from "./AdminOverview";
 import AdminProofs from "./AdminProofs";
 import AdminVolunteers from "./AdminVolunteers";
-import { PENDING_STATUS, adminFetch, useVisibleInterval } from "./adminApi";
+import {
+  PENDING_STATUS,
+  adminFetch,
+  getContactUnreadCount,
+  useVisibleInterval,
+} from "./adminApi";
 
 // The first item is the landing page.
-// `badge` names a key of the badges object built below.
+// `badge` names a key of the badges object built below; `badgeWord` is
+// read out by screen readers ("3 pending").
 const NAV_ITEMS = [
   {
     id: "overview",
@@ -20,6 +27,7 @@ const NAV_ITEMS = [
     label: "Proof reviews",
     icon: "✓",
     badge: "pendingProofs",
+    badgeWord: "pending",
     component: AdminProofs,
   },
   {
@@ -35,6 +43,14 @@ const NAV_ITEMS = [
     component: AdminVolunteers,
   },
   {
+    id: "contact",
+    label: "Contact messages",
+    icon: "✉",
+    badge: "unreadContact",
+    badgeWord: "unread",
+    component: AdminContactMessages,
+  },
+  {
     id: "audit",
     label: "Audit log",
     icon: "≡",
@@ -45,17 +61,22 @@ const NAV_ITEMS = [
 export default function AdminLayout({ showToast, onLogout }) {
   const [activeId, setActiveId] = useState(NAV_ITEMS[0].id);
   const [pendingProofs, setPendingProofs] = useState(null);
+  const [unreadContact, setUnreadContact] = useState(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
   const refreshBadges = useCallback(async () => {
-    try {
-      const pending = await adminFetch(
-        `/admin/resolutions?status=${encodeURIComponent(PENDING_STATUS)}`
-      );
-      setPendingProofs(Array.isArray(pending) ? pending.length : 0);
-    } catch {
-      // Badges refresh silently; the next tick tries again.
-    }
+    // Each badge refreshes on its own and silently; the next tick tries again.
+    const proofs = adminFetch(
+      `/admin/resolutions?status=${encodeURIComponent(PENDING_STATUS)}`
+    )
+      .then((pending) => setPendingProofs(Array.isArray(pending) ? pending.length : 0))
+      .catch(() => {});
+
+    const contact = getContactUnreadCount()
+      .then((data) => setUnreadContact(Number(data && data.unread_count) || 0))
+      .catch(() => {});
+
+    await Promise.all([proofs, contact]);
   }, []);
 
   useEffect(() => {
@@ -69,7 +90,7 @@ export default function AdminLayout({ showToast, onLogout }) {
     await onLogout();
   };
 
-  const badges = { pendingProofs };
+  const badges = { pendingProofs, unreadContact };
   const active = NAV_ITEMS.find((item) => item.id === activeId) || NAV_ITEMS[0];
   const ActivePage = active.component;
 
@@ -99,7 +120,7 @@ export default function AdminLayout({ showToast, onLogout }) {
                 <span className="adm-nav-icon" aria-hidden="true">{item.icon}</span>
                 <span className="adm-nav-label">{item.label}</span>
                 {count > 0 && (
-                  <span className="adm-nav-badge" aria-label={`${count} pending`}>
+                  <span className="adm-nav-badge" aria-label={`${count} ${item.badgeWord}`}>
                     {count > 99 ? "99+" : count}
                   </span>
                 )}

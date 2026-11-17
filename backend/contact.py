@@ -1,12 +1,15 @@
 """Public contact form (design: analysis file 03).
 
-POST /contact stores the message in contact_messages and mails it to
-CONTACT_INBOX (Reply-To = the visitor). The answer is always
-201 {"message": "received"} once the input is valid:
+POST /contact ALWAYS stores the message in contact_messages first; admins
+read it in the admin console ("Contact messages"). Only when
+CONTACT_SEND_EMAIL is true (default false) is it also mailed to
+CONTACT_INBOX (Reply-To = the visitor), after the row is committed and in a
+background task, so mail can never lose or fail the stored message. The
+answer is always 201 {"message": "received"} once the input is valid:
 
 * a filled honeypot field ("website") is accepted and dropped silently;
 * an identical message from the same email within 24 hours is dropped;
-* if mail is down the row is still kept (mail_sent = 0), nothing is lost.
+* if mail is off or down the row is kept (mail_sent = 0), nothing is lost.
 
 Limits: CONTACT_LIMIT_PER_HOUR_PER_IP (3) and CONTACT_LIMIT_PER_DAY_PER_EMAIL
 (3) -> 429. There is no auto-reply: replying to any typed-in address would
@@ -132,6 +135,13 @@ def submit_contact(
     db.add(row)
     db.commit()
 
-    background.add_task(_send_to_inbox, row.id)
+    # Mail is an optional copy. It runs after the commit, in the background,
+    # and _send_to_inbox never raises, so the visitor's answer and the stored
+    # row do not depend on it.
+    if settings.CONTACT_SEND_EMAIL:
+        try:
+            background.add_task(_send_to_inbox, row.id)
+        except Exception:
+            logger.exception("Could not queue mail for contact message %s", row.id)
 
     return RECEIVED

@@ -12,6 +12,7 @@ const TARGET_FILTERS = [
   { value: "resolution", label: "Proofs" },
   { value: "ngo", label: "NGOs" },
   { value: "issue", label: "Issues" },
+  { value: "contact_message", label: "Contact" },
   { value: "session", label: "Logins" },
 ];
 
@@ -28,6 +29,11 @@ const ACTION_LABELS = {
   login: "Admin login",
   login_failed: "Failed admin login",
   logout: "Admin logout",
+  override_feedback: "Corrected rating",
+  contact_mark_read: "Marked message read",
+  contact_mark_unread: "Marked message unread",
+  contact_archive: "Archived message",
+  contact_unarchive: "Unarchived message",
 };
 
 /** Compact plain text for any JSON value; nested values are flattened, never rendered as HTML. */
