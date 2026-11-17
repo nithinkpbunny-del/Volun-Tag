@@ -1,0 +1,335 @@
+import { useEffect, useRef } from "react";
+import { API_BASE } from "../../config";
+
+export { API_BASE };
+
+const TOKEN_KEY = "voluntag_admin_token";
+
+export const REFRESH_MS = 10000;
+
+// ─── Token storage (sessionStorage can throw in private modes) ─────
+// The in-memory copy keeps the console working when storage is blocked;
+// the session then only lasts until the page is reloaded.
+let memoryToken = "";
+
+export function getToken() {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || memoryToken;
+  } catch {
+    return memoryToken;
+  }
+}
+
+export function setToken(token) {
+  memoryToken = token;
+  try {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // memoryToken still holds it.
+  }
+}
+
+export function clearToken() {
+  memoryToken = "";
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Nothing stored, nothing to clear.
+  }
+}
+
+// ─── Session-ended callback ────────────────────────────────────────
+let onUnauthorized = null;
+
+export function setOnUnauthorized(callback) {
+  onUnauthorized = callback;
+}
+
+function handleUnauthorized() {
+  clearToken();
+  if (onUnauthorized) onUnauthorized();
+}
+
+export class AdminApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function errorFrom(res) {
+  let detail = "";
+  try {
+    const data = await res.json();
+    detail = typeof data.detail === "string" ? data.detail : "";
+  } catch {
+    detail = "";
+  }
+  return new AdminApiError(detail || `Request failed (${res.status})`, res.status);
+}
+
+async function authorizedFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch {
+    throw new AdminApiError("Unable to connect to the VolunTag server", 0);
+  }
+
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new AdminApiError("Your admin session has ended", 401);
+  }
+
+  if (!res.ok) throw await errorFrom(res);
+
+  return res;
+}
+
+/** Call an admin JSON endpoint with the bearer token; returns parsed JSON. */
+export async function adminFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const res = await authorizedFetch(path, { ...options, headers });
+  return res.json();
+}
+
+/** Fetch a protected file and return a blob object URL. Callers must revoke it. */
+export async function fetchFileUrl(path) {
+  const res = await authorizedFetch(path);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+// ─── Read-only platform views ──────────────────────────────────────
+export function getOverview() {
+  return adminFetch("/admin/overview");
+}
+
+export function getNGOs(search = "", status = "") {
+  return adminFetch(
+    `/admin/ngos?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`
+  );
+}
+
+export function getNGO(id) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}`);
+}
+
+export function approveNGO(id, notes) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ notes: notes || null }),
+  });
+}
+
+export function rejectNGO(id, reason) {
+  return adminFetch(`/admin/ngos/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** Reactivate an account its owner deactivated in Settings. kind: "ngo" | "volunteer". */
+export function reactivateAccount(kind, id) {
+  const base = kind === "ngo" ? "/admin/ngos" : "/admin/volunteers";
+  return adminFetch(`${base}/${encodeURIComponent(id)}/reactivate`, { method: "POST" });
+}
+
+/** Fetch one NGO registration document or work photo; returns { blob, contentType }. */
+export async function getNGODocumentBlob(id, key) {
+  const res = await authorizedFetch(
+    `/admin/ngos/${encodeURIComponent(id)}/documents/${encodeURIComponent(key)}`
+  );
+  const blob = await res.blob();
+  return { blob, contentType: res.headers.get("Content-Type") || blob.type || "" };
+}
+
+export function getEvent(id) {
+  return adminFetch(`/admin/events/${encodeURIComponent(id)}`);
+}
+
+export function getVolunteers(search = "") {
+  return adminFetch(`/admin/volunteers?search=${encodeURIComponent(search)}`);
+}
+
+export function getVolunteer(id) {
+  return adminFetch(`/admin/volunteers/${encodeURIComponent(id)}`);
+}
+
+/** Audit log, newest first. Empty filters are left out of the query. */
+export function getAuditActions(limit = 50, targetType = "", targetId = "") {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", String(limit));
+  if (targetType) params.set("target_type", targetType);
+  if (targetId) params.set("target_id", targetId);
+
+  const query = params.toString();
+  return adminFetch(`/admin/actions${query ? `?${query}` : ""}`);
+}
+
+/** Every call writes an audit row on the server, so call it once per deliberate view. */
+export function getConversation(a, b) {
+  return adminFetch(
+    `/admin/conversation?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`
+  );
+}
+
+// ─── Contact messages ──────────────────────────────────────────────
+/** status: "inbox" (unread + read) | "unread" | "read" | "archived" | "all". */
+export function getContactMessages({ status = "inbox", q = "", page = 1, pageSize = 20 } = {}) {
+  const params = new URLSearchParams({
+    status,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (q) params.set("q", q);
+  return adminFetch(`/admin/contact-messages?${params.toString()}`);
+}
+
+export function getContactMessage(id) {
+  return adminFetch(`/admin/contact-messages/${encodeURIComponent(id)}`);
+}
+
+export function getContactUnreadCount() {
+  return adminFetch("/admin/contact-messages/unread-count");
+}
+
+/** action: "read" | "unread" | "archive" | "unarchive". */
+export function changeContactMessage(id, action) {
+  return adminFetch(
+    `/admin/contact-messages/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
+    { method: "POST" }
+  );
+}
+
+/**
+ * A plain address that is safe to put after "mailto:": letters, digits and
+ * . _ + - only, so it can never carry ?, &, # or extra recipients.
+ */
+const SAFE_EMAIL = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+export function isSafeEmail(value) {
+  return typeof value === "string" && value.length <= 254 && SAFE_EMAIL.test(value);
+}
+
+/** mailto: link for a validated address, or null when the address is not safe. */
+export function replyMailto(email, subject) {
+  if (!isSafeEmail(email)) return null;
+  const topic = (subject || "").trim() || "Your message to VolunTag";
+  return `mailto:${email}?subject=${encodeURIComponent(`Re: ${topic}`)}`;
+}
+
+/** Exchange the password for a token. Not routed through adminFetch: a 401 here is a wrong password. */
+export async function loginRequest(password) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/admin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+  } catch {
+    throw new AdminApiError("Unable to connect to the VolunTag server", 0);
+  }
+
+  if (!res.ok) throw await errorFrom(res);
+
+  return res.json();
+}
+
+// ─── Dates ─────────────────────────────────────────────────────────
+const IST_DATE = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+const IST_DATE_TIME = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+/**
+ * Format a backend datetime in IST. The backend sends naive UTC strings
+ * (no "Z"), so a "Z" is appended when no timezone is present.
+ */
+export function formatIST(value, { time = true } = {}) {
+  if (!value) return "—";
+
+  const text = String(value);
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const date = new Date(hasZone ? text : `${text}Z`);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return time ? `${IST_DATE_TIME.format(date)} IST` : IST_DATE.format(date);
+}
+
+// ─── Silent polling ────────────────────────────────────────────────
+/**
+ * Run callback every intervalMs (default REFRESH_MS) while the tab is visible,
+ * and once when the tab becomes visible again. Pass enabled=false to pause.
+ */
+export function useVisibleInterval(callback, enabled = true, intervalMs = REFRESH_MS) {
+  const saved = useRef(callback);
+
+  useEffect(() => {
+    saved.current = callback;
+  }, [callback]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const tick = () => {
+      if (document.visibilityState === "visible") saved.current();
+    };
+
+    const id = setInterval(tick, intervalMs);
+    document.addEventListener("visibilitychange", tick);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [enabled, intervalMs]);
+}
+
+/** Text for a nullable value: "Not provided" (or the given fallback) when empty. */
+export function orNotProvided(value, fallback = "Not provided") {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text ? text : fallback;
+}
+
+// ─── Status helpers ────────────────────────────────────────────────
+export const PENDING_STATUS = "Under evaluation";
+
+/** Pill colour for proof, issue and NGO verification statuses. */
+export function statusModifier(status) {
+  switch (status) {
+    case "Under evaluation":
+    case "Pending":
+      return "pending";
+    case "Approved":
+    case "Resolved":
+      return "approved";
+    case "Rejected":
+      return "rejected";
+    default:
+      return "closed";
+  }
+}

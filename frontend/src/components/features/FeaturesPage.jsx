@@ -1,6 +1,10 @@
+import { useNavigate } from "react-router-dom";
+import { PATHS } from "../../routes";
 import "./FeaturesPage.css";
  
-export default function FeaturesPage({ setPage }) {
+export default function FeaturesPage() {
+  const navigate = useNavigate();
+
   return (
     <div className="page features-page">
       <div className="features-page-container">
@@ -17,11 +21,11 @@ export default function FeaturesPage({ setPage }) {
             className="features-card features-card--matching"
             role="button"
             tabIndex={0}
-            onClick={() => setPage("results")}
+            onClick={() => navigate(PATHS.results)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setPage("results");
+                navigate(PATHS.results);
               }
             }}
             id="features-matching"
@@ -52,11 +56,11 @@ export default function FeaturesPage({ setPage }) {
             className="features-card features-card--report"
             role="button"
             tabIndex={0}
-            onClick={() => setPage("report")}
+            onClick={() => navigate(PATHS.report)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setPage("report");
+                navigate(PATHS.report);
               }
             }}
             id="features-report"

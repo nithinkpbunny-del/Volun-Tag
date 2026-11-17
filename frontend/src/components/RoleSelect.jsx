@@ -1,11 +1,20 @@
+import { useNavigate } from "react-router-dom";
+import { PATHS } from "../routes";
 import "./RoleSelect.css";
 
-export default function RoleSelect({ setPage, embedded = false }) {
+export default function RoleSelect({ embedded = false }) {
+  const navigate = useNavigate();
+
   return (
     <div className={embedded ? "role-select-page role-select-embedded" : "page role-select-page"}>
       <div className="role-select-container">
         <div className="role-select-header">
-          <h1 className="role-select-title">Join VolunTag</h1>
+          {/* On the landing page this sits under the page's own h1. */}
+          {embedded ? (
+            <h2 className="role-select-title">Join VolunTag</h2>
+          ) : (
+            <h1 className="role-select-title">Join VolunTag</h1>
+          )}
           <p className="role-select-subtitle">
             A platform that connects volunteers with NGOs through
             AI-powered skill matching.
@@ -18,11 +27,11 @@ export default function RoleSelect({ setPage, embedded = false }) {
             className="role-card role-card--ngo"
             role="button"
             tabIndex={0}
-            onClick={() => setPage("ngo-register")}
+            onClick={() => navigate(PATHS["ngo-register"])}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setPage("ngo-register");
+                navigate(PATHS["ngo-register"]);
               }
             }}
             id="role-ngo"
@@ -57,11 +66,11 @@ export default function RoleSelect({ setPage, embedded = false }) {
             className="role-card role-card--volunteer"
             role="button"
             tabIndex={0}
-            onClick={() => setPage("volunteer-register")}
+            onClick={() => navigate(PATHS["volunteer-register"])}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setPage("volunteer-register");
+                navigate(PATHS["volunteer-register"]);
               }
             }}
             id="role-volunteer"

@@ -274,7 +274,7 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -293,7 +293,7 @@
 }
 
 .confidence-badge {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   padding: 0.25rem 0.65rem;
   border-radius: 100px;
@@ -316,7 +316,7 @@
 }
 
 .match-category-tag {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -436,7 +436,7 @@
 }
 
 .alt-match-cat {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--ink-soft);
 }
 
@@ -573,4 +573,18 @@
     align-self: flex-end;
     margin-top: -2.5rem;
   }
+}
+
+/* Anonymised demo rows: skills and the server's match explanation. */
+.match-skills,
+.match-explanation {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.match-explanation {
+  font-style: italic;
 }

@@ -1,13 +1,14 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./NGORegisterForm.css";
+import { API_BASE } from "../../config";
+import { errorText, loginUser } from "../../api";
+import { PATHS, dashboardFor } from "../../routes";
+import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
+import { CheckEmail } from "../EmailVerification";
+import { NGO_CATEGORIES, validateNgoProfile } from "./ngoFields";
 
-const CATEGORIES = [
-  "Education",
-  "Health",
-  "Environment",
-  "Animal Welfare",
-  "Social Services",
-];
+const CATEGORIES = NGO_CATEGORIES;
 
 const LEGAL_STRUCTURES = ["Trust", "Society", "Section 8 Company"];
 
@@ -33,9 +34,8 @@ const DOC_FIELDS = [
   { key: "cert_fcra", label: "FCRA Certificate", required: false },
 ];
 
-const API_BASE = "http://127.0.0.1:8000";
-
-export default function NGORegisterForm({ showToast, setPage, setDashboardEmail }) {
+export default function NGORegisterForm({ showToast, onLogin }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     legal_structure: "",
     name: "",
@@ -54,6 +54,10 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // The address the confirmation mail went to (shows "Check your email").
+  const [checkEmail, setCheckEmail] = useState("");
+
+  const passwordOk = meetsPasswordPolicy(form.password);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -102,6 +106,13 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
   };
 
   const validate = () => {
+    // Category, location, motto and phone rules are shared with Settings (ngoFields.js).
+    const shared = validateNgoProfile({
+      contact_number: form.phone,
+      category: form.category,
+      location: form.location,
+      motto: form.motto,
+    });
     const errs = {};
 
     if (!form.legal_structure) {
@@ -116,25 +127,19 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
       errs.email = "Email address is required";
     }
 
-    if (!form.phone.trim()) {
-      errs.phone = "Contact number is required";
+    if (shared.contact_number) {
+      errs.phone = shared.contact_number;
     }
 
     if (!form.password.trim()) {
       errs.password = "Password is required";
+    } else if (!passwordOk) {
+      errs.password = "Password does not meet all the rules below";
     }
 
-    if (!form.category) {
-      errs.category = "Please select a category";
-    }
-
-    if (!form.location.trim()) {
-      errs.location = "Location is required";
-    }
-
-    if (!form.motto.trim()) {
-      errs.motto = "Motto is required";
-    }
+    if (shared.category) errs.category = shared.category;
+    if (shared.location) errs.location = shared.location;
+    if (shared.motto) errs.motto = shared.motto;
 
     setErrors(errs);
 
@@ -143,10 +148,6 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
 
   const handleSubmit = async () => {
   const isValid = validate();
-
-  console.log("NGO FORM DATA:", form);
-  console.log("DOCUMENTS:", docs);
-  console.log("VALIDATION RESULT:", isValid);
 
   if (!isValid) {
     showToast("Please fill in all required fields", "error");
@@ -207,13 +208,30 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
     }
 
     if (!res.ok) {
-      throw new Error(data.detail || "Failed to register NGO");
+      throw new Error(errorText(data, "Failed to register NGO"));
+    }
+
+    // Email confirmation is on: the same answer comes back whether or not
+    // the address already had an account, so just ask the user to check it.
+    if (data.verification_required) {
+      setCheckEmail(form.email.trim());
+      return;
     }
 
     showToast(
       "NGO registration submitted for verification!",
       "success"
     );
+
+    // Log in with the email and password just typed, so the dashboard opens.
+    try {
+      const account = await loginUser("ngo", form.email.trim(), form.password);
+      onLogin({ role: "ngo", email: account.email || form.email.trim() });
+    } catch {
+      showToast("Registered. Please log in to continue.", "success");
+      navigate(PATHS["dashboard-login"]);
+      return;
+    }
 
     setSubmitted(true);
   } catch (err) {
@@ -225,6 +243,10 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
     setLoading(false);
   }
 };
+
+  if (checkEmail) {
+    return <CheckEmail role="ngo" email={checkEmail} />;
+  }
 
   if (submitted) {
     return (
@@ -244,9 +266,9 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
               </svg>
             </div>
 
-            <h2 className="success-title">
+            <h1 className="success-title">
               Registration Submitted
-            </h2>
+            </h1>
 
             <p className="success-desc">
               Your organization has been registered successfully.
@@ -258,7 +280,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
             <div className="success-actions">
               <button
                 className="success-btn-primary"
-                onClick={() => setPage("results")}
+                onClick={() => navigate(PATHS.results)}
                 id="ngo-reg-view-matches"
               >
                 View Matches
@@ -266,10 +288,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
 
               <button
                 className="success-btn-secondary"
-                onClick={() => {
-                  setDashboardEmail(form.email.trim());
-                  setPage("ngo-dashboard");
-                }}
+                onClick={() => navigate(dashboardFor("ngo"))}
                 id="ngo-reg-view-dashboard"
               >
                 Go to My Dashboard
@@ -277,7 +296,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("landing")}
+                onClick={() => navigate(PATHS.landing)}
                 id="ngo-reg-go-home"
               >
                 Back to Home
@@ -310,7 +329,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
             </svg>
           </div>
 
-          <h2 className="form-title">Register NGO</h2>
+          <h1 className="form-title">Register NGO</h1>
 
           <p className="form-subtitle">
             Complete the form to register your organization on VolunTag
@@ -423,14 +442,11 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
                 Password <span className="required">*</span>
               </label>
 
-              <input
+              <PasswordField
                 id="ngo-reg-password"
-                type="password"
                 value={form.password}
-                onChange={(e) =>
-                  updateField("password", e.target.value)
-                }
-                className={errors.password ? "input-error" : ""}
+                onChange={(value) => updateField("password", value)}
+                hasError={Boolean(errors.password)}
               />
 
               {errors.password && (
@@ -855,7 +871,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("role-select")}
+              onClick={() => navigate(PATHS["role-select"])}
               type="button"
             >
               &#8592; Back
@@ -864,7 +880,7 @@ export default function NGORegisterForm({ showToast, setPage, setDashboardEmail 
             <button
               className={`submit-btn ${loading ? "loading" : ""}`}
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || !passwordOk}
               id="ngo-reg-submit"
             >
               {loading ? "Submitting..." : "Submit NGO Registration"}

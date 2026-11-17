@@ -15,7 +15,12 @@ export default function ImagePreviewCard({ file, onRemove }) {
   return (
     <div className="image-preview-card">
       <img src={preview} alt={file.name} />
-      <button type="button" className="remove-image-btn" onClick={onRemove}>
+      <button
+        type="button"
+        className="remove-image-btn"
+        onClick={onRemove}
+        aria-label={`Remove ${file.name}`}
+      >
         Remove
       </button>
     </div>

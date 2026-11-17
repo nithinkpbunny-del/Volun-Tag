@@ -1,7 +1,8 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+    JSON, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary,
+    String, Text, UniqueConstraint, text,
 )
 
 try:
@@ -32,6 +33,19 @@ class VolunteerDB(Base):
     availability = Column(String, nullable=True)
     experience = Column(String, nullable=True)
 
+    # 1 once the owner opened the link mailed at signup (email_verification.py).
+    # The startup migration adds this column with DEFAULT 1, so every account
+    # that existed before email verification counts as verified without any
+    # row being rewritten. New registrations set it explicitly.
+    email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
+
+    # Settings (account_settings.py). Display only: matching does not use them.
+    bio = Column(Text, nullable=True)
+    cause_interests = Column(String, nullable=True)  # "Education, Health"
+
+    # Set when the owner deactivates the account (soft, nothing is deleted).
+    deactivated_at = Column(DateTime, nullable=True)
+
 
 class NGODB(Base):
     __tablename__ = "ngos"
@@ -44,7 +58,6 @@ class NGODB(Base):
     name = Column(String, unique=True, nullable=False)
     category = Column(String, nullable=True)
     location = Column(String, nullable=True)
-    urgency = Column(String, nullable=True, default="medium")
 
     # ── NGO account / registration details ─────────────────────────
     email = Column(String, unique=True, nullable=True)
@@ -86,6 +99,18 @@ class NGODB(Base):
         nullable=True,
     )
 
+    # 1 once the owner opened the link mailed at signup (email_verification.py).
+    # The startup migration adds this column with DEFAULT 1, so every account
+    # that existed before email verification counts as verified without any
+    # row being rewritten. New registrations set it explicitly.
+    email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
+
+    # Postal address, edited in Settings (optional).
+    address = Column(Text, nullable=True)
+
+    # Set when the owner deactivates the account (soft, nothing is deleted).
+    deactivated_at = Column(DateTime, nullable=True)
+
 
 class ActivityDB(Base):
     __tablename__ = "activities"
@@ -100,6 +125,28 @@ class ActivityDB(Base):
     spots_available = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     status = Column(String(20), nullable=False, default="Active")
+
+class ActivitySignupDB(Base):
+    __tablename__ = "activity_signups"
+
+    __table_args__ = (
+        UniqueConstraint("activity_id", "volunteer_id", name="uq_signup_activity_volunteer"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False)
+    volunteer_id = Column(Integer, ForeignKey("volunteers.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Set when the NGO approves the volunteer for the event.
+    approved_at = Column(DateTime, nullable=True)
+
+    # Attendance / feedback phase. attendance_status is NULL until the NGO
+    # submits feedback; attended_at is set only when it is "attended".
+    attendance_status = Column(String(20), nullable=True)  # "attended", "not_attended" or NULL
+    attended_at = Column(DateTime, nullable=True)
+    feedback = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)
 
 class IssueDB(Base):
     """Public issue reports, kept separate from volunteer-to-NGO matching data."""
@@ -144,6 +191,33 @@ class IssueDB(Base):
     )
 
 
+class IssueResolutionDB(Base):
+    """Proof submitted by an NGO that it solved a reported issue."""
+
+    __tablename__ = "issue_resolutions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # complaint_id is stored without a foreign key so the issue row stays independent.
+    complaint_id = Column(String(32), index=True, nullable=False)
+    ngo_id = Column(Integer, ForeignKey("ngos.id"), nullable=False)
+
+    solution_type = Column(String(10), nullable=False)  # "written" | "document"
+    solution_text = Column(Text, nullable=True)
+    document_path = Column(String(255), nullable=True)
+    document_name = Column(String(255), nullable=True)
+
+    before_photo = Column(String(255), nullable=False)
+    after_photo = Column(String(255), nullable=False)
+
+    # "Under evaluation" | "Approved" | "Rejected" | "Closed"
+    status = Column(String(20), nullable=False, default="Under evaluation")
+    reject_reason = Column(Text, nullable=True)
+
+    submitted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+
 class MessageDB(Base):
     """Direct messages between volunteers and NGOs."""
 
@@ -184,3 +258,191 @@ class MessageDB(Base):
     )
 
     read_at = Column(DateTime, nullable=True)
+
+
+class EmbeddingDB(Base):
+    """Cached sentence-transformer vectors so matching does not re-encode text."""
+
+    __tablename__ = "embeddings"
+
+    __table_args__ = (
+        UniqueConstraint("owner_type", "owner_id", name="uq_embeddings_owner"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # "volunteer_skills" | "ngo_motto" | "ngo_motto_raw" | "event_skills"
+    owner_type = Column(String, nullable=False)
+    owner_id = Column(Integer, nullable=False)
+
+    # sha256 hex of the exact text that was encoded
+    text_hash = Column(String(64), nullable=False)
+
+    # numpy float32 bytes
+    vector = Column(LargeBinary, nullable=False)
+    dim = Column(Integer, nullable=False)
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+class AdminSessionDB(Base):
+    """A logged-in admin console session. Only a hash of the token is stored."""
+
+    __tablename__ = "admin_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # sha256 hex of the bearer token handed to the browser
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+
+class UserSessionDB(Base):
+    """A logged-in volunteer or NGO session. Only a hash of the token is stored."""
+
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # sha256 hex of the bearer token handed to the browser
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+    # A short "Chrome on macOS" label made from the User-Agent at login (the
+    # raw header is not stored). NULL for sessions created before Settings.
+    device_label = Column(String(60), nullable=True)
+
+
+class AdminActionDB(Base):
+    """Audit log of actions taken in the admin console."""
+
+    __tablename__ = "admin_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    action = Column(String(50), nullable=False)       # e.g. "login", "approve_resolution"
+    target_type = Column(String(50), nullable=True)   # e.g. "resolution", "session"
+    target_id = Column(String(64), nullable=True)
+
+    # JSON-encoded dict of extra context; never contains passwords or tokens
+    details = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PasswordResetTokenDB(Base):
+    """A one-time password reset link. Only a sha256 hash of the token is stored."""
+
+    __tablename__ = "password_reset_tokens"
+
+    __table_args__ = (
+        Index("ix_password_reset_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class ContactMessageDB(Base):
+    """A message sent through the public contact form."""
+
+    __tablename__ = "contact_messages"
+
+    __table_args__ = (
+        Index("ix_contact_messages_created_at", "created_at"),
+        Index("ix_contact_messages_email", "email"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    name = Column(String(100), nullable=False)
+    email = Column(String(255), nullable=False)  # lowercase
+    subject = Column(String(150), nullable=True)
+    message = Column(Text, nullable=False)
+    role = Column(String(20), nullable=True)  # "volunteer" | "ngo" | "other" | NULL
+
+    # sha256 of (salt + client IP); the raw address is never stored.
+    ip_hash = Column(String(64), nullable=True)
+    # sha256 of (email + message), used to drop exact repeats within 24 hours.
+    content_hash = Column(String(64), nullable=False)
+
+    # Legacy status kept in step with read_at: "new" while unread, "read" once
+    # read ("replied" is never set by the app but is treated as read).
+    status = Column(String(20), nullable=False, default="new")
+    mail_sent = Column(Integer, nullable=False, default=0)  # 1 once mailed to the inbox
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    handled_at = Column(DateTime, nullable=True)
+    # Admin console state (added by migrations.ensure_contact_columns).
+    read_at = Column(DateTime, nullable=True)
+    archived_at = Column(DateTime, nullable=True)
+
+
+class EmailVerificationTokenDB(Base):
+    """A one-time "confirm your email" link. Only a sha256 hash of the token is stored."""
+
+    __tablename__ = "email_verification_tokens"
+
+    __table_args__ = (
+        Index("ix_email_verification_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class EmailChangeTokenDB(Base):
+    """A one-time "confirm your new email address" link (Settings).
+
+    Same design as EmailVerificationTokenDB: only a sha256 hash of the token
+    is stored, it expires, it works once, and a newer request replaces older ones.
+    """
+
+    __tablename__ = "email_change_tokens"
+
+    __table_args__ = (
+        Index("ix_email_change_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    old_email = Column(String, nullable=False)  # lowercase
+    new_email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)

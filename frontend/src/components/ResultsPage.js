@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import "./ResultsPage.css";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "../config";
 
 function ScoreRing({ score, size = 56 }) {
   const radius = (size - 8) / 2;
@@ -44,10 +43,14 @@ function SkeletonCard() {
   );
 }
 
-function MatchCard({ volunteer, matches }) {
+// The public demo is anonymised by the server: "label" is "Volunteer N",
+// never a real name, and no location is sent. Only skills and scores show.
+function MatchCard({ label, skills, matches }) {
   const [expanded, setExpanded] = useState(false);
   const bestMatch = matches[0];
   const tier = bestMatch.confidence;
+  const number = (label || "").replace(/\D+/g, "") || "?";
+  const summary = bestMatch.explanation && bestMatch.explanation.summary;
 
   return (
     <div className={`match-card tier-${tier}`}>
@@ -55,11 +58,11 @@ function MatchCard({ volunteer, matches }) {
 
       <div className="match-card-top">
         <div className="match-card-info">
-          <div className="match-avatar">
-            {volunteer.charAt(0).toUpperCase()}
+          <div className="match-avatar" aria-hidden="true">
+            {number}
           </div>
           <div>
-            <h3 className="match-volunteer-name">{volunteer}</h3>
+            <h3 className="match-volunteer-name">{label}</h3>
             <span className="match-ngo-name">→ {bestMatch.ngo}</span>
           </div>
         </div>
@@ -72,6 +75,9 @@ function MatchCard({ volunteer, matches }) {
         </span>
         <span className="match-category-tag">{bestMatch.ngo_category}</span>
       </div>
+
+      {skills && <p className="match-skills">Skills: {skills}</p>}
+      {summary && <p className="match-explanation">{summary}</p>}
 
       {/* Progress bar */}
       <div className="match-progress">
@@ -166,7 +172,9 @@ export default function ResultsPage({ showToast }) {
         <div className="results-header">
           <div>
             <h1 className="results-title">Match Results</h1>
-            <p className="results-subtitle">AI-powered volunteer-NGO matching</p>
+            <p className="results-subtitle">
+              AI-powered volunteer-NGO matching. Volunteers are shown without names or locations.
+            </p>
           </div>
         </div>
 
@@ -182,7 +190,7 @@ export default function ResultsPage({ showToast }) {
               <span className="results-stat-label">NGOs</span>
             </div>
             <div className="results-stat-item">
-              <span className="results-stat-num">{matches.length}</span>
+              <span className="results-stat-num">{data?.total_matches ?? matches.length}</span>
               <span className="results-stat-label">Matches</span>
             </div>
           </div>
@@ -194,8 +202,9 @@ export default function ResultsPage({ showToast }) {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="filter-select"
+              className="filter-select ui-select"
               id="filter-category"
+              aria-label="Filter by NGO category"
             >
               <option value="">All Categories</option>
               <option value="Education">📚 Education</option>
@@ -208,11 +217,12 @@ export default function ResultsPage({ showToast }) {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="filter-select"
+              className="filter-select ui-select"
               id="sort-by"
+              aria-label="Sort matches"
             >
               <option value="score">Sort: Best Score</option>
-              <option value="name">Sort: Name A-Z</option>
+              <option value="label">Sort: Volunteer number</option>
             </select>
           </div>
 
@@ -230,8 +240,13 @@ export default function ResultsPage({ showToast }) {
           </div>
         ) : matches.length > 0 ? (
           <div className="match-grid">
-            {matches.map((m, i) => (
-              <MatchCard key={i} volunteer={m.volunteer} matches={m.matches} />
+            {matches.map((m) => (
+              <MatchCard
+                key={m.label}
+                label={m.label || m.volunteer}
+                skills={m.volunteer_skills}
+                matches={m.matches}
+              />
             ))}
           </div>
         ) : (

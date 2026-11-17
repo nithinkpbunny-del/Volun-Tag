@@ -1,22 +1,35 @@
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import logging
+import mimetypes
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import numpy as np
 
 try:
+    from .admin import router as admin_router
+    from . import login_limiter
+    from .admin_auth import log_admin_action, require_admin
     from .database import Base, SessionLocal, engine, get_db
-    from .db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from .db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, UserSessionDB, VolunteerDB
+    from .embedding_store import get_vectors, refresh_vector
     from .issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -32,15 +45,47 @@ try:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        EventVolunteerEntry, EventVolunteersResponse, ApprovalResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
-        MarkReadRequest, MarkReadResponse,
+        MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
+        ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
+        RejectRequest, MatchExplanation, normalise_email,
     )
-    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from .migrations import run_migrations
+    from . import event_rules
+    from . import rate_limit
+    from . import uploads
+    from .contact import router as contact_router
+    from .password_reset import router as password_reset_router
+    from . import email_verification
+    from . import account_settings
+    from .security_headers import SecurityHeadersMiddleware
+    from .issue_ai_pipeline import analyse_images
+    from .password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
+    from .password_policy import password_policy_error
+    from .matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, score_match
+    from .matching_config import MATCHABLE_NGO_STATUSES, MIN_EVENT_MATCH
+    from . import settings
     from .seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from .user_auth import (
+        create_user_session, delete_session_for_header, ensure_own_email,
+        require_ngo, require_user, require_user_or_admin, require_volunteer,
+        same_email,
+    )
+    from .settings import (
+        ALLOWED_ORIGINS, DATABASE_PATH, ENABLE_DOCS, MAX_DOCUMENT_BYTES,
+        MAX_IMAGE_BYTES, MAX_REQUEST_BYTES, MESSAGES_UPLOAD_DIR,
+        RESOLUTIONS_UPLOAD_DIR, SEED_DEMO_DATA, UPLOAD_DIR,
+    )
 except ImportError:
+    from admin import router as admin_router
+    import login_limiter
+    from admin_auth import log_admin_action, require_admin
     from database import Base, SessionLocal, engine, get_db
-    from db_models import ActivityDB, MessageDB, NGODB, IssueDB, VolunteerDB
+    from db_models import ActivityDB, ActivitySignupDB, IssueResolutionDB, MessageDB, NGODB, IssueDB, UserSessionDB, VolunteerDB
+    from embedding_store import get_vectors, refresh_vector
     from issue_service import (
         ISSUE_STATUSES,
         create_issue,
@@ -56,20 +101,46 @@ except ImportError:
         IssueStatsResponse, IssueDeleteResponse, VolunteerDashboardResponse,
         NGODashboardResponse, EventCreate, EventResponse, EventStatusUpdate,
         EventUpdate, NGOEventsResponse, NGOIssuesResponse, NGOIssueEntry,
+        EventVolunteerEntry, EventVolunteersResponse, ApprovalResponse,
         VolunteerMatchEntry, VolunteerMatchesResponse,
+        VolunteerEventEntry, VolunteerActivityEntry, JoinRequest, JoinResponse,
         MessageSend, LocationMessageSend, MessageResponse, ConversationEntry,
-        MarkReadRequest, MarkReadResponse,
+        MarkReadRequest, MarkReadResponse, FeedbackRequest, FeedbackResponse,
+        ResolutionResponse, VolunteerIssueEntry, AdminResolutionEntry,
+        RejectRequest, MatchExplanation, normalise_email,
     )
-    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, classify_confidence, model
+    from migrations import run_migrations
+    import event_rules
+    import rate_limit
+    import uploads
+    from contact import router as contact_router
+    from password_reset import router as password_reset_router
+    import email_verification
+    import account_settings
+    from security_headers import SecurityHeadersMiddleware
+    from issue_ai_pipeline import analyse_images
+    from password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
+    from password_policy import password_policy_error
+    from matching import CATEGORY_KEYWORDS, CATEGORY_BOOST, compute_category_boost, compute_location_boost, compute_match_level, classify_confidence, score_match
+    from matching_config import MATCHABLE_NGO_STATUSES, MIN_EVENT_MATCH
+    import settings
     from seed_data import SEED_NGOS, SEED_VOLUNTEERS, run_seed
+    from user_auth import (
+        create_user_session, delete_session_for_header, ensure_own_email,
+        require_ngo, require_user, require_user_or_admin, require_volunteer,
+        same_email,
+    )
+    from settings import (
+        ALLOWED_ORIGINS, DATABASE_PATH, ENABLE_DOCS, MAX_DOCUMENT_BYTES,
+        MAX_IMAGE_BYTES, MAX_REQUEST_BYTES, MESSAGES_UPLOAD_DIR,
+        RESOLUTIONS_UPLOAD_DIR, SEED_DEMO_DATA, UPLOAD_DIR,
+    )
 
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-MESSAGES_UPLOAD_DIR = UPLOAD_DIR / "messages"
-MESSAGES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# UPLOAD_DIR, MESSAGES_UPLOAD_DIR and RESOLUTIONS_UPLOAD_DIR come from
+# settings.py (under DATA_DIR), which also creates the folders.
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
@@ -86,80 +157,317 @@ ALLOWED_DOCUMENT_TYPES = {
     "image/png",
 }
 
+ALLOWED_RESOLUTION_DOCUMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": (
+        "application/vnd.openxmlformats-officedocument."
+        "wordprocessingml.document"
+    ),
+}
+
 MAX_IMAGES = 6
-MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+MAX_IMAGE_SIZE = MAX_IMAGE_BYTES  # per image (MAX_IMAGE_BYTES, default 10 MB)
+MAX_DOCUMENT_SIZE = MAX_DOCUMENT_BYTES  # per document (default 5 MB)
+
+# NGO registration documents: extension -> how the content is checked.
+NGO_DOCUMENT_KINDS = {".pdf": "magic", ".jpg": "image", ".png": "image"}
+RESOLUTION_DOCUMENT_KINDS = {".pdf": "magic", ".doc": "magic", ".docx": "magic"}
+
+# MIN_EVENT_MATCH (minimum final score for an event to be shown) lives in matching_config.py.
+
+MISMATCH_CODE = "image_description_mismatch"
+MISMATCH_MESSAGE = (
+    "The photo and the description do not seem to describe the same problem. "
+    "Please check that you picked the right photo and that the description "
+    "says what the photo shows, then submit again."
+)
+
+report_limiter = rate_limit.make_limiter(settings.REPORT_LIMIT_PER_HOUR, 3600, "report-issue")
+volunteer_signup_limiter = rate_limit.make_limiter(
+    settings.VOLUNTEER_SIGNUP_LIMIT_PER_HOUR, 3600, "add-volunteer",
+)
+ngo_signup_limiter = rate_limit.make_limiter(settings.NGO_SIGNUP_LIMIT_PER_HOUR, 3600, "add-ngo")
 
 
 app = FastAPI(
     title="VolunTag API",
     description="AI-powered volunteer-NGO matching platform",
     version="2.0.0",
+    # ENABLE_DOCS=false (the default when APP_ENV=production) hides /docs,
+    # /redoc and /openapi.json.
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Refuse bodies larger than MAX_REQUEST_BYTES before they are read."""
+    length = request.headers.get("content-length")
+    if length and length.isdigit() and int(length) > MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "detail": (
+                    f"The upload is too large (limit "
+                    f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB per request)."
+                ),
+            },
+        )
+    return await call_next(request)
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Lets Settings > Download my data read the file name.
+    expose_headers=["Content-Disposition"],
 )
+
+# Added last, so it is the outermost layer and also covers CORS preflights
+# and the 413 answers above.
+app.add_middleware(SecurityHeadersMiddleware)
+
+app.include_router(admin_router)
+app.include_router(password_reset_router)
+app.include_router(contact_router)
+app.include_router(email_verification.router)
+app.include_router(account_settings.router)
 
 
 # ─── Startup / Seed Data ───────────────────────────────────────────
 @app.on_event("startup")
 def seed_data():
-    """Load sample data on server startup."""
-    run_seed()
+    """Create tables, run the migrations, then (unless SEED_DEMO_DATA is off) load sample data.
+
+    Migrations run before seeding because the seed queries the account
+    tables, which must already have every column the models expect.
+    """
+    Base.metadata.create_all(bind=engine)
+    run_migrations(engine, DATABASE_PATH)
+    if SEED_DEMO_DATA:
+        run_seed()
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
-async def save_ngo_file(
+def save_ngo_file(
     upload: Optional[UploadFile],
     field_name: str,
+    saved: uploads.SavedFiles,
 ) -> Optional[str]:
-    """Save one optional NGO verification document."""
+    """Save one optional NGO verification document (PDF, JPG or PNG, max 5 MB)."""
 
-    if upload is None:
+    if upload is None or not upload.filename:
         return None
 
-    if upload.content_type not in ALLOWED_DOCUMENT_TYPES:
+    stored_name, _ = uploads.save_document(
+        upload, UPLOAD_DIR, "ngo_", NGO_DOCUMENT_KINDS,
+        MAX_DOCUMENT_SIZE, field_name, saved,
+    )
+    return stored_name
+
+
+def safe_upload_path(base_dir: Path, stored_name) -> Optional[Path]:
+    """Resolve a stored bare filename inside base_dir, or None if unsafe."""
+
+    name = Path(str(stored_name or "")).name
+
+    if not name or name in {".", ".."}:
+        return None
+
+    path = (base_dir / name).resolve()
+
+    try:
+        path.relative_to(base_dir.resolve())
+    except ValueError:
+        return None
+
+    return path
+
+
+def save_image_upload(
+    file: UploadFile,
+    dest_dir: Path,
+    prefix: str,
+) -> tuple[str, Path]:
+    """Validate (by content) and save one image; return (stored filename, full path)."""
+
+    return uploads.save_image(file, dest_dir, prefix, MAX_IMAGE_SIZE)
+
+
+def save_document_upload(
+    file: UploadFile,
+    dest_dir: Path,
+) -> tuple[str, str, Path]:
+    """Validate (by content) and save a solution document.
+
+    Returns (stored filename, original filename, full path).
+    """
+
+    original_name = Path(file.filename or "").name
+    stored_name, dest = uploads.save_document(
+        file, dest_dir, "doc_", RESOLUTION_DOCUMENT_KINDS,
+        MAX_DOCUMENT_SIZE, "The document",
+    )
+    return stored_name, original_name[:255], dest
+
+
+def issue_matches_ngo(issue: IssueDB, ngo: NGODB) -> bool:
+    """True when the NGO appears in the issue's AI recommendations."""
+
+    recs = issue.recommended_ngos
+
+    if not recs or not isinstance(recs, list):
+        return False
+
+    return any(
+        isinstance(entry, dict) and entry.get("ngo") == ngo.name
+        for entry in recs
+    )
+
+
+def is_issue_reporter(issue: IssueDB, email: str) -> bool:
+    return bool(
+        issue.reporter_email
+        and issue.reporter_email.strip().lower() == email.strip().lower()
+    )
+
+
+def get_owned_issue(db: Session, complaint_id: str, email: str) -> IssueDB:
+    """Return the issue, or raise 404 / 403 if it is missing or not the reporter's."""
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
         raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{field_name} must be a PDF, JPG, JPEG, "
-                f"or PNG file."
-            ),
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
         )
 
-    contents = await upload.read()
-
-    if len(contents) > MAX_IMAGE_SIZE:
+    if not is_issue_reporter(issue, email):
         raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{field_name} exceeds the "
-                f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB size limit."
-            ),
+            status_code=403,
+            detail="This problem was not reported by you",
         )
 
-    ext = Path(upload.filename or "").suffix.lower()
+    return issue
 
-    if ext not in {
-        ".pdf",
-        ".jpg",
-        ".jpeg",
-        ".png",
-    }:
-        ext = ".pdf"
 
-    safe_name = f"ngo_{uuid.uuid4().hex}{ext}"
-    destination = UPLOAD_DIR / safe_name
+def approved_resolutions(
+    db: Session,
+    complaint_ids: list[str],
+) -> dict[str, tuple[IssueResolutionDB, str]]:
+    """Map complaint_id -> (Approved resolution, solving NGO name) in one query."""
 
-    with open(destination, "wb") as file:
-        file.write(contents)
+    if not complaint_ids:
+        return {}
 
-    return safe_name
+    rows = (
+        db.query(IssueResolutionDB, NGODB.name)
+        .join(NGODB, IssueResolutionDB.ngo_id == NGODB.id)
+        .filter(
+            IssueResolutionDB.complaint_id.in_(complaint_ids),
+            IssueResolutionDB.status == "Approved",
+        )
+        .all()
+    )
+
+    return {res.complaint_id: (res, name) for res, name in rows}
+
+
+def get_owned_event(db: Session, event_id: int, ngo_email: str) -> ActivityDB:
+    """Return the event, or raise 404 / 403 if it is missing or not this NGO's."""
+
+    event = db.query(ActivityDB).filter(
+        ActivityDB.id == event_id,
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event '{event_id}' not found",
+        )
+
+    ngo = db.query(NGODB).filter(
+        NGODB.id == event.ngo_id,
+    ).first()
+
+    if (
+        not ngo
+        or not ngo.email
+        or ngo.email.strip().lower() != ngo_email.strip().lower()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This event does not belong to your NGO",
+        )
+
+    return event
+
+
+def count_approved(db: Session, event_id: int) -> int:
+    return db.query(func.count(ActivitySignupDB.id)).filter(
+        ActivitySignupDB.activity_id == event_id,
+        ActivitySignupDB.approved_at.isnot(None),
+    ).scalar()
+
+
+def is_completed(event: ActivityDB) -> bool:
+    """True from the day after the event date (IST). See event_rules.py."""
+    return event_rules.is_completed(event)
+
+
+def require_open(event: ActivityDB) -> None:
+    """400 unless registration is still open (the event day has not started, IST)."""
+    if not event_rules.is_open(event):
+        raise HTTPException(
+            status_code=400,
+            detail="Registration for this event has closed",
+        )
+
+
+def event_response(event: ActivityDB, **counts) -> EventResponse:
+    """EventResponse with the server-computed phase and day."""
+    item = EventResponse.model_validate(event)
+    for key, value in counts.items():
+        setattr(item, key, value)
+    item.phase = event_rules.event_phase(event)
+    item.event_day = event_rules.event_day_text(event)
+    item.is_completed = item.phase == event_rules.COMPLETED
+    return item
+
+
+def volunteer_rating_stats(db: Session, volunteer_ids: list[int]) -> dict[int, tuple[int, float]]:
+    """{volunteer_id: (rated attended events, mean rating)} in one grouped query."""
+    if not volunteer_ids or not settings.MATCH_USE_RATINGS:
+        return {}
+    rows = (
+        db.query(
+            ActivitySignupDB.volunteer_id,
+            func.count(ActivitySignupDB.id),
+            func.avg(ActivitySignupDB.rating),
+        )
+        .filter(
+            ActivitySignupDB.volunteer_id.in_(volunteer_ids),
+            ActivitySignupDB.attendance_status == "attended",
+            ActivitySignupDB.rating.isnot(None),
+        )
+        .group_by(ActivitySignupDB.volunteer_id)
+        .all()
+    )
+    return {vid: (int(count), float(mean)) for vid, count, mean in rows}
+
+
+def is_full(event: ActivityDB, approved_count: int) -> bool:
+    return (
+        event.spots_available is not None
+        and approved_count >= event.spots_available
+    )
 
 
 # ─── Root ──────────────────────────────────────────────────────────
@@ -169,6 +477,12 @@ def home():
         "message": "VolunTag backend running",
         "version": "2.0.0",
     }
+
+
+# ─── Health Check ─────────────────────────────────────────────────
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 # ─── Report Issue ─────────────────────────────────────────────────
@@ -184,9 +498,12 @@ def report_issue(
     reporter_name: Optional[str] = Form(default=None),
     contact_information: Optional[str] = Form(default=None),
     images: list[UploadFile] = File(default=[]),
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
-    """Store a public issue report with optional image uploads and AI processing."""
+    """Store an issue report from a logged-in volunteer, with optional images and AI processing."""
+
+    ensure_own_email(session, reporter_email)
 
     user_description = user_description.strip()
     location = location.strip()
@@ -226,83 +543,79 @@ def report_issue(
     reporter_name = volunteer.name
     contact_information = volunteer.contact_number
 
+    # Empty file parts (no file chosen) count as not provided.
+    images = [img for img in images if img.filename]
+
     if len(images) > MAX_IMAGES:
         raise HTTPException(
             status_code=400,
             detail=f"Too many images. Maximum is {MAX_IMAGES}.",
         )
 
-    for img in images:
-        if img.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"File '{img.filename}' is not a supported "
-                    f"image type. Allowed: JPEG, PNG, GIF, "
-                    f"WebP, BMP, TIFF."
-                ),
-            )
+    # Per-user limit on the expensive AI work (BLIP + CLIP + MiniLM).
+    report_limiter.check(
+        ("volunteer", session.user_id),
+        "You have sent several reports in the last hour. "
+        "Please wait a while before sending another one.",
+    )
 
-    saved_paths: list[str] = []
-    saved_full_paths: list[Path] = []
+    saved = uploads.SavedFiles()
 
     try:
-        for img in images:
-            contents = img.file.read()
-
-            if len(contents) > MAX_IMAGE_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"File '{img.filename}' exceeds the "
-                        f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
-                        f"size limit."
-                    ),
-                )
-
-            ext = (
-                Path(img.filename or "").suffix.lower()
-                if img.filename
-                else ""
-            )
-
-            if ext not in {
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".gif",
-                ".webp",
-                ".bmp",
-                ".tiff",
-                ".tif",
-            }:
-                ext = ".jpg"
-
-            safe_name = f"{uuid.uuid4().hex}{ext}"
-            dest = UPLOAD_DIR / safe_name
-
-            with open(dest, "wb") as file:
-                file.write(contents)
-
-            saved_paths.append(safe_name)
-            saved_full_paths.append(dest)
-
+        saved_paths = [
+            uploads.save_image(img, UPLOAD_DIR, "", MAX_IMAGE_SIZE, saved)[0]
+            for img in images
+        ]
     except HTTPException:
-        for path in saved_full_paths:
-            path.unlink(missing_ok=True)
-
+        saved.cleanup()
         raise
-
     except Exception:
-        for path in saved_full_paths:
-            path.unlink(missing_ok=True)
-
+        saved.cleanup()
         logger.exception("Failed to save uploaded images")
-
         raise HTTPException(
             status_code=500,
             detail="Failed to save uploaded images.",
         )
+
+    # ── Photo / description check, before anything is stored ─────
+    analysis = None
+
+    if saved_paths:
+        try:
+            analysis = analyse_images(
+                saved_paths,
+                description=(
+                    user_description
+                    if settings.REPORT_MISMATCH_MODE != "off" else None
+                ),
+            )
+        except Exception:
+            logger.exception("Image analysis failed; continuing without it")
+            analysis = None
+
+        best = analysis.best_similarity if analysis else None
+
+        if best is not None and settings.REPORT_MISMATCH_MODE != "off":
+            mismatch = best < settings.REPORT_MISMATCH_CLIP_MIN
+            (logger.warning if mismatch else logger.info)(
+                "Report photo check: best CLIP similarity %.3f (threshold %.3f, "
+                "mode %s) -> %s",
+                best, settings.REPORT_MISMATCH_CLIP_MIN,
+                settings.REPORT_MISMATCH_MODE,
+                "mismatch" if mismatch else "match",
+            )
+
+            if mismatch and settings.REPORT_MISMATCH_MODE == "enforce":
+                saved.cleanup()
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "code": MISMATCH_CODE,
+                        "message": MISMATCH_MESSAGE,
+                        # Older clients read "detail".
+                        "detail": MISMATCH_MESSAGE,
+                    },
+                )
 
     issue_data = {
         "user_description": user_description,
@@ -313,10 +626,16 @@ def report_issue(
         "image_paths": saved_paths if saved_paths else None,
     }
 
-    issue = create_issue(db, issue_data)
+    try:
+        issue = create_issue(db, issue_data)
+    except Exception:
+        db.rollback()
+        saved.cleanup()
+        logger.exception("Failed to store the issue")
+        raise HTTPException(status_code=500, detail="Failed to save the report.")
 
     try:
-        result = process_issue(issue, db)
+        result = process_issue(issue, db, image_analysis=analysis)
 
         issue.ai_image_caption = result["ai_image_caption"]
         issue.ai_scene_category = result["ai_scene_category"]
@@ -348,6 +667,7 @@ def report_issue(
 @app.get(
     "/issues",
     response_model=list[IssueResponse],
+    dependencies=[Depends(require_admin)],
 )
 def list_issues(
     db: Session = Depends(get_db),
@@ -360,6 +680,7 @@ def list_issues(
 @app.get(
     "/issues/{complaint_id}",
     response_model=IssueResponse,
+    dependencies=[Depends(require_admin)],
 )
 def get_issue(
     complaint_id: str,
@@ -382,6 +703,7 @@ def get_issue(
 @app.put(
     "/issues/{complaint_id}/status",
     response_model=IssueResponse,
+    dependencies=[Depends(require_admin)],
 )
 def change_issue_status(
     complaint_id: str,
@@ -399,6 +721,12 @@ def change_issue_status(
             detail=f"Issue '{complaint_id}' not found",
         )
 
+    # Added before the update so update_issue_status commits both together.
+    log_admin_action(db, "change_issue_status", "issue", complaint_id, {
+        "old_status": issue.status,
+        "new_status": status_update.status,
+    })
+
     return update_issue_status(
         issue,
         status_update.status,
@@ -409,6 +737,7 @@ def change_issue_status(
 @app.delete(
     "/issues/{complaint_id}",
     response_model=IssueDeleteResponse,
+    dependencies=[Depends(require_admin)],
 )
 def remove_issue(
     complaint_id: str,
@@ -424,6 +753,11 @@ def remove_issue(
             status_code=404,
             detail=f"Issue '{complaint_id}' not found",
         )
+
+    # Added before the delete so delete_issue commits both together.
+    log_admin_action(db, "delete_issue", "issue", complaint_id, {
+        "complaint_id": complaint_id,
+    })
 
     delete_issue(issue, db)
 
@@ -443,12 +777,876 @@ def issue_stats(
     return get_issue_stats(db)
 
 
+# ─── NGO Submits Proof of Resolution ──────────────────────────────
+@app.post(
+    "/issues/{complaint_id}/resolution",
+    response_model=ResolutionResponse,
+    status_code=201,
+)
+def submit_issue_resolution(
+    complaint_id: str,
+    ngo_email: str = Form(...),
+    solution_type: str = Form(...),
+    solution_text: Optional[str] = Form(default=None),
+    document: Optional[UploadFile] = File(default=None),
+    before_photo: Optional[UploadFile] = File(default=None),
+    after_photo: Optional[UploadFile] = File(default=None),
+    session: UserSessionDB = Depends(require_ngo),
+    db: Session = Depends(get_db),
+):
+    """Store an NGO's proof that it solved a reported problem."""
+
+    ensure_own_email(session, ngo_email)
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
+        )
+
+    ngo = db.query(NGODB).filter(
+        NGODB.email.isnot(None),
+        func.lower(NGODB.email) == ngo_email.strip().lower(),
+    ).first()
+
+    if not ngo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No NGO found with email '{ngo_email}'",
+        )
+
+    if not issue_matches_ngo(issue, ngo):
+        raise HTTPException(
+            status_code=403,
+            detail="This problem was not reported to your NGO",
+        )
+
+    if issue.status == "Resolved":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem has already been solved",
+        )
+
+    already_submitted = db.query(IssueResolutionDB.id).filter(
+        IssueResolutionDB.complaint_id == issue.complaint_id,
+        IssueResolutionDB.ngo_id == ngo.id,
+    ).first()
+
+    if already_submitted:
+        raise HTTPException(
+            status_code=400,
+            detail="Your NGO has already submitted proof for this problem",
+        )
+
+    solution_type = solution_type.strip()
+
+    if solution_type not in ("written", "document"):
+        raise HTTPException(
+            status_code=422,
+            detail="solution_type must be 'written' or 'document'",
+        )
+
+    # Empty file parts (no file chosen) count as not provided.
+    document = document if document is not None and document.filename else None
+    before_photo = (
+        before_photo if before_photo is not None and before_photo.filename else None
+    )
+    after_photo = (
+        after_photo if after_photo is not None and after_photo.filename else None
+    )
+
+    solution_text = (solution_text or "").strip()
+
+    if solution_type == "written":
+        if not 50 <= len(solution_text) <= 5000:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The written solution must be between 50 and "
+                    "5000 characters."
+                ),
+            )
+
+        if document is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either a written solution or a document, not both",
+            )
+
+    else:
+        if document is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A document is required when the solution type is 'document'",
+            )
+
+        if solution_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either a written solution or a document, not both",
+            )
+
+    if before_photo is None or after_photo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Both a before photo and an after photo are required",
+        )
+
+    saved_full_paths: list[Path] = []
+
+    try:
+        before_name, before_path = save_image_upload(
+            before_photo, RESOLUTIONS_UPLOAD_DIR, "before_",
+        )
+        saved_full_paths.append(before_path)
+
+        after_name, after_path = save_image_upload(
+            after_photo, RESOLUTIONS_UPLOAD_DIR, "after_",
+        )
+        saved_full_paths.append(after_path)
+
+        document_path = None
+        document_name = None
+
+        if solution_type == "document":
+            document_path, document_name, doc_full_path = save_document_upload(
+                document, RESOLUTIONS_UPLOAD_DIR,
+            )
+            saved_full_paths.append(doc_full_path)
+
+        resolution = IssueResolutionDB(
+            complaint_id=issue.complaint_id,
+            ngo_id=ngo.id,
+            solution_type=solution_type,
+            solution_text=solution_text if solution_type == "written" else None,
+            document_path=document_path,
+            document_name=document_name,
+            before_photo=before_name,
+            after_photo=after_name,
+            status="Under evaluation",
+        )
+        db.add(resolution)
+        issue.status = "Under evaluation"
+        db.commit()
+        db.refresh(resolution)
+
+    except HTTPException:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        raise
+
+    except Exception:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to save issue resolution")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save the resolution.",
+        )
+
+    return ResolutionResponse(
+        resolution_id=resolution.id,
+        complaint_id=resolution.complaint_id,
+        status=resolution.status,
+        submitted_at=resolution.submitted_at,
+    )
+
+
+# ─── Volunteer's Own Reported Problems ────────────────────────────
+def build_volunteer_issue_entry(
+    issue: IssueDB,
+    solved_map: dict[str, tuple[IssueResolutionDB, str]],
+) -> VolunteerIssueEntry:
+    solved_res, solved_ngo_name = solved_map.get(
+        issue.complaint_id, (None, None),
+    )
+
+    return VolunteerIssueEntry(
+        complaint_id=issue.complaint_id,
+        location=issue.location,
+        user_description=issue.user_description,
+        status=issue.status,
+        created_at=issue.created_at,
+        updated_at=issue.updated_at,
+        image_count=len(issue.image_paths) if issue.image_paths else 0,
+        ngo_count=len(issue.recommended_ngos) if issue.recommended_ngos else 0,
+        editable=issue.status == "Reported",
+        solved=issue.status == "Resolved",
+        solved_by_ngo=solved_ngo_name,
+        solved_at=solved_res.decided_at if solved_res else None,
+    )
+
+
+@app.get(
+    "/volunteer-issues/{email}",
+    response_model=list[VolunteerIssueEntry],
+)
+def list_volunteer_issues(
+    email: str,
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Return the problems reported by one volunteer, newest first."""
+
+    ensure_own_email(session, email)
+
+    email_lower = email.strip().lower()
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email_lower,
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    issues = (
+        db.query(IssueDB)
+        .filter(func.lower(IssueDB.reporter_email) == email_lower)
+        .order_by(IssueDB.created_at.desc(), IssueDB.id.desc())
+        .all()
+    )
+
+    solved_map = approved_resolutions(
+        db,
+        [i.complaint_id for i in issues if i.status == "Resolved"],
+    )
+
+    return [build_volunteer_issue_entry(i, solved_map) for i in issues]
+
+
+@app.patch(
+    "/volunteer-issues/{complaint_id}",
+    response_model=VolunteerIssueEntry,
+)
+def edit_volunteer_issue(
+    complaint_id: str,
+    user_description: Optional[str] = Form(default=None),
+    location: Optional[str] = Form(default=None),
+    images: list[UploadFile] = File(default=[]),
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Edit a still-unhandled report: text can change, photos can only be added."""
+
+    issue = get_owned_issue(db, complaint_id, session.email)
+
+    if issue.status != "Reported":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem can no longer be edited",
+        )
+
+    # Empty file parts (no file chosen) count as not provided.
+    new_images = [img for img in images if img.filename]
+
+    if user_description is None and location is None and not new_images:
+        raise HTTPException(
+            status_code=400,
+            detail="Nothing to update",
+        )
+
+    changed = False
+
+    if user_description is not None:
+        user_description = user_description.strip()
+
+        if not user_description:
+            raise HTTPException(
+                status_code=422,
+                detail="user_description must not be empty",
+            )
+
+        changed = changed or user_description != issue.user_description
+
+    if location is not None:
+        location = location.strip()
+
+        if not location:
+            raise HTTPException(
+                status_code=422,
+                detail="location must not be empty",
+            )
+
+        changed = changed or location != issue.location
+
+    existing_paths = list(issue.image_paths or [])
+
+    if len(existing_paths) + len(new_images) > MAX_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many images. Maximum is {MAX_IMAGES}.",
+        )
+
+    saved_names: list[str] = []
+    saved_full_paths: list[Path] = []
+
+    try:
+        for img in new_images:
+            stored_name, dest = save_image_upload(img, UPLOAD_DIR, "")
+            saved_names.append(stored_name)
+            saved_full_paths.append(dest)
+
+    except HTTPException:
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        raise
+
+    except Exception:
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to save uploaded images")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save uploaded images.",
+        )
+
+    if user_description is not None:
+        issue.user_description = user_description
+
+    if location is not None:
+        issue.location = location
+
+    if saved_names:
+        # Assign a new list so the JSON column change is detected and saved.
+        issue.image_paths = existing_paths + saved_names
+        changed = True
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+        for path in saved_full_paths:
+            path.unlink(missing_ok=True)
+
+        logger.exception("Failed to update issue %s", issue.complaint_id)
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update the problem.",
+        )
+
+    db.refresh(issue)
+
+    if changed:
+        try:
+            result = process_issue(issue, db)
+
+            issue.ai_image_caption = result["ai_image_caption"]
+            issue.ai_scene_category = result["ai_scene_category"]
+            issue.merged_problem_description = (
+                result["merged_problem_description"]
+            )
+            issue.recommended_ngos = result["recommended_ngos"]
+            issue.recommendation_explanations = (
+                result["recommendation_explanations"]
+            )
+
+            db.commit()
+            db.refresh(issue)
+
+        except Exception:
+            logger.exception(
+                "AI re-processing failed for issue %s; "
+                "edits kept with the previous matches.",
+                issue.complaint_id,
+            )
+
+            db.rollback()
+            db.refresh(issue)
+
+    return build_volunteer_issue_entry(issue, {})
+
+
+@app.delete(
+    "/volunteer-issues/{complaint_id}",
+    response_model=IssueDeleteResponse,
+)
+def delete_volunteer_issue(
+    complaint_id: str,
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Delete a still-unhandled report together with its files."""
+
+    issue = get_owned_issue(db, complaint_id, session.email)
+
+    if issue.status != "Reported":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A problem that is under evaluation or already solved "
+                "cannot be deleted"
+            ),
+        )
+
+    files_to_remove: list[Path] = []
+
+    image_names = (
+        issue.image_paths if isinstance(issue.image_paths, list) else []
+    )
+
+    for name in image_names:
+        path = safe_upload_path(UPLOAD_DIR, name)
+
+        if path:
+            files_to_remove.append(path)
+
+    # Only Rejected resolutions can exist for a "Reported" issue.
+    resolutions = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.complaint_id == issue.complaint_id,
+    ).all()
+
+    for resolution in resolutions:
+        for name in (
+            resolution.before_photo,
+            resolution.after_photo,
+            resolution.document_path,
+        ):
+            path = safe_upload_path(RESOLUTIONS_UPLOAD_DIR, name)
+
+            if path:
+                files_to_remove.append(path)
+
+        db.delete(resolution)
+
+    db.delete(issue)
+    db.commit()
+
+    # Remove files only after the rows are gone.
+    for path in files_to_remove:
+        path.unlink(missing_ok=True)
+
+    return {
+        "message": f"Issue '{complaint_id}' deleted",
+        "complaint_id": complaint_id,
+    }
+
+
+# ─── Admin: Review Resolutions ────────────────────────────────────
+RESOLUTION_STATUSES = ("Under evaluation", "Approved", "Rejected", "Closed")
+
+
+@app.get(
+    "/admin/resolutions",
+    response_model=list[AdminResolutionEntry],
+    dependencies=[Depends(require_admin)],
+)
+def list_admin_resolutions(
+    status: str = Query(default="Under evaluation"),
+    db: Session = Depends(get_db),
+):
+    """List submitted proofs, newest first, filtered by resolution status (or "all")."""
+
+    if status != "all" and status not in RESOLUTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of: all, {', '.join(RESOLUTION_STATUSES)}",
+        )
+
+    query = (
+        db.query(IssueResolutionDB, NGODB.name)
+        .join(NGODB, IssueResolutionDB.ngo_id == NGODB.id)
+    )
+
+    if status != "all":
+        query = query.filter(IssueResolutionDB.status == status)
+
+    rows = (
+        query
+        .order_by(
+            IssueResolutionDB.submitted_at.desc(),
+            IssueResolutionDB.id.desc(),
+        )
+        .all()
+    )
+
+    complaint_ids = list({res.complaint_id for res, _ in rows})
+    issues_by_id = {}
+
+    if complaint_ids:
+        issues_by_id = {
+            i.complaint_id: i
+            for i in db.query(IssueDB).filter(
+                IssueDB.complaint_id.in_(complaint_ids),
+            ).all()
+        }
+
+    entries: list[AdminResolutionEntry] = []
+
+    for res, ngo_name in rows:
+        issue = issues_by_id.get(res.complaint_id)
+
+        entries.append(AdminResolutionEntry(
+            resolution_id=res.id,
+            complaint_id=res.complaint_id,
+            ngo_id=res.ngo_id,
+            ngo_name=ngo_name,
+            location=issue.location if issue else None,
+            description=issue.user_description[:200] if issue else None,
+            solution_type=res.solution_type,
+            solution_text=res.solution_text,
+            document_name=res.document_name,
+            status=res.status,
+            submitted_at=res.submitted_at,
+            image_count=len(issue.image_paths) if issue and issue.image_paths else 0,
+        ))
+
+    return entries
+
+
+@app.post(
+    "/admin/resolutions/{resolution_id}/approve",
+    dependencies=[Depends(require_admin)],
+)
+def approve_resolution(
+    resolution_id: int,
+    db: Session = Depends(get_db),
+):
+    """Accept an NGO's proof: the issue becomes Resolved and the reporter is told."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Resolution '{resolution_id}' not found",
+        )
+
+    if resolution.status != "Under evaluation":
+        raise HTTPException(
+            status_code=400,
+            detail="This proof is not under evaluation",
+        )
+
+    issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{resolution.complaint_id}' not found",
+        )
+
+    if issue.status == "Resolved":
+        raise HTTPException(
+            status_code=400,
+            detail="This problem has already been solved",
+        )
+
+    now = datetime.utcnow()
+
+    resolution.status = "Approved"
+    resolution.decided_at = now
+
+    competing = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.complaint_id == resolution.complaint_id,
+        IssueResolutionDB.id != resolution.id,
+        IssueResolutionDB.status == "Under evaluation",
+    ).all()
+
+    for other in competing:
+        other.status = "Closed"
+        other.reject_reason = "Another NGO's proof was approved"
+        other.decided_at = now
+
+    issue.status = "Resolved"
+
+    ngo = db.query(NGODB).filter(NGODB.id == resolution.ngo_id).first()
+
+    volunteer = None
+
+    if issue.reporter_email:
+        volunteer = db.query(VolunteerDB).filter(
+            func.lower(VolunteerDB.email) == issue.reporter_email.strip().lower(),
+        ).first()
+
+    # Notify the reporter from the solving NGO (a message needs a sender email).
+    # Emails are lowercased so the message lands in the existing thread.
+    if volunteer and ngo and ngo.email:
+        db.add(MessageDB(
+            sender_email=ngo.email.strip().lower(),
+            sender_role="ngo",
+            recipient_email=volunteer.email.strip().lower(),
+            recipient_role="volunteer",
+            message_type="text",
+            body=(
+                f"Good news! {ngo.name} has marked the problem you "
+                f"reported ({issue.complaint_id}) as solved. "
+                f"Thank you for reporting it."
+            ),
+        ))
+
+    log_admin_action(db, "approve_resolution", "resolution", resolution.id, {
+        "complaint_id": resolution.complaint_id,
+        "ngo_name": ngo.name if ngo else None,
+        "closed_resolution_ids": [other.id for other in competing],
+    })
+
+    db.commit()
+
+    return {
+        "resolution_id": resolution.id,
+        "complaint_id": resolution.complaint_id,
+        "status": resolution.status,
+    }
+
+
+@app.post(
+    "/admin/resolutions/{resolution_id}/reject",
+    dependencies=[Depends(require_admin)],
+)
+def reject_resolution(
+    resolution_id: int,
+    payload: RejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Reject an NGO's proof with a reason."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Resolution '{resolution_id}' not found",
+        )
+
+    if resolution.status != "Under evaluation":
+        raise HTTPException(
+            status_code=400,
+            detail="This proof is not under evaluation",
+        )
+
+    resolution.status = "Rejected"
+    resolution.reject_reason = payload.reason
+    resolution.decided_at = datetime.utcnow()
+
+    issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+
+    still_pending = db.query(IssueResolutionDB.id).filter(
+        IssueResolutionDB.complaint_id == resolution.complaint_id,
+        IssueResolutionDB.id != resolution.id,
+        IssueResolutionDB.status == "Under evaluation",
+    ).first()
+
+    if issue and not still_pending and issue.status == "Under evaluation":
+        issue.status = "Reported"
+
+    ngo_name = db.query(NGODB.name).filter(
+        NGODB.id == resolution.ngo_id,
+    ).scalar()
+
+    log_admin_action(db, "reject_resolution", "resolution", resolution.id, {
+        "complaint_id": resolution.complaint_id,
+        "ngo_name": ngo_name,
+        "reason": payload.reason,
+    })
+
+    db.commit()
+
+    return {
+        "resolution_id": resolution.id,
+        "complaint_id": resolution.complaint_id,
+        "status": resolution.status,
+    }
+
+
+# ─── Safe File Serving for Issue Photos and Proofs ────────────────
+def serve_stored_file(
+    base_dir: Path,
+    stored_name,
+    filename: Optional[str] = None,
+) -> FileResponse:
+    """Serve one stored file from base_dir, or 404 if it is unsafe or missing."""
+
+    path = safe_upload_path(base_dir, stored_name)
+
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+    if filename:
+        return FileResponse(path=path, media_type=media_type, filename=filename)
+
+    return FileResponse(path=path, media_type=media_type)
+
+
+@app.get("/issue-files/issue/{complaint_id}/{index}")
+def get_issue_photo(
+    complaint_id: str,
+    index: int,
+    session: Optional[UserSessionDB] = Depends(require_user_or_admin),
+    db: Session = Depends(get_db),
+):
+    """Serve one photo of a reported issue to its reporter, a matched NGO, or an admin."""
+
+    issue = get_issue_by_complaint_id(db, complaint_id)
+
+    if not issue:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Issue '{complaint_id}' not found",
+        )
+
+    # session is None for an admin session.
+    allowed = session is None
+
+    if session is not None and session.user_role == "volunteer":
+        allowed = is_issue_reporter(issue, session.email)
+
+    if session is not None and session.user_role == "ngo":
+        ngo = db.query(NGODB).filter(NGODB.id == session.user_id).first()
+        allowed = bool(ngo and issue_matches_ngo(issue, ngo))
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this file",
+        )
+
+    names = issue.image_paths if isinstance(issue.image_paths, list) else []
+
+    if index < 0 or index >= len(names):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return serve_stored_file(UPLOAD_DIR, names[index])
+
+
+@app.get("/issue-files/resolution/{resolution_id}/{kind}")
+def get_resolution_file(
+    resolution_id: int,
+    kind: str,
+    session: Optional[UserSessionDB] = Depends(require_user_or_admin),
+    db: Session = Depends(get_db),
+):
+    """Serve a proof file to the submitting NGO, the issue's reporter, or an admin."""
+
+    resolution = db.query(IssueResolutionDB).filter(
+        IssueResolutionDB.id == resolution_id,
+    ).first()
+
+    if not resolution:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if kind not in ("before", "after", "document"):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # session is None for an admin session.
+    allowed = session is None
+
+    if session is not None and session.user_role == "ngo":
+        allowed = session.user_id == resolution.ngo_id
+
+    if session is not None and session.user_role == "volunteer":
+        issue = get_issue_by_complaint_id(db, resolution.complaint_id)
+        allowed = bool(issue and is_issue_reporter(issue, session.email))
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this file",
+        )
+
+    if kind == "document":
+        return serve_stored_file(
+            RESOLUTIONS_UPLOAD_DIR,
+            resolution.document_path,
+            filename=resolution.document_name,
+        )
+
+    stored_name = (
+        resolution.before_photo if kind == "before" else resolution.after_photo
+    )
+
+    return serve_stored_file(RESOLUTIONS_UPLOAD_DIR, stored_name)
+
+
 # ─── Volunteer Registration ────────────────────────────────────────
+# With EMAIL_VERIFICATION_REQUIRED (default) both registration endpoints
+# answer with exactly this body whether or not the email is already
+# registered, so they cannot be used to find out which emails have accounts.
+REGISTRATION_CHECK_EMAIL = {
+    "message": (
+        "Check your email to finish signing up. We have sent a message to "
+        "the address you entered."
+    ),
+    "verification_required": True,
+}
+
+
+def _store_volunteer_vector(volunteer_id: int, skills: str) -> None:
+    """Background job: pre-compute the skills vector so the first dashboard load is fast."""
+    db = SessionLocal()
+    try:
+        refresh_vector(db, "volunteer_skills", volunteer_id, skills)
+    except Exception:
+        logger.exception("Could not store volunteer skills embedding")
+    finally:
+        db.close()
+
+
 @app.post("/add-volunteer")
 def add_volunteer(
     volunteer: Volunteer,
+    request: Request,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    volunteer_signup_limiter.check(
+        rate_limit.client_ip(request),
+        "Too many registrations from this network. Please try again later.",
+    )
+
+    # Errors that do not depend on existing accounts are shown as before.
+    password_error = password_policy_error(volunteer.password)
+
+    if password_error:
+        raise HTTPException(
+            status_code=422,
+            detail=password_error,
+        )
+
+    email = (volunteer.email or "").strip().lower()
+    verification = settings.EMAIL_VERIFICATION_REQUIRED
+
+    existing_email = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email
+    ).first() if email else None
+
+    # The password is hashed on every path, so a taken email is not faster.
+    password_hash = hash_password(volunteer.password)
+
+    if existing_email and verification:
+        email_verification.handle_existing_email(db, background, "volunteer", existing_email)
+        return REGISTRATION_CHECK_EMAIL
+
+    if existing_email:
+        # EMAIL_VERIFICATION_REQUIRED=false keeps the old answer (reveals the email exists).
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email '{volunteer.email}' is already registered",
+        )
+
+    # A taken NAME is still reported: it says nothing about any email.
     if db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.name)
         == volunteer.name.lower()
@@ -458,40 +1656,47 @@ def add_volunteer(
             detail=f"Volunteer '{volunteer.name}' already exists",
         )
 
-    if volunteer.email:
-        existing_email = db.query(VolunteerDB).filter(
-            func.lower(VolunteerDB.email)
-            == volunteer.email.lower()
-        ).first()
-
-        if existing_email:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Email '{volunteer.email}' "
-                    f"is already registered"
-                ),
-            )
-
-    db.add(
-        VolunteerDB(
-            name=volunteer.name,
-            email=volunteer.email or None,
-            contact_number=(
-                volunteer.contact_number or None
-            ),
-            password=volunteer.password or None,
-            age=volunteer.age,
-            designation=volunteer.designation or None,
-            gender=volunteer.gender or None,
-            skills=volunteer.skills or None,
-            location=volunteer.location or None,
-            availability=volunteer.availability or None,
-            experience=volunteer.experience or None,
-        )
+    new_volunteer = VolunteerDB(
+        name=volunteer.name,
+        email=email or None,
+        contact_number=(
+            volunteer.contact_number or None
+        ),
+        password=password_hash,
+        age=volunteer.age,
+        designation=volunteer.designation or None,
+        gender=volunteer.gender or None,
+        skills=volunteer.skills or None,
+        location=volunteer.location or None,
+        availability=volunteer.availability or None,
+        experience=volunteer.experience or None,
+        email_verified=0 if verification else 1,
     )
 
-    db.commit()
+    db.add(new_volunteer)
+
+    try:
+        db.flush()
+        if verification:
+            email_verification.start_verification(db, background, "volunteer", new_volunteer)
+        else:
+            db.commit()
+    except IntegrityError:
+        # Lost a race with an identical registration (unique name / email index).
+        db.rollback()
+        if verification and email_verification.find_account(db, "volunteer", email):
+            return REGISTRATION_CHECK_EMAIL
+        raise HTTPException(
+            status_code=400,
+            detail="This name or email is already registered",
+        )
+
+    # Pre-compute the skills vector after the answer (keeps both paths equally fast).
+    if new_volunteer.skills:
+        background.add_task(_store_volunteer_vector, new_volunteer.id, new_volunteer.skills)
+
+    if verification:
+        return REGISTRATION_CHECK_EMAIL
 
     total_volunteers = db.query(
         func.count(VolunteerDB.id)
@@ -500,12 +1705,15 @@ def add_volunteer(
     return {
         "message": "Volunteer added",
         "total_volunteers": total_volunteers,
+        "verification_required": False,
     }
 
 
 # ─── NGO Registration ──────────────────────────────────────────────
 @app.post("/add-ngo")
-async def add_ngo(
+def add_ngo(
+    request: Request,
+    background: BackgroundTasks,
     name: str = Form(...),
     email: str = Form(...),
     contact_number: str = Form(...),
@@ -559,9 +1767,14 @@ async def add_ngo(
     New NGOs are created with Pending verification status.
     """
 
+    ngo_signup_limiter.check(
+        rate_limit.client_ip(request),
+        "Too many registrations from this network. Please try again later.",
+    )
+
     # ── Clean text fields ──────────────────────────────────────────
     name = name.strip()
-    email = email.strip()
+    email = email.strip().lower()
     contact_number = contact_number.strip()
     category = category.strip()
     location = location.strip()
@@ -587,6 +1800,14 @@ async def add_ngo(
             detail="Email address is required",
         )
 
+    try:
+        email = normalise_email(email)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid email address",
+        )
+
     if not contact_number:
         raise HTTPException(
             status_code=422,
@@ -597,6 +1818,14 @@ async def add_ngo(
         raise HTTPException(
             status_code=422,
             detail="Password is required",
+        )
+
+    password_error = password_policy_error(password)
+
+    if password_error:
+        raise HTTPException(
+            status_code=422,
+            detail=password_error,
         )
 
     if not category:
@@ -623,82 +1852,35 @@ async def add_ngo(
             detail="Legal structure is required",
         )
 
-    # ── Duplicate NGO name ─────────────────────────────────────────
-    existing_ngo = db.query(NGODB).filter(
-        func.lower(NGODB.name)
-        == name.lower()
-    ).first()
-
-    if existing_ngo:
-        raise HTTPException(
-            status_code=400,
-            detail=f"NGO '{name}' already exists",
-        )
+    verification = settings.EMAIL_VERIFICATION_REQUIRED
 
     # ── Duplicate email ────────────────────────────────────────────
+    # With verification on, a taken email gets the same answer as a new one
+    # (after the same file checks and password hashing, see below).
     existing_email = db.query(NGODB).filter(
         func.lower(NGODB.email)
         == email.lower()
     ).first()
 
-    if existing_email:
+    if existing_email and not verification:
         raise HTTPException(
             status_code=400,
             detail=f"Email '{email}' is already registered",
         )
 
-    # ── Save optional verification documents ───────────────────────
-    registration_certificate = await save_ngo_file(
-        registration_cert,
-        "Registration Certificate",
-    )
+    # ── Duplicate NGO name (says nothing about any email) ──────────
+    if not existing_email:
+        existing_ngo = db.query(NGODB).filter(
+            func.lower(NGODB.name)
+            == name.lower()
+        ).first()
 
-    saved_pan_card = await save_ngo_file(
-        pan_card,
-        "PAN Card",
-    )
+        if existing_ngo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"NGO '{name}' already exists",
+            )
 
-    saved_12a = await save_ngo_file(
-        cert_12a,
-        "12A Certificate",
-    )
-
-    saved_80g = await save_ngo_file(
-        cert_80g,
-        "80G Certificate",
-    )
-
-    saved_fcra = await save_ngo_file(
-        cert_fcra,
-        "FCRA Certificate",
-    )
-
-    saved_trust_deed = await save_ngo_file(
-        trust_deed,
-        "Trust Deed",
-    )
-
-    saved_society_registration_certificate = await save_ngo_file(
-        society_registration_certificate,
-        "Society Registration Certificate",
-    )
-
-    saved_society_moa = await save_ngo_file(
-        society_moa,
-        "Society MOA",
-    )
-
-    saved_section8_incorporation_certificate = await save_ngo_file(
-        section8_incorporation_certificate,
-        "Section 8 Incorporation Certificate",
-    )
-
-    saved_section8_moa_aoa = await save_ngo_file(
-        section8_moa_aoa,
-        "Section 8 MOA/AOA",
-    )
-
-    # ── Save optional NGO work images ───────────────────────────────
     if len(work_images) > MAX_IMAGES:
         raise HTTPException(
             status_code=400,
@@ -707,63 +1889,57 @@ async def add_ngo(
             ),
         )
 
-    saved_work_images: list[str] = []
+    # ── Save optional documents and work images ────────────────────
+    # Every file written is tracked so a failure removes them all.
+    saved = uploads.SavedFiles()
 
-    for image in work_images:
-        if image.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{image.filename}' is not a supported "
-                    f"image type."
-                ),
-            )
-
-        contents = await image.read()
-
-        if len(contents) > MAX_IMAGE_SIZE:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{image.filename}' exceeds the "
-                    f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB "
-                    f"size limit."
-                ),
-            )
-
-        ext = Path(
-            image.filename or ""
-        ).suffix.lower()
-
-        if ext not in {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".gif",
-            ".webp",
-            ".bmp",
-            ".tiff",
-            ".tif",
-        }:
-            ext = ".jpg"
-
-        safe_name = (
-            f"ngo_work_{uuid.uuid4().hex}{ext}"
+    try:
+        registration_certificate = save_ngo_file(
+            registration_cert, "Registration Certificate", saved,
+        )
+        saved_pan_card = save_ngo_file(pan_card, "PAN Card", saved)
+        saved_12a = save_ngo_file(cert_12a, "12A Certificate", saved)
+        saved_80g = save_ngo_file(cert_80g, "80G Certificate", saved)
+        saved_fcra = save_ngo_file(cert_fcra, "FCRA Certificate", saved)
+        saved_trust_deed = save_ngo_file(trust_deed, "Trust Deed", saved)
+        saved_society_registration_certificate = save_ngo_file(
+            society_registration_certificate,
+            "Society Registration Certificate", saved,
+        )
+        saved_society_moa = save_ngo_file(society_moa, "Society MOA", saved)
+        saved_section8_incorporation_certificate = save_ngo_file(
+            section8_incorporation_certificate,
+            "Section 8 Incorporation Certificate", saved,
+        )
+        saved_section8_moa_aoa = save_ngo_file(
+            section8_moa_aoa, "Section 8 MOA/AOA", saved,
         )
 
-        destination = UPLOAD_DIR / safe_name
+        saved_work_images = [
+            uploads.save_image(image, UPLOAD_DIR, "ngo_work_", MAX_IMAGE_SIZE, saved)[0]
+            for image in work_images
+            if image.filename
+        ]
+    except BaseException:
+        saved.cleanup()
+        raise
 
-        with open(destination, "wb") as file:
-            file.write(contents)
+    # Hashed on every path, so a taken email is not answered faster.
+    password_hash = hash_password(password)
 
-        saved_work_images.append(safe_name)
+    if existing_email:
+        # Same checks and the same answer as a new registration; the
+        # uploaded files are not kept and the owner gets a notice instead.
+        saved.cleanup()
+        email_verification.handle_existing_email(db, background, "ngo", existing_email)
+        return REGISTRATION_CHECK_EMAIL
 
     # ── Create NGO record ──────────────────────────────────────────
     ngo = NGODB(
         name=name,
         email=email,
         contact_number=contact_number,
-        password=password,
+        password=password_hash,
         category=category,
         location=location,
         year_founded=year_founded,
@@ -795,10 +1971,34 @@ async def add_ngo(
         ),
 
         verification_status="Pending",
+        email_verified=0 if verification else 1,
     )
 
     db.add(ngo)
-    db.commit()
+
+    try:
+        db.flush()
+        if verification:
+            email_verification.start_verification(db, background, "ngo", ngo)
+        else:
+            db.commit()
+    except IntegrityError:
+        db.rollback()
+        saved.cleanup()
+        if verification and email_verification.find_account(db, "ngo", email):
+            return REGISTRATION_CHECK_EMAIL
+        raise HTTPException(
+            status_code=400,
+            detail="This NGO name or email is already registered",
+        )
+    except BaseException:
+        db.rollback()
+        saved.cleanup()
+        raise
+
+    if verification:
+        return REGISTRATION_CHECK_EMAIL
+
     db.refresh(ngo)
 
     total_ngos = db.query(
@@ -815,6 +2015,7 @@ async def add_ngo(
         ),
         "ngo_id": ngo.id,
         "total_ngos": total_ngos,
+        "verification_required": False,
     }
 
 
@@ -827,8 +2028,11 @@ async def add_ngo(
 def organize_event(
     email: str,
     event: EventCreate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -840,6 +2044,11 @@ def organize_event(
             status_code=404,
             detail=f"No NGO found with email '{email}'",
         )
+
+    date_problem = event_rules.date_problem(event.event_date)
+
+    if date_problem:
+        raise HTTPException(status_code=422, detail=date_problem)
 
     activity = ActivityDB(
         ngo_id=ngo.id,
@@ -855,7 +2064,18 @@ def organize_event(
     db.commit()
     db.refresh(activity)
 
-    return activity
+    if activity.required_skills and activity.required_skills.strip():
+        try:
+            refresh_vector(
+                db,
+                "event_skills",
+                activity.id,
+                activity.required_skills.strip(),
+            )
+        except Exception:
+            logger.exception("Could not store event skills embedding")
+
+    return event_response(activity)
 
 
 # ─── NGO Events ────────────────────────────────────────────────────
@@ -866,8 +2086,11 @@ def organize_event(
 def get_ngo_events(
     email: str,
     include_cancelled: bool = Query(False),
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -894,10 +2117,346 @@ def get_ngo_events(
         .all()
     )
 
+    joined_counts: dict[int, int] = {}
+    approved_counts: dict[int, int] = {}
+    feedback_counts: dict[int, int] = {}
+    if events:
+        joined_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
+        approved_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+                ActivitySignupDB.approved_at.isnot(None),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
+        feedback_counts = dict(
+            db.query(
+                ActivitySignupDB.activity_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.activity_id.in_(
+                    [ev.id for ev in events]
+                ),
+                ActivitySignupDB.approved_at.isnot(None),
+                ActivitySignupDB.attendance_status.isnot(None),
+            )
+            .group_by(ActivitySignupDB.activity_id)
+            .all()
+        )
+
+    event_responses = [
+        event_response(
+            ev,
+            joined_count=joined_counts.get(ev.id, 0),
+            approved_count=approved_counts.get(ev.id, 0),
+            feedback_count=feedback_counts.get(ev.id, 0),
+        )
+        for ev in events
+    ]
+
     return NGOEventsResponse(
         ngo_name=ngo.name,
         total_events=len(events),
-        events=events,
+        events=event_responses,
+    )
+
+
+# ─── Event Volunteers (joined list for an NGO's event) ─────────────
+@app.get(
+    "/event-volunteers/{event_id}",
+    response_model=EventVolunteersResponse,
+)
+def get_event_volunteers(
+    event_id: int,
+    session: UserSessionDB = Depends(require_ngo),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, session.email)
+
+    rows = (
+        db.query(ActivitySignupDB, VolunteerDB)
+        .join(
+            VolunteerDB,
+            ActivitySignupDB.volunteer_id == VolunteerDB.id,
+        )
+        .filter(ActivitySignupDB.activity_id == event.id)
+        .order_by(
+            ActivitySignupDB.approved_at.is_(None),
+            ActivitySignupDB.created_at.asc(),
+        )
+        .all()
+    )
+
+    attended_counts: dict[int, int] = {}
+    if rows:
+        attended_counts = dict(
+            db.query(
+                ActivitySignupDB.volunteer_id,
+                func.count(ActivitySignupDB.id),
+            )
+            .filter(
+                ActivitySignupDB.volunteer_id.in_(
+                    [vol.id for _, vol in rows]
+                ),
+                ActivitySignupDB.attendance_status == "attended",
+            )
+            .group_by(ActivitySignupDB.volunteer_id)
+            .all()
+        )
+
+    volunteers = [
+        EventVolunteerEntry(
+            volunteer_id=vol.id,
+            name=vol.name,
+            email=vol.email,
+            skills=vol.skills,
+            experience=vol.experience,
+            location=vol.location,
+            events_attended=attended_counts.get(vol.id, 0),
+            joined_at=signup.created_at,
+            approved=signup.approved_at is not None,
+            approved_at=signup.approved_at,
+            attendance_status=signup.attendance_status,
+            rating=(
+                signup.rating
+                if signup.attendance_status == "attended"
+                else None
+            ),
+            feedback=(
+                signup.feedback
+                if signup.attendance_status == "attended"
+                else None
+            ),
+        )
+        for signup, vol in rows
+    ]
+
+    return EventVolunteersResponse(
+        event_id=event.id,
+        title=event.title,
+        status=event.status,
+        spots_available=event.spots_available,
+        joined_count=len(volunteers),
+        approved_count=sum(1 for v in volunteers if v.approved),
+        volunteers=volunteers,
+        is_completed=is_completed(event),
+        phase=event_rules.event_phase(event),
+        event_date=event.event_date,
+        event_day=event_rules.event_day_text(event),
+    )
+
+
+# ─── Approve / Unapprove a joined volunteer ────────────────────────
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/approve",
+    response_model=ApprovalResponse,
+)
+def approve_event_volunteer(
+    event_id: int,
+    volunteer_id: int,
+    session: UserSessionDB = Depends(require_ngo),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, session.email)
+
+    if event.status != "Active":
+        raise HTTPException(
+            status_code=400,
+            detail="Only an active event can have volunteers approved",
+        )
+
+    require_open(event)
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    approved_count = count_approved(db, event.id)
+
+    # Idempotent: already approved.
+    if signup.approved_at is not None:
+        return ApprovalResponse(
+            volunteer_id=volunteer_id,
+            approved=True,
+            approved_count=approved_count,
+        )
+
+    if is_full(event, approved_count):
+        raise HTTPException(
+            status_code=400,
+            detail="All spots for this event are already filled",
+        )
+
+    signup.approved_at = datetime.utcnow()
+    db.commit()
+
+    return ApprovalResponse(
+        volunteer_id=volunteer_id,
+        approved=True,
+        approved_count=approved_count + 1,
+    )
+
+
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/unapprove",
+    response_model=ApprovalResponse,
+)
+def unapprove_event_volunteer(
+    event_id: int,
+    volunteer_id: int,
+    session: UserSessionDB = Depends(require_ngo),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, session.email)
+
+    require_open(event)
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    # Idempotent: if not approved there is nothing to change.
+    if signup.approved_at is not None:
+        signup.approved_at = None
+        db.commit()
+
+    return ApprovalResponse(
+        volunteer_id=volunteer_id,
+        approved=False,
+        approved_count=count_approved(db, event.id),
+    )
+
+
+@app.post(
+    "/event-volunteers/{event_id}/{volunteer_id}/feedback",
+    response_model=FeedbackResponse,
+)
+def submit_event_volunteer_feedback(
+    event_id: int,
+    volunteer_id: int,
+    body: FeedbackRequest,
+    session: UserSessionDB = Depends(require_ngo),
+    db: Session = Depends(get_db),
+):
+    event = get_owned_event(db, event_id, session.email)
+
+    if event.status == "Cancelled":
+        raise HTTPException(
+            status_code=400,
+            detail="Cancelled events cannot be rated",
+        )
+
+    if not is_completed(event):
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback can be given only after the event date has passed",
+        )
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.volunteer_id == volunteer_id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="This volunteer has not joined this event",
+        )
+
+    if signup.approved_at is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Only approved volunteers can be rated",
+        )
+
+    if signup.attendance_status is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback has already been submitted for this volunteer",
+        )
+
+    if body.attendance == "attended":
+        rating = body.rating
+        if (
+            not isinstance(rating, int)
+            or isinstance(rating, bool)
+            or not 1 <= rating <= 5
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Rating must be between 1 and 5",
+            )
+
+        feedback = (body.feedback or "").strip()
+        if not feedback:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback text is required",
+            )
+        if len(feedback) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback must be 1000 characters or fewer",
+            )
+
+        signup.attendance_status = "attended"
+        signup.attended_at = datetime.utcnow()
+        signup.rating = rating
+        signup.feedback = feedback
+    else:
+        signup.attendance_status = "not_attended"
+        signup.attended_at = None
+        signup.rating = None
+        signup.feedback = None
+
+    db.commit()
+
+    feedback_count = db.query(func.count(ActivitySignupDB.id)).filter(
+        ActivitySignupDB.activity_id == event.id,
+        ActivitySignupDB.approved_at.isnot(None),
+        ActivitySignupDB.attendance_status.isnot(None),
+    ).scalar()
+
+    return FeedbackResponse(
+        volunteer_id=volunteer_id,
+        attendance_status=signup.attendance_status,
+        rating=signup.rating,
+        feedback=signup.feedback,
+        feedback_count=feedback_count,
     )
 
 
@@ -908,9 +2467,12 @@ def get_ngo_events(
 )
 def get_ngo_issues(
     email: str,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
     """Return issues whose AI recommendations include the NGO identified by *email*."""
+
+    ensure_own_email(session, email)
 
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
@@ -929,12 +2491,37 @@ def get_ngo_issues(
         .all()
     )
 
+    # This NGO's own proofs, and the Approved proof of every Resolved issue.
+    own_resolutions = {
+        res.complaint_id: res
+        for res in db.query(IssueResolutionDB).filter(
+            IssueResolutionDB.ngo_id == ngo.id,
+        ).all()
+    }
+    approved_by_issue = {
+        complaint_id: res
+        for complaint_id, (res, _name) in approved_resolutions(
+            db,
+            [i.complaint_id for i in all_issues if i.status == "Resolved"],
+        ).items()
+    }
+
     matched: list[NGOIssueEntry] = []
 
     for issue in all_issues:
         recs = issue.recommended_ngos
         if not recs or not isinstance(recs, list):
             continue
+
+        # A solved issue stays visible only to the NGO whose proof was approved.
+        solved_res = None
+        if issue.status == "Resolved":
+            solved_res = approved_by_issue.get(issue.complaint_id)
+            if solved_res is None or solved_res.ngo_id != ngo.id:
+                continue
+
+        own_res = own_resolutions.get(issue.complaint_id)
+        shown_res = solved_res or own_res
 
         expls = issue.recommendation_explanations
         if not isinstance(expls, list):
@@ -958,6 +2545,16 @@ def get_ngo_issues(
                     reporter_email=issue.reporter_email,
                     ai_image_caption=issue.ai_image_caption,
                     ai_scene_category=issue.ai_scene_category,
+                    resolution_status=own_res.status if own_res else None,
+                    reject_reason=own_res.reject_reason if own_res else None,
+                    solved=solved_res is not None,
+                    solved_by_me=solved_res is not None,
+                    solved_at=solved_res.decided_at if solved_res else None,
+                    solution_type=shown_res.solution_type if shown_res else None,
+                    solution_text=shown_res.solution_text if shown_res else None,
+                    document_name=shown_res.document_name if shown_res else None,
+                    resolution_id=shown_res.id if shown_res else None,
+                    image_count=len(issue.image_paths) if issue.image_paths else 0,
                 ))
                 break  # one match per issue is enough
 
@@ -972,23 +2569,56 @@ def get_ngo_issues(
 def update_event_status(
     event_id: int,
     status_update: EventStatusUpdate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = db.query(ActivityDB).filter(
-        ActivityDB.id == event_id,
-    ).first()
+    event = get_owned_event(db, event_id, session.email)
 
-    if not event:
+    if is_completed(event):
         raise HTTPException(
-            status_code=404,
-            detail=f"Event '{event_id}' not found",
+            status_code=400,
+            detail="This event has already been completed and can no longer be changed",
         )
+
+    if (
+        status_update.status == "Active"
+        and event.status != "Active"
+        and not event_rules.is_open(event)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="An event cannot be reopened once its date has started",
+        )
+
+    if status_update.status == "Filled":
+        if event.status != "Active":
+            raise HTTPException(
+                status_code=400,
+                detail="Only an active event can be marked as filled",
+            )
+
+        if event.spots_available is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Set the number of volunteers needed "
+                    "before marking the event as filled"
+                ),
+            )
+
+        approved = count_approved(db, event.id)
+
+        if approved < event.spots_available:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough volunteers have been approved yet",
+            )
 
     event.status = status_update.status
     db.commit()
     db.refresh(event)
 
-    return event
+    return event_response(event)
 
 
 # ─── Update Event (partial) ────────────────────────────────────────
@@ -996,29 +2626,57 @@ def update_event_status(
 def update_event(
     event_id: int,
     event_update: EventUpdate,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
-    event = db.query(ActivityDB).filter(
-        ActivityDB.id == event_id,
-    ).first()
+    event = get_owned_event(db, event_id, session.email)
 
-    if not event:
+    if is_completed(event):
         raise HTTPException(
-            status_code=404,
-            detail=f"Event '{event_id}' not found",
+            status_code=400,
+            detail="This event has already been completed and can no longer be changed",
         )
 
-    for field, value in event_update.model_dump(exclude_unset=True).items():
+    changes = event_update.model_dump(exclude_unset=True)
+
+    if "event_date" in changes and changes["event_date"] != event.event_date:
+        date_problem = event_rules.date_problem(changes["event_date"])
+        if date_problem:
+            raise HTTPException(status_code=422, detail=date_problem)
+
+    if changes.get("spots_available") is not None:
+        approved = count_approved(db, event.id)
+        if changes["spots_available"] < approved:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{approved} volunteer{'s are' if approved != 1 else ' is'} "
+                    f"already approved, so the event needs at least {approved} spots"
+                ),
+            )
+
+    for field, value in changes.items():
         setattr(event, field, value)
 
     db.commit()
     db.refresh(event)
 
-    return event
+    if event.required_skills and event.required_skills.strip():
+        try:
+            refresh_vector(
+                db,
+                "event_skills",
+                event.id,
+                event.required_skills.strip(),
+            )
+        except Exception:
+            logger.exception("Could not store event skills embedding")
+
+    return event_response(event)
 
 
 # ─── Data Retrieval ────────────────────────────────────────────────
-@app.get("/volunteers")
+@app.get("/volunteers", dependencies=[Depends(require_admin)])
 def get_volunteers(
     db: Session = Depends(get_db),
 ):
@@ -1048,8 +2706,11 @@ def get_volunteers(
 )
 def get_volunteer_dashboard(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == email.strip().lower()
@@ -1064,12 +2725,14 @@ def get_volunteer_dashboard(
     return volunteer
 
 
-@app.get("/ngos")
+@app.get("/ngos", dependencies=[Depends(require_user)])
 def get_ngos(
     db: Session = Depends(get_db),
 ):
+    """Every active NGO with its contact email; logged-in volunteers and NGOs only."""
     ngos = (
         db.query(NGODB)
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -1081,7 +2744,6 @@ def get_ngos(
             "motto": n.motto,
             "category": n.category,
             "location": n.location,
-            "urgency": n.urgency,
             "verification_status": (
                 n.verification_status
             ),
@@ -1098,8 +2760,11 @@ def get_ngos(
 )
 def get_ngo_dashboard(
     email: str,
+    session: UserSessionDB = Depends(require_ngo),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     ngo = db.query(NGODB).filter(
         NGODB.email.isnot(None),
         func.lower(NGODB.email)
@@ -1115,64 +2780,159 @@ def get_ngo_dashboard(
     return ngo
 
 
-# ─── Delete Volunteer ──────────────────────────────────────────────
-@app.delete("/delete-volunteer/{name}")
-def delete_volunteer(
-    name: str,
+# ─── Volunteer / NGO Login ────────────────────────────────────────
+LOGIN_FAILED_DETAIL = "Incorrect email or password"
+
+
+class LoginRequest(BaseModel):
+    # Defaults instead of required fields, so a missing email or password
+    # gets the same 401 as a wrong one rather than a 422.
+    email: str = ""
+    password: str = ""
+
+
+def check_login_password(account, password: str) -> None:
+    """Raise the one login-failure 401 unless password matches account's hash.
+
+    Unknown accounts, empty passwords and stored values that are not a valid
+    hash are checked against DUMMY_HASH first, so every failure takes about
+    as long as a wrong password. The password is never logged.
+    """
+
+    stored = account.password if account is not None else None
+
+    if account is None or not password or not is_hashed(stored):
+        verify_password(password, DUMMY_HASH)
+        raise HTTPException(status_code=401, detail=LOGIN_FAILED_DETAIL)
+
+    if not verify_password(password, stored):
+        raise HTTPException(status_code=401, detail=LOGIN_FAILED_DETAIL)
+
+
+class VolunteerLoginResponse(VolunteerDashboardResponse):
+    token: str = ""
+
+
+class NGOLoginResponse(NGODashboardResponse):
+    token: str = ""
+
+
+def check_login_with_limit(role: str, email: str, account, password: str, ip: str) -> None:
+    """Apply the login lockout (login_limiter.py) around check_login_password.
+
+    A blocked login gets 429 before any password check. A wrong password
+    (or unknown email) counts as a failure; a correct one clears the
+    failures of this (account, IP) pair.
+    """
+
+    login_limiter.check_login_allowed(role, email, ip)
+
+    try:
+        check_login_password(account, password)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            login_limiter.record_failed_login(role, email, ip)
+        raise
+
+    login_limiter.reset_failed_logins(role, email, ip)
+
+
+@app.post(
+    "/volunteer-login",
+    response_model=VolunteerLoginResponse,
+)
+def volunteer_login(
+    payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    volunteer = db.query(VolunteerDB).filter(
-        func.lower(VolunteerDB.name)
-        == name.lower()
-    ).first()
+    email = payload.email.strip().lower()
+    volunteer = None
 
-    if not volunteer:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Volunteer '{name}' not found",
-        )
+    if email:
+        volunteer = db.query(VolunteerDB).filter(
+            func.lower(VolunteerDB.email) == email
+        ).first()
 
-    db.delete(volunteer)
+    check_login_with_limit(
+        "volunteer", email, volunteer, payload.password, rate_limit.client_ip(request),
+    )
+
+    # Only after a correct password, so this never shows which emails exist.
+    if account_settings.is_deactivated(volunteer):
+        return account_settings.inactive_login_response()
+
+    if not email_verification.is_verified(volunteer):
+        return email_verification.not_verified_response()
+
+    token, _ = create_user_session(
+        db, "volunteer", volunteer.id, volunteer.email,
+        user_agent=request.headers.get("user-agent"),
+    )
     db.commit()
 
-    remaining = db.query(
-        func.count(VolunteerDB.id)
-    ).scalar()
+    result = VolunteerLoginResponse.model_validate(volunteer, from_attributes=True)
+    result.token = token
 
-    return {
-        "message": f"Volunteer '{name}' deleted",
-        "remaining": remaining,
-    }
+    return result
 
 
-# ─── Delete NGO ────────────────────────────────────────────────────
-@app.delete("/delete-ngo/{name}")
-def delete_ngo(
-    name: str,
+@app.post(
+    "/ngo-login",
+    response_model=NGOLoginResponse,
+)
+def ngo_login(
+    payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    ngo = db.query(NGODB).filter(
-        func.lower(NGODB.name)
-        == name.lower()
-    ).first()
+    email = payload.email.strip().lower()
+    ngo = None
 
-    if not ngo:
-        raise HTTPException(
-            status_code=404,
-            detail=f"NGO '{name}' not found",
-        )
+    if email:
+        ngo = db.query(NGODB).filter(
+            NGODB.email.isnot(None),
+            func.lower(NGODB.email) == email,
+        ).first()
 
-    db.delete(ngo)
+    check_login_with_limit("ngo", email, ngo, payload.password, rate_limit.client_ip(request))
+
+    # Only after a correct password, so this never shows which emails exist.
+    if account_settings.is_deactivated(ngo):
+        return account_settings.inactive_login_response()
+
+    if not email_verification.is_verified(ngo):
+        return email_verification.not_verified_response()
+
+    token, _ = create_user_session(
+        db, "ngo", ngo.id, ngo.email,
+        user_agent=request.headers.get("user-agent"),
+    )
     db.commit()
 
-    remaining = db.query(
-        func.count(NGODB.id)
-    ).scalar()
+    result = NGOLoginResponse.model_validate(ngo, from_attributes=True)
+    result.token = token
 
-    return {
-        "message": f"NGO '{name}' deleted",
-        "remaining": remaining,
-    }
+    return result
+
+
+@app.get("/session")
+def get_session(session: UserSessionDB = Depends(require_user)):
+    """Who the bearer token belongs to; used to restore a login after a refresh."""
+
+    return {"role": session.user_role, "email": session.email}
+
+
+@app.post("/logout")
+def logout(
+    authorization: str = Header(default=""),
+    db: Session = Depends(get_db),
+):
+    """End the session behind the bearer token. Always succeeds."""
+
+    delete_session_for_header(authorization, db)
+
+    return {"status": "ok"}
 
 
 # ─── Volunteer ↔ Activity Matching ─────────────────────────────────
@@ -1182,8 +2942,11 @@ def delete_ngo(
 )
 def get_volunteer_matches(
     email: str,
+    session: UserSessionDB = Depends(require_volunteer),
     db: Session = Depends(get_db),
 ):
+    ensure_own_email(session, email)
+
     volunteer = db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.email)
         == email.strip().lower()
@@ -1201,14 +2964,11 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # NGOs with Approved/Pending status
+    # NGOs with Approved/Pending status (deactivated NGOs are left out)
     ngos = (
         db.query(NGODB)
-        .filter(
-            NGODB.verification_status.in_(
-                ["Approved", "Pending"]
-            )
-        )
+        .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -1219,22 +2979,27 @@ def get_volunteer_matches(
             matches=[],
         )
 
-    # For each NGO, check for its latest active event;
-    # fall back to NGO motto if no active event exists.
+    # Each NGO's latest open, active event (one query for all NGOs);
+    # fall back to the NGO motto if it has none.
+    open_events = (
+        db.query(ActivityDB)
+        .filter(
+            ActivityDB.ngo_id.in_([n.id for n in ngos]),
+            ActivityDB.status == "Active",
+            (ActivityDB.event_date.is_(None))
+            | (ActivityDB.event_date >= event_rules.first_open_day_start()),
+        )
+        .order_by(ActivityDB.created_at.desc(), ActivityDB.id.desc())
+        .all()
+    )
+    latest_by_ngo: dict[int, ActivityDB] = {}
+    for ev in open_events:
+        latest_by_ngo.setdefault(ev.ngo_id, ev)
+
     candidates = []
 
     for ngo in ngos:
-        latest_event = (
-            db.query(ActivityDB)
-            .filter(
-                ActivityDB.ngo_id == ngo.id,
-                ActivityDB.status == "Active",
-            )
-            .order_by(
-                ActivityDB.created_at.desc()
-            )
-            .first()
-        )
+        latest_event = latest_by_ngo.get(ngo.id)
 
         if latest_event and latest_event.required_skills and latest_event.required_skills.strip():
             candidates.append(
@@ -1261,17 +3026,21 @@ def get_volunteer_matches(
 
     # Compute cosine similarity between volunteer skills
     # and each candidate's match text (event required_skills or NGO motto).
-    match_texts = [
-        c["match_text"]
-        for c in candidates
-    ]
-
-    vol_embedding = model.encode(
-        [volunteer.skills]
+    vol_embedding = get_vectors(
+        db,
+        [("volunteer_skills", volunteer.id, volunteer.skills)],
     )
 
-    candidate_embeddings = model.encode(
-        match_texts
+    candidate_embeddings = get_vectors(
+        db,
+        [
+            (
+                "event_skills" if c["event"] else "ngo_motto",
+                c["event"].id if c["event"] else c["ngo"].id,
+                c["match_text"],
+            )
+            for c in candidates
+        ],
     )
 
     scores = cosine_similarity(
@@ -1279,19 +3048,23 @@ def get_volunteer_matches(
         candidate_embeddings,
     )[0]
 
+    rating_stats = volunteer_rating_stats(db, [volunteer.id]).get(volunteer.id, (0, None))
+
     matches = []
 
     for idx, c in enumerate(candidates):
         ngo = c["ngo"]
         event = c["event"]
-        score = float(scores[idx])
 
-        boost = compute_category_boost(
-            volunteer.skills or "",
-            ngo.category or "",
+        final_score, explanation = score_match(
+            semantic=float(scores[idx]),
+            volunteer_skills=volunteer.skills,
+            target_text=c["match_text"],
+            ngo_category=ngo.category,
+            volunteer_location=volunteer.location,
+            target_location=ngo.location,
+            rating_stats=rating_stats,
         )
-
-        final_score = min(score + boost, 1.0)
 
         matches.append(
             VolunteerMatchEntry(
@@ -1302,6 +3075,8 @@ def get_volunteer_matches(
                 match_percentage=round(
                     final_score * 100, 1
                 ),
+                level=compute_match_level(final_score, explanation["category_boost"]),
+                explanation=MatchExplanation(**explanation),
             )
         )
 
@@ -1316,11 +3091,402 @@ def get_volunteer_matches(
     )
 
 
-# ─── Volunteer ↔ NGO Matching ─────────────────────────────────────
+# ─── Volunteer ↔ Event Matching ────────────────────────────────────
+@app.get(
+    "/volunteer-events/{email}",
+    response_model=list[VolunteerEventEntry],
+)
+def get_volunteer_events(
+    email: str,
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Return scored & filtered events for a volunteer, sorted by match."""
+
+    ensure_own_email(session, email)
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    if not volunteer.skills:
+        return []
+
+    # Active, not yet completed events from Approved/Pending NGOs (IST).
+    # Events on today's date are kept only for volunteers who joined them.
+    events = (
+        db.query(ActivityDB, NGODB)
+        .join(NGODB, ActivityDB.ngo_id == NGODB.id)
+        .filter(
+            ActivityDB.status == "Active",
+            NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES),
+            NGODB.deactivated_at.is_(None),
+        )
+        .filter(
+            (ActivityDB.event_date.is_(None))
+            | (ActivityDB.event_date >= event_rules.today_start())
+        )
+        .all()
+    )
+
+    if not events:
+        return []
+
+    # Stored vectors for the volunteer and every event's required_skills text.
+    vol_embedding = get_vectors(
+        db,
+        [("volunteer_skills", volunteer.id, volunteer.skills)],
+    )
+    event_embeddings = get_vectors(
+        db,
+        [
+            ("event_skills", ev.id, ev.required_skills.strip())
+            for ev, _ in events
+        ],
+    )
+
+    scores = cosine_similarity(
+        vol_embedding,
+        event_embeddings,
+    )[0]
+
+    # This volunteer's signups as {activity_id: approved_at}, fetched once.
+    my_signups = dict(
+        db.query(
+            ActivitySignupDB.activity_id,
+            ActivitySignupDB.approved_at,
+        ).filter(
+            ActivitySignupDB.volunteer_id == volunteer.id,
+        ).all()
+    )
+
+    approved_counts = dict(
+        db.query(
+            ActivitySignupDB.activity_id,
+            func.count(ActivitySignupDB.id),
+        )
+        .filter(
+            ActivitySignupDB.activity_id.in_([ev.id for ev, _ in events]),
+            ActivitySignupDB.approved_at.isnot(None),
+        )
+        .group_by(ActivitySignupDB.activity_id)
+        .all()
+    )
+
+    rating_stats = volunteer_rating_stats(db, [volunteer.id]).get(volunteer.id, (0, None))
+
+    results: list[VolunteerEventEntry] = []
+
+    for idx, (ev, ngo) in enumerate(events):
+        phase = event_rules.event_phase(ev)
+
+        if phase != event_rules.OPEN and ev.id not in my_signups:
+            continue
+
+        final_score, explanation = score_match(
+            semantic=float(scores[idx]),
+            volunteer_skills=volunteer.skills,
+            target_text=ev.required_skills or "",
+            ngo_category=ngo.category,
+            volunteer_location=volunteer.location,
+            target_location=ngo.location,
+            rating_stats=rating_stats,
+        )
+
+        # v1: shown only when the score is high enough AND the volunteer's
+        # skills hit a keyword of the NGO's category. v2 drops the keyword rule.
+        if final_score < MIN_EVENT_MATCH:
+            continue
+        if explanation["scoring"] == "v1" and explanation["category_boost"] <= 0:
+            continue
+
+        # Hide full events from volunteers who have not joined them.
+        if ev.id not in my_signups and is_full(
+            ev, approved_counts.get(ev.id, 0)
+        ):
+            continue
+
+        results.append(
+            VolunteerEventEntry(
+                activity_id=ev.id,
+                title=ev.title,
+                description=ev.description,
+                location=ev.location,
+                event_date=ev.event_date,
+                required_skills=ev.required_skills,
+                ngo_name=ngo.name,
+                ngo_category=ngo.category,
+                ngo_location=ngo.location,
+                ngo_email=ngo.email,
+                match_percentage=round(final_score * 100, 1),
+                joined=ev.id in my_signups,
+                approved=my_signups.get(ev.id) is not None,
+                phase=phase,
+                event_day=event_rules.event_day_text(ev),
+                explanation=MatchExplanation(**explanation),
+            )
+        )
+
+    results.sort(
+        key=lambda m: m.match_percentage,
+        reverse=True,
+    )
+
+    return results
+
+
+# ─── Volunteer Activity (every event the volunteer has joined) ─────
+@app.get(
+    "/volunteer-activity/{email}",
+    response_model=list[VolunteerActivityEntry],
+)
+def get_volunteer_activity(
+    email: str,
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    ensure_own_email(session, email)
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{email}'",
+        )
+
+    rows = (
+        db.query(ActivitySignupDB, ActivityDB, NGODB)
+        .join(ActivityDB, ActivitySignupDB.activity_id == ActivityDB.id)
+        .join(NGODB, ActivityDB.ngo_id == NGODB.id)
+        .filter(ActivitySignupDB.volunteer_id == volunteer.id)
+        .all()
+    )
+
+    entries: list[VolunteerActivityEntry] = []
+
+    for signup, ev, ngo in rows:
+        approved = signup.approved_at is not None
+        attended = signup.attendance_status == "attended"
+
+        if ev.status == "Cancelled":
+            label = "Cancelled"
+        elif attended:
+            label = "Attended"
+        elif signup.attendance_status == "not_attended":
+            label = "Not attended"
+        elif approved and is_completed(ev):
+            label = "Awaiting NGO feedback"
+        elif approved:
+            label = "Approved"
+        elif is_completed(ev):
+            label = "Not selected"
+        else:
+            label = "Waiting for approval"
+
+        entries.append(
+            VolunteerActivityEntry(
+                activity_id=ev.id,
+                title=ev.title,
+                ngo_name=ngo.name,
+                ngo_email=ngo.email,
+                location=ev.location,
+                event_date=ev.event_date,
+                event_status=ev.status,
+                joined_at=signup.created_at,
+                approved=approved,
+                approved_at=signup.approved_at,
+                attended=attended,
+                status_label=label,
+                attendance_status=signup.attendance_status,
+                rating=signup.rating if attended else None,
+                feedback=signup.feedback if attended else None,
+                phase=event_rules.event_phase(ev),
+                event_day=event_rules.event_day_text(ev),
+            )
+        )
+
+    # Dated events newest first, undated events last.
+    dated = sorted(
+        (e for e in entries if e.event_date is not None),
+        key=lambda e: e.event_date,
+        reverse=True,
+    )
+    undated = [e for e in entries if e.event_date is None]
+
+    return dated + undated
+
+
+# ─── Join Activity ─────────────────────────────────────────────────
+@app.post(
+    "/activities/{activity_id}/join",
+    response_model=JoinResponse,
+)
+def join_activity(
+    activity_id: int,
+    body: JoinRequest,
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Let a volunteer sign up for an activity."""
+
+    ensure_own_email(session, body.volunteer_email)
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == body.volunteer_email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{body.volunteer_email}'",
+        )
+
+    activity = db.query(ActivityDB).filter(
+        ActivityDB.id == activity_id,
+    ).first()
+
+    if not activity:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Activity {activity_id} not found",
+        )
+
+    # Same NGO rule as the events list: rejected NGOs' events cannot be joined.
+    ngo_status = db.query(NGODB.verification_status).filter(
+        NGODB.id == activity.ngo_id,
+        NGODB.deactivated_at.is_(None),
+    ).scalar()
+
+    if ngo_status not in MATCHABLE_NGO_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is not available",
+        )
+
+    if activity.status == "Filled":
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is already full",
+        )
+
+    if activity.status != "Active":
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is no longer active",
+        )
+
+    require_open(activity)
+
+    # Idempotent: if already joined, return success without duplicating.
+    existing = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == activity_id,
+        ActivitySignupDB.volunteer_id == volunteer.id,
+    ).first()
+
+    if existing:
+        return JoinResponse(joined=True, activity_id=activity_id)
+
+    if is_full(activity, count_approved(db, activity_id)):
+        raise HTTPException(
+            status_code=400,
+            detail="This activity is already full",
+        )
+
+    db.add(
+        ActivitySignupDB(
+            activity_id=activity_id,
+            volunteer_id=volunteer.id,
+        )
+    )
+    db.commit()
+
+    return JoinResponse(joined=True, activity_id=activity_id)
+
+
+# ─── Leave Activity ────────────────────────────────────────────────
+@app.delete(
+    "/activities/{activity_id}/join",
+    response_model=JoinResponse,
+)
+def leave_activity(
+    activity_id: int,
+    volunteer_email: str = Query(...),
+    session: UserSessionDB = Depends(require_volunteer),
+    db: Session = Depends(get_db),
+):
+    """Let a volunteer withdraw their signup from an activity."""
+
+    ensure_own_email(session, volunteer_email)
+
+    volunteer = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email)
+        == volunteer_email.strip().lower()
+    ).first()
+
+    if not volunteer:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No volunteer found with email '{volunteer_email}'",
+        )
+
+    activity = db.query(ActivityDB).filter(
+        ActivityDB.id == activity_id,
+    ).first()
+
+    if not activity:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Activity {activity_id} not found",
+        )
+
+    require_open(activity)
+
+    signup = db.query(ActivitySignupDB).filter(
+        ActivitySignupDB.activity_id == activity_id,
+        ActivitySignupDB.volunteer_id == volunteer.id,
+    ).first()
+
+    if not signup:
+        raise HTTPException(
+            status_code=404,
+            detail="You have not joined this activity",
+        )
+
+    if signup.approved_at is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You have been approved for this event. "
+                "Please contact the NGO to withdraw."
+            ),
+        )
+
+    # The activity's status is intentionally left untouched: a Filled
+    # event stays Filled and the NGO reopens it manually.
+    db.delete(signup)
+    db.commit()
+
+    return JoinResponse(joined=False, activity_id=activity_id)
+
+
+# ─── Volunteer ↔ NGO Matching (public demo, anonymised) ────────────
 @app.get("/match")
 def match_volunteers(
     category: Optional[str] = Query(
         None,
+        max_length=50,
         description="Filter by NGO category",
     ),
     min_score: Optional[float] = Query(
@@ -1332,31 +3498,39 @@ def match_volunteers(
     top_n: Optional[int] = Query(
         3,
         ge=1,
-        le=10,
+        le=5,
         description="Number of top matches per volunteer",
     ),
     sort_by: Optional[str] = Query(
         "score",
-        description="Sort by: score, name",
+        max_length=20,
+        description="score (best first) or label; 'name' is accepted as 'label'",
+    ),
+    limit: int = Query(
+        settings.MATCH_PUBLIC_ROW_LIMIT,
+        ge=1,
+        le=50,
+        description="Maximum number of volunteer rows returned",
     ),
     db: Session = Depends(get_db),
 ):
+    """Public matching demo. No volunteer names, emails or locations are returned:
+    each row is labelled "Volunteer N" and shows only skills and scores.
+    """
+
     volunteers = (
         db.query(VolunteerDB)
         .filter(VolunteerDB.skills.isnot(None))
         .filter(VolunteerDB.skills != "")
+        .filter(VolunteerDB.deactivated_at.is_(None))
         .order_by(VolunteerDB.id)
         .all()
     )
 
-    # Only approved NGOs participate in matching.
     ngos = (
         db.query(NGODB)
-        .filter(
-            NGODB.verification_status.in_(
-                ["Approved", "Pending"]
-            )
-        )
+        .filter(NGODB.verification_status.in_(MATCHABLE_NGO_STATUSES))
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -1365,9 +3539,13 @@ def match_volunteers(
         return {
             "message": "Add volunteers and NGOs first",
             "matches": [],
+            "total_volunteers": len(volunteers),
+            "total_ngos": len(ngos),
+            "total_matches": 0,
+            "returned": 0,
+            "anonymised": True,
         }
 
-    # Filter NGOs by category.
     filtered_ngos = ngos
 
     if category:
@@ -1381,126 +3559,107 @@ def match_volunteers(
 
         if not filtered_ngos:
             return {
-                "message": (
-                    f"No NGOs found in category "
-                    f"'{category}'"
-                ),
+                "message": "No NGOs found in that category",
                 "matches": [],
+                "total_volunteers": len(volunteers),
+                "total_ngos": 0,
+                "total_matches": 0,
+                "returned": 0,
+                "anonymised": True,
             }
 
-    volunteer_texts = [
-        v.skills
-        for v in volunteers
-    ]
-
-    ngo_texts = [
-        n.motto or ""
-        for n in filtered_ngos
-    ]
-
-    vol_embeddings = model.encode(
-        volunteer_texts
+    vol_embeddings = get_vectors(
+        db,
+        [
+            ("volunteer_skills", v.id, v.skills)
+            for v in volunteers
+        ],
     )
 
-    ngo_embeddings = model.encode(
-        ngo_texts
+    ngo_embeddings = get_vectors(
+        db,
+        [
+            ("ngo_motto_raw", n.id, n.motto or "")
+            for n in filtered_ngos
+        ],
     )
 
-    similarity_matrix = cosine_similarity(
+    semantic = cosine_similarity(
         vol_embeddings,
         ngo_embeddings,
     )
 
-    # Apply category boost.
-    for i, volunteer in enumerate(volunteers):
-        for j, ngo in enumerate(filtered_ngos):
-            boost = compute_category_boost(
-                volunteer.skills or "",
-                ngo.category or "",
-            )
+    rating_stats = volunteer_rating_stats(db, [v.id for v in volunteers])
 
-            similarity_matrix[i][j] = min(
-                similarity_matrix[i][j] + boost,
-                1.0,
-            )
-
+    # Score every pair. Explanations are built only for the rows returned.
     results = []
 
     for i, volunteer in enumerate(volunteers):
-        scores = similarity_matrix[i]
+        stats = rating_stats.get(volunteer.id, (0, None))
+        scored = []
 
-        top_indices = np.argsort(scores)[::-1][:top_n]
+        for j, ngo in enumerate(filtered_ngos):
+            score, explanation = score_match(
+                semantic=float(semantic[i][j]),
+                volunteer_skills=volunteer.skills,
+                target_text=ngo.motto or "",
+                ngo_category=ngo.category,
+                use_location=False,
+                rating_stats=stats,
+            )
+            scored.append((score, j, explanation))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
 
         volunteer_matches = []
 
-        for idx in top_indices:
-            score = float(scores[idx])
-
-            if (
-                min_score is not None
-                and score < min_score
-            ):
+        for score, j, explanation in scored[:top_n]:
+            if min_score is not None and score < min_score:
                 continue
 
-            matched_ngo = filtered_ngos[idx]
+            matched_ngo = filtered_ngos[j]
 
             volunteer_matches.append(
                 {
                     "ngo": matched_ngo.name,
-                    "ngo_category": (
-                        matched_ngo.category
-                        or "Uncategorized"
-                    ),
-                    "ngo_motto": (
-                        matched_ngo.motto
-                    ),
+                    "ngo_category": matched_ngo.category or "Uncategorized",
+                    "ngo_motto": matched_ngo.motto,
                     "score": round(score, 4),
-                    "percentage": round(
-                        score * 100,
-                        1,
-                    ),
-                    "confidence": classify_confidence(
-                        score
-                    ),
+                    "percentage": round(score * 100, 1),
+                    "confidence": classify_confidence(score),
+                    "explanation": explanation,
                 }
             )
 
         if volunteer_matches:
             results.append(
                 {
-                    "volunteer": volunteer.name,
-                    "volunteer_skills": (
-                        volunteer.skills
-                    ),
-                    "volunteer_location": (
-                        volunteer.location or ""
-                    ),
+                    "volunteer_skills": volunteer.skills,
                     "matches": volunteer_matches,
-                    "best_score": (
-                        volunteer_matches[0]["score"]
-                    ),
-                    "best_match": (
-                        volunteer_matches[0]["ngo"]
-                    ),
+                    "best_score": volunteer_matches[0]["score"],
+                    "best_match": volunteer_matches[0]["ngo"],
                 }
             )
 
     if sort_by == "score":
-        results.sort(
-            key=lambda x: x["best_score"],
-            reverse=True,
-        )
+        results.sort(key=lambda x: x["best_score"], reverse=True)
 
-    elif sort_by == "name":
-        results.sort(
-            key=lambda x: x["volunteer"]
-        )
+    total_matches = len(results)
+    results = results[:limit]
+
+    # Labels follow the order shown, so they reveal nothing about ids.
+    for number, row in enumerate(results, start=1):
+        row["label"] = f"Volunteer {number}"
+        # Kept for older clients that read "volunteer"; never a real name.
+        row["volunteer"] = row["label"]
 
     return {
         "matches": results,
         "total_volunteers": len(volunteers),
         "total_ngos": len(filtered_ngos),
-        "total_matches": len(results),
+        "total_matches": total_matches,
+        "returned": len(results),
+        "anonymised": True,
     }
 
 
@@ -1509,16 +3668,18 @@ def match_volunteers(
 def get_stats(
     db: Session = Depends(get_db),
 ):
-    """Return platform statistics."""
+    """Return platform statistics (deactivated accounts are not counted)."""
 
     volunteers = (
         db.query(VolunteerDB)
+        .filter(VolunteerDB.deactivated_at.is_(None))
         .order_by(VolunteerDB.id)
         .all()
     )
 
     ngos = (
         db.query(NGODB)
+        .filter(NGODB.deactivated_at.is_(None))
         .order_by(NGODB.id)
         .all()
     )
@@ -1626,7 +3787,37 @@ def _ngo_may_message_volunteer(
             if isinstance(entry, dict) and entry.get("ngo") == ngo.name:
                 return True
 
+    # Check 3: volunteer signed up for any of this NGO's activities
+    signed_up = (
+        db.query(ActivitySignupDB.id)
+        .join(
+            ActivityDB,
+            ActivitySignupDB.activity_id == ActivityDB.id,
+        )
+        .join(
+            VolunteerDB,
+            ActivitySignupDB.volunteer_id == VolunteerDB.id,
+        )
+        .filter(
+            ActivityDB.ngo_id == ngo.id,
+            func.lower(VolunteerDB.email) == vol_lower,
+        )
+        .first()
+    )
+    if signed_up:
+        return True
+
     return False
+
+
+def _ensure_recipient_active(role: str, email: str, db: Session) -> None:
+    """Old conversations stay readable, but a deactivated account gets no new messages."""
+    model = VolunteerDB if role == "volunteer" else NGODB
+    if db.query(model.id).filter(
+        func.lower(model.email) == email,
+        model.deactivated_at.isnot(None),
+    ).first():
+        raise HTTPException(status_code=400, detail="This account is no longer active")
 
 
 def _validate_pair(
@@ -1653,6 +3844,8 @@ def _validate_pair(
     sender_role, _ = _resolve_role(s_email, db)
     recipient_role, _ = _resolve_role(r_email, db)
 
+    _ensure_recipient_active(recipient_role, r_email, db)
+
     # Same-role check
     if sender_role == recipient_role:
         raise HTTPException(
@@ -1670,7 +3863,7 @@ def _validate_pair(
                 status_code=403,
                 detail=(
                     "NGOs can only message volunteers who have "
-                    "messaged them or reported a problem matched to them."
+                    "messaged them, joined one of their events, or reported a problem matched to them."
                 ),
             )
 
@@ -1681,15 +3874,22 @@ def _validate_pair(
 @app.post("/messages", response_model=MessageResponse, status_code=201)
 def send_message(
     payload: MessageSend,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send a text message between a volunteer and an NGO."""
 
-    if payload.sender_email == payload.recipient_email:
+    ensure_own_email(session, payload.sender_email)
+
+    sender_email = payload.sender_email.strip().lower()
+    recipient_email = payload.recipient_email.strip().lower()
+
+    if sender_email == recipient_email:
         raise HTTPException(status_code=400, detail="Cannot message yourself")
 
-    sender_role, sender_name = _resolve_role(payload.sender_email, db)
-    recipient_role, recipient_name = _resolve_role(payload.recipient_email, db)
+    sender_role, sender_name = _resolve_role(sender_email, db)
+    recipient_role, recipient_name = _resolve_role(recipient_email, db)
+    _ensure_recipient_active(recipient_role, recipient_email, db)
 
     # Same-role check
     if sender_role == recipient_role:
@@ -1704,20 +3904,20 @@ def send_message(
     # NGO can only message volunteers who messaged them or reported a matched issue
     if sender_role == "ngo":
         if not _ngo_may_message_volunteer(
-            payload.sender_email, payload.recipient_email, db,
+            sender_email, recipient_email, db,
         ):
             raise HTTPException(
                 status_code=403,
                 detail=(
                     "NGOs can only message volunteers who have "
-                    "messaged them or reported a problem matched to them."
+                    "messaged them, joined one of their events, or reported a problem matched to them."
                 ),
             )
 
     msg = MessageDB(
-        sender_email=payload.sender_email,
+        sender_email=sender_email,
         sender_role=sender_role,
-        recipient_email=payload.recipient_email,
+        recipient_email=recipient_email,
         recipient_role=recipient_role,
         message_type="text",
         body=payload.body,
@@ -1754,9 +3954,12 @@ async def send_file_message(
     recipient_email: str = Form(...),
     file: UploadFile = File(...),
     caption: Optional[str] = Form(default=None),
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send an image or document attachment between a volunteer and an NGO."""
+    ensure_own_email(session, sender_email)
+
     s_email = sender_email.strip().lower()
     r_email = recipient_email.strip().lower()
     sender_role, recipient_role = _validate_pair(s_email, r_email, db)
@@ -1868,19 +4071,25 @@ async def send_file_message(
 @app.post("/messages/location", response_model=MessageResponse, status_code=201)
 def send_location_message(
     payload: LocationMessageSend,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Send a location message between a volunteer and an NGO."""
+    ensure_own_email(session, payload.sender_email)
+
+    sender_email = payload.sender_email.strip().lower()
+    recipient_email = payload.recipient_email.strip().lower()
+
     sender_role, recipient_role = _validate_pair(
-        payload.sender_email,
-        payload.recipient_email,
+        sender_email,
+        recipient_email,
         db,
     )
 
     msg = MessageDB(
-        sender_email=payload.sender_email,
+        sender_email=sender_email,
         sender_role=sender_role,
-        recipient_email=payload.recipient_email,
+        recipient_email=recipient_email,
         recipient_role=recipient_role,
         message_type="location",
         body=None,
@@ -1916,16 +4125,18 @@ def send_location_message(
 @app.get("/messages/files/{message_id}")
 def get_message_file(
     message_id: int,
-    email: str = Query(..., description="Requester email"),
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Download or view a message attachment securely."""
+    """Download or view a message attachment; only its sender or recipient may."""
     msg = db.query(MessageDB).filter(MessageDB.id == message_id).first()
     if not msg or not msg.file_path:
         raise HTTPException(status_code=404, detail="File not found")
 
-    req_email = email.strip().lower()
-    if req_email not in (msg.sender_email.lower(), msg.recipient_email.lower()):
+    if not (
+        same_email(session.email, msg.sender_email)
+        or same_email(session.email, msg.recipient_email)
+    ):
         raise HTTPException(
             status_code=403,
             detail="You do not have access to this conversation's files",
@@ -1959,9 +4170,12 @@ def get_message_file(
 @app.get("/conversations/{email}", response_model=list[ConversationEntry])
 def list_conversations(
     email: str,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """List all conversations for a user, newest first."""
+
+    ensure_own_email(session, email)
 
     my_role, _ = _resolve_role(email, db)
     email_lower = email.strip().lower()
@@ -2043,9 +4257,12 @@ def list_conversations(
 def get_thread(
     email: str,
     other_email: str,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Return the full message thread between two users, oldest first."""
+
+    ensure_own_email(session, email)
 
     _resolve_role(email, db)       # 404 if unknown
     _resolve_role(other_email, db)
@@ -2097,9 +4314,12 @@ def get_thread(
 @app.patch("/messages/read", response_model=MarkReadResponse)
 def mark_messages_read(
     payload: MarkReadRequest,
+    session: UserSessionDB = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Mark all unread messages from other_email→reader_email as read."""
+
+    ensure_own_email(session, payload.reader_email)
 
     _resolve_role(payload.reader_email, db)
     _resolve_role(payload.other_email, db)
@@ -2109,8 +4329,8 @@ def mark_messages_read(
     count = (
         db.query(MessageDB)
         .filter(
-            MessageDB.sender_email == payload.other_email,
-            MessageDB.recipient_email == payload.reader_email,
+            func.lower(MessageDB.sender_email) == payload.other_email.strip().lower(),
+            func.lower(MessageDB.recipient_email) == payload.reader_email.strip().lower(),
             MessageDB.read_at.is_(None),
         )
         .update({"read_at": now})

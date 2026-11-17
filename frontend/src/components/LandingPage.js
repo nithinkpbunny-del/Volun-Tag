@@ -1,20 +1,71 @@
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import RoleSelect from "./RoleSelect";
 import "./LandingPage.css";
- 
+import { API_BASE } from "../config";
+import { PATHS } from "../routes";
+import { CONTACT_EMAIL, REPO_URL } from "../content/contact";
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * The real platform numbers from GET /stats. A counter whose value is 0 is
+ * left out, and the whole strip is hidden when nothing is left or the
+ * request fails, so the page never shows made-up or empty numbers.
+ */
+function usePlatformStats() {
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(`${API_BASE}/stats`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+
+        const known = Array.isArray(data.category_list) ? data.category_list : [];
+        const counts = data.categories && typeof data.categories === "object" ? data.categories : {};
+        const causeAreas = known.filter((name) => Number(counts[name]) > 0).length;
+
+        setItems(
+          [
+            { id: "volunteers", label: "Volunteers", value: Number(data.total_volunteers) || 0 },
+            { id: "ngos", label: "NGOs", value: Number(data.total_ngos) || 0 },
+            { id: "causes", label: "Cause areas with NGOs", value: causeAreas },
+          ].filter((item) => item.value > 0)
+        );
+      })
+      .catch(() => {
+        // No numbers is better than wrong numbers: the strip stays hidden.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return items;
+}
+
 function AnimatedCounter({ target, suffix = "", duration = 2000 }) {
+  const [reduced] = useState(prefersReducedMotion);
   const [count, setCount] = useState(0);
   const ref = useRef(null);
   const [started, setStarted] = useState(false);
  
   useEffect(() => {
+    if (reduced) return undefined;
     const observer = new IntersectionObserver(
       ([entry]) => { if (entry.isIntersecting && !started) setStarted(true); },
       { threshold: 0.3 }
     );
     if (ref.current) observer.observe(ref.current);
     return () => observer.disconnect();
-  }, [started]);
+  }, [started, reduced]);
  
   useEffect(() => {
     if (!started) return;
@@ -28,10 +79,24 @@ function AnimatedCounter({ target, suffix = "", duration = 2000 }) {
     return () => clearInterval(timer);
   }, [started, target, duration]);
  
-  return <span ref={ref}>{count.toLocaleString()}{suffix}</span>;
+  // Without motion the real number is shown straight away.
+  const shown = reduced ? target : count;
+
+  return (
+    <>
+      <span ref={ref} aria-hidden="true">
+        {shown.toLocaleString()}{suffix}
+      </span>
+      <span className="sr-only">
+        {target.toLocaleString()}{suffix}
+      </span>
+    </>
+  );
 }
  
-export default function LandingPage({ setPage }) {
+export default function LandingPage() {
+  const stats = usePlatformStats();
+
   return (
     <div className="landing visible">
       {/* ─── Hero ─────────────────────────────────────────── */}
@@ -44,11 +109,6 @@ export default function LandingPage({ setPage }) {
         </div>
  
         <div className="hero-content">
-          <div className="hero-badge">
-            <span className="hero-badge-dot" />
-            AI-Powered Matching Platform
-          </div>
- 
           <h1 className="hero-title">
             Connecting <em>People Who Care</em> With{" "}
             <span className="hero-title-highlight">Causes That Matter</span>
@@ -59,44 +119,29 @@ export default function LandingPage({ setPage }) {
             skills, interests, and impact potential — not just keywords.
           </p>
  
-          <div className="hero-trust">
-            <div className="trust-avatars">
-              <div className="trust-avatar" style={{ background: "#4a7c6f" }}>K</div>
-              <div className="trust-avatar" style={{ background: "#c4714a" }}>R</div>
-              <div className="trust-avatar" style={{ background: "#6b8db5" }}>S</div>
-              <div className="trust-avatar" style={{ background: "#8b6bb5" }}>A</div>
-            </div>
-            <span className="trust-text">Join 500+ volunteers making a difference</span>
-          </div>
         </div>
       </section>
  
-      <RoleSelect setPage={setPage} embedded />
+      <RoleSelect embedded />
  
       {/* ─── Stats ────────────────────────────────────────── */}
-      <section className="stats-section" id="stats-section">
-        <div className="stats-container">
-          <div className="stat-item">
-            <div className="stat-number"><AnimatedCounter target={0} suffix="+" /></div>
-            <div className="stat-label">Volunteers</div>
+      {stats.length > 0 && (
+        <section className="stats-section" id="stats-section" aria-label="VolunTag in numbers">
+          <div className="stats-container">
+            {stats.map((item, index) => (
+              <div className="stat-group" key={item.id}>
+                {index > 0 && <div className="stat-divider" aria-hidden="true" />}
+                <div className="stat-item">
+                  <div className="stat-number">
+                    <AnimatedCounter target={item.value} />
+                  </div>
+                  <div className="stat-label">{item.label}</div>
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="stat-divider" />
-          <div className="stat-item">
-            <div className="stat-number"><AnimatedCounter target={0} suffix="+" /></div>
-            <div className="stat-label">NGOs</div>
-          </div>
-          <div className="stat-divider" />
-          <div className="stat-item">
-            <div className="stat-number"><AnimatedCounter target={0} suffix="%" /></div>
-            <div className="stat-label">Match Rate</div>
-          </div>
-          <div className="stat-divider" />
-          <div className="stat-item">
-            <div className="stat-number"><AnimatedCounter target={0} suffix="+" /></div>
-            <div className="stat-label">Hours Contributed</div>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
  
       {/* ─── How It Works ─────────────────────────────────── */}
       <section className="how-section" id="how-it-works">
@@ -235,52 +280,6 @@ export default function LandingPage({ setPage }) {
         </div>
       </section>
  
-      {/* ─── Testimonials ─────────────────────────────────── */}
-      <section className="testimonials-section" id="testimonials-section">
-        <div className="section-container">
-          <div className="section-header">
-            <span className="section-tag">Impact Stories</span>
-            <h2 className="section-heading">What People Say</h2>
-          </div>
- 
-          <div className="testimonials-grid">
-            <div className="testimonial-card">
-              <div className="testimonial-stars">★★★★★</div>
-              <p className="testimonial-text">"VolunTag matched me with an education NGO perfectly aligned with my tutoring skills. The AI-based matching is incredible!"</p>
-              <div className="testimonial-author">
-                <div className="testimonial-avatar" style={{ background: "#4a7c6f" }}>R</div>
-                <div>
-                  <div className="testimonial-name">Ravi Kumar</div>
-                  <div className="testimonial-role">Volunteer, Education</div>
-                </div>
-              </div>
-            </div>
-            <div className="testimonial-card featured">
-              <div className="testimonial-stars">★★★★★</div>
-              <p className="testimonial-text">"We found 12 skilled volunteers in our first week. The category-weighted matching means we get people who truly understand our mission."</p>
-              <div className="testimonial-author">
-                <div className="testimonial-avatar" style={{ background: "#c4714a" }}>P</div>
-                <div>
-                  <div className="testimonial-name">Priya Sharma</div>
-                  <div className="testimonial-role">Director, GreenEarth Foundation</div>
-                </div>
-              </div>
-            </div>
-            <div className="testimonial-card">
-              <div className="testimonial-stars">★★★★★</div>
-              <p className="testimonial-text">"The confidence scores help us prioritize outreach. High-scoring matches almost always lead to successful placements."</p>
-              <div className="testimonial-author">
-                <div className="testimonial-avatar" style={{ background: "#6b8db5" }}>A</div>
-                <div>
-                  <div className="testimonial-name">Anita Desai</div>
-                  <div className="testimonial-role">Coordinator, HealthFirst India</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
- 
       {/* ─── CTA ──────────────────────────────────────────── */}
       <section className="cta-section" id="cta-section">
         <div className="cta-container">
@@ -290,16 +289,7 @@ export default function LandingPage({ setPage }) {
           </div>
           <div className="cta-content">
             <h2 className="cta-title">Ready to Make an Impact?</h2>
-            <p className="cta-desc">Join hundreds of volunteers and NGOs already using VolunTag to create meaningful connections.</p>
-            <div className="cta-buttons">
-              <button className="hero-btn-secondary" onClick={() => setPage("volunteer-register")}>
-                <span>Join as Volunteer</span>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              <button className="hero-btn-secondary" onClick={() => setPage("ngo-register")}>
-                <span>Register NGO</span>
-              </button>
-            </div>
+            <p className="cta-desc">Register as a volunteer or as an NGO, and let VolunTag suggest where your skills or your cause fit best.</p>
           </div>
         </div>
       </section>
@@ -321,7 +311,15 @@ export default function LandingPage({ setPage }) {
             </div>
           </div>
           <div className="footer-bottom">
-            <p>© 2025 VolunTag.  contact nithinkpbunny@gmail.com</p>
+            <p>
+              © {new Date().getFullYear()} VolunTag ·{" "}
+              <Link to={PATHS.about}>About</Link> ·{" "}
+              <Link to={PATHS.contact}>Contact</Link> ·{" "}
+              <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> ·{" "}
+              <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
+                Source code
+              </a>
+            </p>
           </div>
         </div>
       </footer>

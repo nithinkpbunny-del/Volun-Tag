@@ -10,11 +10,35 @@ frontend/node_modules/
 .env
 .DS_Store
 
-# Database
+# Database (and every backup naming used in this project:
+# voluntag.db.backup, voluntag.db.backup-before-*, voluntag.db.bak-before-*)
 *.db
 *.sqlite
+*.sqlite*
 *.sqlite3
 *.db.backup*
+*.db.bak-*
+*.bak
+*.bak*
+*.backup
+*.backup*
+# SQLite write-ahead log files (the backend uses WAL mode)
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Uploaded files (runtime data, not source)
 backend/uploads/
+
+# Admin password hash (created by backend/create_admin_password.py)
+backend/admin_secret.json
+
+# Deployment hygiene
+.venv/
+.env.*
+!.env.example
+# Build-time switch only (no secrets): keeps inline scripts out of the build.
+!frontend/.env.production
+*.db.bak
+frontend/build/
+docs/

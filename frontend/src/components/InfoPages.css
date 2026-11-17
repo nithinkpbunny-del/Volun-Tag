@@ -1,0 +1,220 @@
+/* ─── About and Contact pages ────────────────────────────────────────
+   Functional layout using the existing tokens; the design pass restyles it. */
+
+.info-page {
+  padding: 3rem 1rem 4rem;
+}
+
+.info-container {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.info-hero {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.info-title {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  margin-bottom: 0.75rem;
+}
+
+.info-lead {
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.info-section {
+  margin-bottom: 2.25rem;
+}
+
+.info-section-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--ink);
+  margin-bottom: 0.75rem;
+}
+
+.info-text {
+  font-size: 0.98rem;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.info-text + .info-text {
+  margin-top: 0.75rem;
+}
+
+.info-text a,
+.contact-details a,
+.info-card a {
+  color: var(--sage);
+  font-weight: 500;
+  text-underline-offset: 2px;
+}
+
+.info-muted {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1rem;
+  list-style: none;
+}
+
+.info-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem;
+  min-width: 0;
+}
+
+.info-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.4rem;
+}
+
+.info-list {
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.info-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin-bottom: 1rem;
+}
+
+.info-chip {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #2f5b50;
+  background: var(--sage-light);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+}
+
+.info-cta-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.info-cta-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.6rem 1.1rem;
+  border-radius: 12px;
+  border: 1.5px solid var(--sage);
+  color: var(--sage);
+  font-weight: 600;
+  font-size: 0.92rem;
+  text-decoration: none;
+}
+
+.info-cta-link:hover {
+  background: var(--sage-light);
+}
+
+.info-cta-link:focus-visible,
+.info-text a:focus-visible,
+.contact-details a:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 3px;
+}
+
+/* ─── Contact ────────────────────────────────────────────────────── */
+
+.contact-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.contact-card.form-card {
+  max-width: none;
+}
+
+/* The page title sits above the card, so the card itself does not lift. */
+.contact-card.form-card:hover {
+  transform: none;
+}
+
+.contact-card .form-group input[type="email"] {
+  width: 100%;
+}
+
+.contact-details {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.contact-details dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin-top: 0.5rem;
+}
+
+.contact-details dd {
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+/* Honeypot: off-screen, never shown to people. */
+.contact-honeypot {
+  position: absolute;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .contact-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .info-page {
+    padding: 2rem 1rem 3rem;
+  }
+
+  .info-title {
+    font-size: 1.9rem;
+  }
+
+  .contact-card.form-card {
+    padding: 1.5rem 1.1rem;
+  }
+}

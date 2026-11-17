@@ -62,9 +62,10 @@
   color: var(--ink);
 }
 
-/* ─── Email input scoped to dashboard-login-card ────────────────── */
+/* ─── Email and password inputs scoped to dashboard-login-card ──── */
 
-.dashboard-login-card .form-group input[type="email"] {
+.dashboard-login-card .form-group input[type="email"],
+.dashboard-login-card .form-group input[type="password"] {
   width: 100%;
   font-family: var(--font-body);
   font-size: 0.92rem;
@@ -80,7 +81,8 @@
   -webkit-appearance: none;
 }
 
-.dashboard-login-card .form-group input[type="email"]:focus {
+.dashboard-login-card .form-group input[type="email"]:focus,
+.dashboard-login-card .form-group input[type="password"]:focus {
   border-color: var(--sage);
   box-shadow: 0 0 0 3px rgba(74, 124, 111, 0.12);
   background: #ffffff;
@@ -88,8 +90,199 @@
 
 .dashboard-login-card
   .form-group
-  input[type="email"]:hover:not(:focus) {
+  input[type="email"]:hover:not(:focus),
+.dashboard-login-card
+  .form-group
+  input[type="password"]:hover:not(:focus) {
   border-color: var(--sage-mid);
+}
+
+/* ─── Group caption that is not tied to one input (radio groups) ── */
+
+.form-group .form-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.01em;
+}
+
+/* ─── Links and messages on the login and password screens ───────── */
+
+.dashboard-login-forgot,
+.auth-link {
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--sage);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dashboard-login-forgot:focus-visible,
+.auth-link:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.auth-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+/* A link that looks like the shared Back button. */
+a.form-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.auth-message {
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  background: var(--mist);
+  color: var(--ink);
+}
+
+.auth-message p + p {
+  margin-top: 0.4rem;
+}
+
+.auth-message--success {
+  border-color: var(--sage-mid);
+  background: var(--sage-light);
+}
+
+.auth-message--error {
+  border-color: #e0b49c;
+  background: #fbefe8;
+  color: #7a2e12;
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  justify-content: center;
+}
+
+/* ─── Email confirmation: check-your-email, verify page, login notice ─ */
+
+.check-email-card {
+  text-align: left;
+}
+
+.check-email-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background: var(--tone-success-bg, #e6f1ee);
+  border: 1px solid var(--tone-success-border, #b7d3cb);
+  color: var(--sage-ink, #356054);
+}
+
+.check-email-icon--problem {
+  background: var(--tone-clay-bg, #f8ece5);
+  border-color: var(--tone-clay-border, #e6c3b0);
+  color: var(--clay-deep, #8a4526);
+}
+
+.check-email-card .form-header {
+  text-align: center;
+}
+
+.check-email-address {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.check-email-help {
+  margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--border-strong, #c3cfcb);
+  border-radius: 12px;
+}
+
+.check-email-help-title {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.check-email-help-text {
+  margin-top: 0.25rem;
+  color: var(--muted, #5f6a65);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.resend-block {
+  margin-top: 0.25rem;
+}
+
+.resend-button {
+  min-height: 44px;
+  margin-top: 0.25rem;
+}
+
+.resend-button:disabled {
+  cursor: progress;
+  color: var(--muted, #5f6a65);
+}
+
+.resend-note {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--tone-success-ink, #2b5a4d);
+}
+
+.resend-note--error {
+  color: var(--tone-danger-ink, #a8231c);
+}
+
+.login-unverified {
+  margin-bottom: 1.25rem;
+}
+
+.login-unverified .auth-message {
+  margin-bottom: 0;
+}
+
+.login-unverified .resend-block {
+  margin-top: 0.4rem;
+}
+
+/* Darker sage on the pink notice keeps the link above 4.5:1 contrast. */
+.auth-message--error .resend-button {
+  color: var(--sage-deep, #2b4f45);
+}
+
+.form-actions--single {
+  justify-content: stretch;
+}
+
+a.submit-btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  text-align: center;
 }
 
 /* ─── Responsive ─────────────────────────────────────────────────── */

@@ -1,14 +1,31 @@
 import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import "./DashboardLogin.css";
+import { loginUser } from "../api";
+import { PATHS, dashboardFor } from "../routes";
+import { ResendButton } from "./EmailVerification";
 
-const API_BASE = "http://127.0.0.1:8000";
+const ROLES = ["volunteer", "ngo"];
 
-export default function DashboardLogin({ showToast, setPage, setDashboardEmail }) {
-  const [role, setRole] = useState("volunteer");
+export default function DashboardLogin({ showToast, onLogin }) {
+  const navigate = useNavigate();
+  const { state } = useLocation();
+  // The reset-password page sends the user here with the role they reset.
+  const [role, setRole] = useState(() =>
+    state && ROLES.includes(state.role) ? state.role : "volunteer"
+  );
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // Set when the password was right but the email is not confirmed yet:
+  // {message, role, email} for the notice and its "send a new link" button.
+  const [unverified, setUnverified] = useState(null);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (loading) return;
+
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
@@ -16,34 +33,32 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
       return;
     }
 
-    setLoading(true);
+    if (!password) {
+      showToast("Please enter your password", "error");
+      return;
+    }
 
-    const endpoint =
-      role === "volunteer"
-        ? `${API_BASE}/volunteer-dashboard/${encodeURIComponent(trimmedEmail)}`
-        : `${API_BASE}/ngo-dashboard/${encodeURIComponent(trimmedEmail)}`;
+    setLoading(true);
+    setUnverified(null);
 
     try {
-      const res = await fetch(endpoint);
+      // Sent exactly as typed. A locked account comes back as the server's 429 message.
+      const account = await loginUser(role, trimmedEmail, password);
 
-      if (!res.ok) {
-        let data = {};
+      setPassword("");
+      onLogin({ role, email: account.email || trimmedEmail });
+      // Replace the /login entry so Back does not return to the login form.
+      navigate(dashboardFor(role), { replace: true });
+    } catch (err) {
+      setLoading(false);
 
-        try {
-          data = await res.json();
-        } catch {
-          data = {};
-        }
-
-        throw new Error(data.detail || "No matching profile found");
+      if (err.code === "email_not_verified") {
+        setUnverified({ message: err.message, role, email: trimmedEmail });
+        return;
       }
 
-      setDashboardEmail(trimmedEmail);
-      setPage(role === "volunteer" ? "volunteer-dashboard" : "ngo-dashboard");
-    } catch (err) {
+      // The password stays in the field so a typo can be corrected.
       showToast(err.message || "Unable to connect to backend", "error");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -51,17 +66,23 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
     <div className="page form-page">
       <div className="form-card dashboard-login-card">
         <div className="form-header">
-          <h2 className="form-title">View My Dashboard</h2>
+          <h1 className="form-title">View My Dashboard</h1>
           <p className="form-subtitle">
-            Enter your registered email to view your profile
+            Enter your registered email and password to view your profile
           </p>
         </div>
 
-        <div className="form-step fade-in">
+        <form className="form-step fade-in" onSubmit={handleSubmit} noValidate>
           <div className="form-group">
-            <label>I am a</label>
+            <span className="form-label" id="dashboard-login-role-label">
+              I am a
+            </span>
 
-            <div className="radio-group" role="radiogroup" aria-label="Role">
+            <div
+              className="radio-group"
+              role="radiogroup"
+              aria-labelledby="dashboard-login-role-label"
+            >
               <label className="radio-option">
                 <input
                   type="radio"
@@ -98,28 +119,64 @@ export default function DashboardLogin({ showToast, setPage, setDashboardEmail }
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
             />
           </div>
+
+          <div className="form-group">
+            <label htmlFor="dashboard-login-password">
+              Password <span className="required">*</span>
+            </label>
+
+            <input
+              id="dashboard-login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+
+            <Link
+              className="dashboard-login-forgot"
+              to={`${PATHS["forgot-password"]}?role=${role}`}
+            >
+              Forgot password?
+            </Link>
+          </div>
+
+          {unverified && unverified.role === role && unverified.email === email.trim() && (
+            <div className="login-unverified">
+              <div className="auth-message auth-message--error" role="alert">
+                <p>
+                  <strong>Your email is not confirmed yet.</strong>
+                </p>
+                <p>{unverified.message}</p>
+                <ResendButton role={unverified.role} email={unverified.email} />
+              </div>
+            </div>
+          )}
 
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("landing")}
+              onClick={() => navigate(PATHS.landing)}
               type="button"
             >
               &#8592; Back
             </button>
 
             <button
+              type="submit"
               className={`submit-btn ${loading ? "loading" : ""}`}
-              onClick={handleSubmit}
               disabled={loading}
               id="dashboard-login-submit"
             >
               {loading ? "Loading..." : "View Dashboard"}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

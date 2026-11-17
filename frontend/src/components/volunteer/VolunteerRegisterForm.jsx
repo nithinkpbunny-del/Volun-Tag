@@ -1,25 +1,23 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./VolunteerRegisterForm.css";
+import { API_BASE } from "../../config";
+import { errorText, loginUser } from "../../api";
+import { PATHS, dashboardFor } from "../../routes";
+import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
+import { CheckEmail } from "../EmailVerification";
+import {
+  AVAILABILITY_OPTIONS,
+  EXPERIENCE_OPTIONS,
+  GENDER_OPTIONS,
+  SKILL_SUGGESTIONS,
+  hasSkill,
+  toggleSkill as toggleSkillText,
+  validateVolunteerProfile,
+} from "./volunteerFields";
 
-const SKILL_SUGGESTIONS = [
-  "Teaching", "Tutoring", "Mentoring", "First Aid", "Web Development",
-  "Graphic Design", "Writing", "Public Speaking", "Photography",
-  "Counseling", "Data Analysis", "Event Planning", "Fundraising",
-  "Social Media", "Translation", "Nursing", "Cooking", "Driving",
-  "Construction", "Legal Aid", "Music", "Sports Coaching",
-];
-
-const GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"];
-
-const AVAILABILITY_OPTIONS = [
-  "Flexible", "Weekdays", "Weekends", "Part-time", "Full-time",
-];
-
-const EXPERIENCE_OPTIONS = ["Beginner", "Intermediate", "Experienced"];
-
-const API_BASE = "http://127.0.0.1:8000";
-
-export default function VolunteerRegisterForm({ showToast, setPage, setDashboardEmail }) {
+export default function VolunteerRegisterForm({ showToast, onLogin }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -37,6 +35,10 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // The address the confirmation mail went to (shows "Check your email").
+  const [checkEmail, setCheckEmail] = useState("");
+
+  const passwordOk = meetsPasswordPolicy(form.password);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -46,29 +48,10 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
     }
   };
 
-  const isSkillSelected = (skill) =>
-    form.skills
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .includes(skill.toLowerCase());
+  const isSkillSelected = (skill) => hasSkill(form.skills, skill);
 
   const toggleSkill = (skill) => {
-    setForm((prev) => {
-      const current = prev.skills
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-      const exists = current.some(
-        (s) => s.toLowerCase() === skill.toLowerCase()
-      );
-
-      const updated = exists
-        ? current.filter((s) => s.toLowerCase() !== skill.toLowerCase())
-        : [...current, skill];
-
-      return { ...prev, skills: updated.join(", ") };
-    });
+    setForm((prev) => ({ ...prev, skills: toggleSkillText(prev.skills, skill) }));
 
     if (errors.skills) {
       setErrors((prev) => ({ ...prev, skills: "" }));
@@ -76,51 +59,17 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
   };
 
   const validate = () => {
-    const errs = {};
-
-    if (!form.name.trim()) {
-      errs.name = "Name is required";
-    }
+    // Profile rules are shared with Settings (volunteerFields.js).
+    const errs = validateVolunteerProfile(form);
 
     if (!form.email.trim()) {
       errs.email = "Email is required";
     }
 
-    if (!form.contact_number.trim()) {
-      errs.contact_number = "Contact number is required";
-    }
-
     if (!form.password) {
       errs.password = "Password is required";
-    }
-
-    if (!form.age) {
-      errs.age = "Age is required";
-    } else if (
-      Number(form.age) < 1 ||
-      Number(form.age) > 120
-    ) {
-      errs.age = "Age must be between 1 and 120";
-    }
-
-    if (!form.designation.trim()) {
-      errs.designation = "Designation is required";
-    }
-
-    if (!form.gender.trim()) {
-      errs.gender = "Gender is required";
-    }
-
-    if (!form.skills.trim()) {
-      errs.skills = "Skills are required";
-    }
-
-    if (!form.location.trim()) {
-      errs.location = "Location is required";
-    }
-
-    if (!form.availability.trim()) {
-      errs.availability = "Availability is required";
+    } else if (!passwordOk) {
+      errs.password = "Password does not meet all the rules below";
     }
 
     setErrors(errs);
@@ -167,11 +116,29 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
 
       if (!res.ok) {
         throw new Error(
-          data.detail || "Failed to register volunteer"
+          errorText(data, "Failed to register volunteer")
         );
       }
 
+      // Email confirmation is on: the same answer comes back whether or not
+      // the address already had an account, so just ask the user to check it.
+      if (data.verification_required) {
+        setCheckEmail(form.email.trim());
+        return;
+      }
+
       showToast("Volunteer registered successfully!", "success");
+
+      // Log in with the email and password just typed, so the dashboard opens.
+      try {
+        const account = await loginUser("volunteer", form.email.trim(), form.password);
+        onLogin({ role: "volunteer", email: account.email || form.email.trim() });
+      } catch {
+        showToast("Registered. Please log in to continue.", "success");
+        navigate(PATHS["dashboard-login"]);
+        return;
+      }
+
       setSubmitted(true);
     } catch (err) {
       showToast(
@@ -182,6 +149,10 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
       setLoading(false);
     }
   };
+
+  if (checkEmail) {
+    return <CheckEmail role="volunteer" email={checkEmail} />;
+  }
 
   if (submitted) {
     return (
@@ -201,9 +172,9 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
               </svg>
             </div>
 
-            <h2 className="success-title">
+            <h1 className="success-title">
               Registration Complete
-            </h2>
+            </h1>
 
             <p className="success-desc">
               You have been registered on VolunTag. Your skills
@@ -214,7 +185,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
             <div className="success-actions">
               <button
                 className="success-btn-primary"
-                onClick={() => setPage("results")}
+                onClick={() => navigate(PATHS.results)}
                 id="volunteer-reg-view-matches"
               >
                 View Matches
@@ -222,10 +193,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
 
               <button
                 className="success-btn-secondary"
-                onClick={() => {
-                  setDashboardEmail(form.email.trim());
-                  setPage("volunteer-dashboard");
-                }}
+                onClick={() => navigate(dashboardFor("volunteer"))}
                 id="volunteer-reg-view-dashboard"
               >
                 Go to My Dashboard
@@ -233,7 +201,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
 
               <button
                 className="success-btn-secondary"
-                onClick={() => setPage("landing")}
+                onClick={() => navigate(PATHS.landing)}
                 id="volunteer-reg-go-home"
               >
                 Back to Home
@@ -265,9 +233,9 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
             </svg>
           </div>
 
-          <h2 className="form-title">
+          <h1 className="form-title">
             Register as Volunteer
-          </h2>
+          </h1>
 
           <p className="form-subtitle">
             Complete the form to create your volunteer profile
@@ -362,14 +330,11 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
                 Password <span className="required">*</span>
               </label>
 
-              <input
+              <PasswordField
                 id="vol-reg-password"
-                type="password"
                 value={form.password}
-                onChange={(e) =>
-                  updateField("password", e.target.value)
-                }
-                className={errors.password ? "input-error" : ""}
+                onChange={(value) => updateField("password", value)}
+                hasError={Boolean(errors.password)}
               />
 
               {errors.password && (
@@ -595,7 +560,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
           <div className="form-actions">
             <button
               className="form-back-btn"
-              onClick={() => setPage("role-select")}
+              onClick={() => navigate(PATHS["role-select"])}
               type="button"
             >
               &#8592; Back
@@ -606,7 +571,7 @@ export default function VolunteerRegisterForm({ showToast, setPage, setDashboard
                 loading ? "loading" : ""
               }`}
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || !passwordOk}
               id="vol-reg-submit"
             >
               {loading

@@ -1,316 +1,110 @@
-/* ─── NGO Dashboard — mirrors VolunteerDashboard structure ──────── */
+/* ─── NGO dashboard: the pieces only the NGO side has ────────────────
+   The shared dashboard layout, the event cards and the list rows are in
+   components/volunteer/VolunteerDashboard.css. */
 
-/* Reuses dashboard-shell, dashboard-subnav, dashboard-subnav-tabs,
-   dashboard-subnav-tab, dashboard-profile-strip, dashboard-avatar-circle,
-   dashboard-profile-info, dashboard-profile-name, dashboard-content-grid,
-   dashboard-main-col, dashboard-sidebar-col, dashboard-section-header,
-   dashboard-section-title, dashboard-section-sub, dashboard-ngo-list,
-   dashboard-ngo-row, dashboard-ngo-row-main, dashboard-ngo-info,
-   dashboard-ngo-name, dashboard-ngo-meta, dashboard-ngo-actions,
-   dashboard-ngo-detail, dashboard-view-btn, dashboard-stats-row,
-   dashboard-stat-card, dashboard-stat-value, dashboard-stat-label,
-   dashboard-sidebar-heading, dashboard-placeholder-card,
-   dashboard-placeholder-title, dashboard-placeholder-text,
-   dashboard-report-btn, dashboard-search-input, dashboard-footer-actions,
-   dashboard-verification-tag, verification-* from VolunteerDashboard.css.
-   Only NGO-specific additions are here. */
-
-
-/* ─── Profile motto ──────────────────────────────────────────────── */
-
-.dashboard-profile-motto {
-  font-size: 0.85rem;
-  font-style: italic;
-  color: var(--ink-soft);
-  margin: 2px 0 0.5rem;
-  line-height: 1.4;
-}
-
-
-/* ─── Org-detail rows (profile tab) ──────────────────────────────── */
+/* ─── Organization details (profile tab) ─────────────────────────── */
 
 .ngo-detail-list {
-  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
 }
 
 .ngo-detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  padding: 0.8rem 0;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
 }
 
-.ngo-detail-row:last-child {
-  border-bottom: none;
+.ngo-detail-row + .ngo-detail-row {
+  border-top: 1px solid var(--border);
 }
 
 .ngo-detail-label {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--ink-soft);
-  flex-shrink: 0;
-  min-width: 110px;
+  color: var(--muted);
 }
 
 .ngo-detail-value {
-  font-size: 0.86rem;
+  font-size: var(--text-base);
   color: var(--ink);
-  text-align: right;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .ngo-detail-link {
-  color: var(--sage);
-  text-decoration: none;
-  word-break: break-all;
+  font-weight: 500;
+  color: var(--sage-ink);
+  text-underline-offset: 2px;
 }
 
-.ngo-detail-link:hover {
-  text-decoration: underline;
+/* ─── Photos and proof thumbnails ────────────────────────────────── */
+
+.ngo-photo-row-label {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
 }
 
-
-/* ─── Events toolbar ─────────────────────────────────────────────── */
-
-.ngo-events-toolbar {
+.ngo-photo-list {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
-
-/* ─── Event create form ──────────────────────────────────────────── */
-
-.ngo-event-form {
+.ngo-photo-item {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
-  padding: 1.25rem;
-  background: var(--mist);
-  border: 1.5px solid var(--border);
-  border-radius: 14px;
-  margin-bottom: 1rem;
-  animation: ngo-form-slide 0.25s ease-out;
+  align-items: flex-start;
+  gap: var(--space-1);
 }
 
-@keyframes ngo-form-slide {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.ngo-event-submit-btn {
-  align-self: flex-end;
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #fff;
-  background: var(--sage);
-  border: none;
+.ngo-photo-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 0.6rem 1.3rem;
-  cursor: pointer;
-  transition: background 0.2s ease;
 }
 
-.ngo-event-submit-btn:hover:not(:disabled) {
-  background: var(--sage-dark, #3a6b5c);
+.ngo-photo-caption {
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
 
-.ngo-event-submit-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-
-/* ─── Event status badge ─────────────────────────────────────────── */
-
-.ngo-event-status-badge {
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0.25rem 0.65rem;
-  border-radius: 100px;
-}
-
-.status-active {
-  background: #e6f4ef;
-  color: #2d7a5e;
-}
-
-.status-cancelled {
-  background: #fdecea;
-  color: #c0392b;
-}
-
-
-/* ─── Cancel event button ────────────────────────────────────────── */
-
-.ngo-cancel-event-btn {
-  margin-top: 0.75rem;
-  font-family: var(--font-body);
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #c0392b;
-  background: #fdecea;
-  border: 1px solid #f1b5b0;
-  border-radius: 8px;
-  padding: 0.45rem 0.9rem;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.ngo-cancel-event-btn:hover {
-  background: #f9d6d2;
-}
-
-
-/* ─── Issue status badges (Reported Problems tab) ────────────────── */
-
-.issue-status-reported {
-  background: #e8f0fe;
-  color: #1a73e8;
-}
-
-.issue-status-accepted {
-  background: #e6f4ef;
-  color: #2d7a5e;
-}
-
-.issue-status-in-progress {
-  background: #fef7e0;
-  color: #b5850a;
-}
-
-.issue-status-resolved {
-  background: #e6f4ef;
-  color: #137333;
-}
-
-.issue-status-rejected {
-  background: #fdecea;
-  color: #c0392b;
-}
-
-
-/* ─── Match percentage pill ──────────────────────────────────────── */
-
-.ngo-issue-match-pct {
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 0.22rem 0.6rem;
-  border-radius: 100px;
-  background: linear-gradient(135deg, #e0ecff 0%, #d6f0e0 100%);
-  color: #2d5f8a;
-  white-space: nowrap;
-}
-
-
-/* ─── AI explanation card (expanded detail) ──────────────────────── */
+/* ─── AI explanation (expanded problem) ──────────────────────────── */
 
 .ngo-issue-explanation {
-  margin-top: 0.75rem;
-  padding: 0.85rem 1rem;
-  background: var(--mist, #f5f7f6);
-  border-left: 3px solid var(--sage, #4a8c73);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sage-mid);
   border-radius: 0 10px 10px 0;
 }
 
 .ngo-issue-explanation-label {
-  font-size: 0.72rem;
-  font-weight: 700;
+  margin-bottom: 2px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--sage, #4a8c73);
-  margin-bottom: 0.35rem;
+  color: var(--muted);
 }
 
 .ngo-issue-explanation-text {
-  font-size: 0.84rem;
-  line-height: 1.55;
-  color: var(--ink, #2c2c2c);
+  font-size: var(--text-sm);
+  color: var(--ink);
 }
 
-.ngo-issue-confidence {
-  margin-top: 0.6rem;
-  font-size: 0.82rem;
-  color: var(--ink-soft, #6b6b6b);
-}
-
-
-/* ─── Responsive ─────────────────────────────────────────────────── */
-
-@media (max-width: 760px) {
+@media (max-width: 640px) {
   .ngo-detail-row {
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-
-  .ngo-detail-value {
-    text-align: left;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: var(--space-3) var(--space-4);
   }
 }
-
-/* ─── Messaging tab wrapper and badges ───────────────────────────── */
-
-.msg-tab-wrapper {
-  width: 100%;
-  height: 70vh;
-  min-height: 520px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.msg-tab-wrapper .msg-shell {
-  height: 100%;
-  max-height: 100%;
-  min-height: 100%;
-  width: 100%;
-}
-
-/* ─── Connect button ─────────────────────────────────────────────── */
-
-.dashboard-connect-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--sage, #2d7a5e);
-  border: 1px solid var(--sage, #2d7a5e);
-  border-radius: 8px;
-  padding: 0.4rem 0.75rem;
-  cursor: pointer;
-  transition: background-color 0.15s ease, opacity 0.15s ease;
-}
-
-.dashboard-connect-btn:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.dashboard-connect-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: var(--border, #dde5e2);
-  border-color: var(--border, #dde5e2);
-  color: var(--ink-soft, #667085);
-}
-
-.dashboard-connect-btn .dashboard-chat-icon {
-  width: 13px;
-  height: 13px;
-  stroke: currentColor;
-}
-
-.ngo-issue-connect-row {
-  margin-top: 0.75rem;
-}
-

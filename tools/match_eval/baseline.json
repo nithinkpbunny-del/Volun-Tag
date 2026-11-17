@@ -1,0 +1,31 @@
+{
+  "volunteers": 82,
+  "ngos": 24,
+  "volunteers_with_rating_bonus": 0,
+  "results": [
+    {
+      "scoring": "v1",
+      "ngo_labelled_volunteers": 74,
+      "ngo_top1": 0.8919,
+      "ngo_top3": 0.9595,
+      "event_precision_at_3": 0.9324,
+      "event_ndcg_at_5": 0.9499,
+      "events_shown_avg": 9.91,
+      "zero_events_labelled": 0,
+      "zero_events_unlabelled": 8,
+      "unlabelled_volunteers": 8
+    },
+    {
+      "scoring": "v2",
+      "ngo_labelled_volunteers": 74,
+      "ngo_top1": 0.8649,
+      "ngo_top3": 0.9595,
+      "event_precision_at_3": 0.8874,
+      "event_ndcg_at_5": 0.8893,
+      "events_shown_avg": 13.95,
+      "zero_events_labelled": 0,
+      "zero_events_unlabelled": 0,
+      "unlabelled_volunteers": 8
+    }
+  ]
+}

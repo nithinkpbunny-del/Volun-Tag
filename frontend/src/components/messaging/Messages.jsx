@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import "./Messages.css";
-
-const API_BASE = "http://127.0.0.1:8000";
+import AuthImage from "../AuthImage";
+import { parseServerTime } from "../../dates";
+import { API_BASE } from "../../config";
+import { authFetch, openAuthedFile } from "../../api";
+import { mapsUrl } from "../../safeUrl";
 
 const BLOCKED_EXTENSIONS = [
   "exe", "bat", "cmd", "com", "msi", "scr", "sh",
@@ -21,7 +24,9 @@ function formatFileSize(bytes) {
 function formatLocalTime(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   } catch {
     return "";
@@ -39,7 +44,9 @@ function isSameDay(d1, d2) {
 function formatDateSeparator(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
@@ -60,7 +67,9 @@ function formatDateSeparator(isoStr) {
 function formatConvoTime(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
@@ -93,12 +102,12 @@ function getAvatarColor(nameOrEmail) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
   const colors = [
-    { bg: "#e8f0ee", text: "#4a7c6f" }, // sage
-    { bg: "#f5ede7", text: "#c4714a" }, // clay
-    { bg: "#e6f0fa", text: "#3b7bb8" }, // blue
-    { bg: "#f3e8f7", text: "#874da0" }, // purple
-    { bg: "#fdf3e7", text: "#b37424" }, // amber
-    { bg: "#e8f5e9", text: "#388e3c" }, // green
+    { bg: "#e8f0ee", text: "#2b4f45" }, // sage
+    { bg: "#f5ede7", text: "#8a4526" }, // clay
+    { bg: "#e6f0fa", text: "#1d4e89" }, // blue
+    { bg: "#f3e8f7", text: "#6a3a80" }, // purple
+    { bg: "#fdf3e7", text: "#7d5100" }, // amber
+    { bg: "#e8f5e9", text: "#256029" }, // green
   ];
   const index = Math.abs(hash) % colors.length;
   return colors[index];
@@ -278,7 +287,7 @@ export default function Messages({
     async (otherEmail) => {
       if (!email || !otherEmail) return;
       try {
-        await fetch(`${API_BASE}/messages/read`, {
+        await authFetch(`${API_BASE}/messages/read`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -301,7 +310,7 @@ export default function Messages({
       if (!isBackground) setLoadingConvos(true);
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/conversations/${encodeURIComponent(email.trim().toLowerCase())}`
         );
         if (!res.ok) {
@@ -345,7 +354,7 @@ export default function Messages({
       const targetEmail = otherEmail.trim().toLowerCase();
 
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE}/messages/${encodeURIComponent(
             email.trim().toLowerCase()
           )}/with/${encodeURIComponent(targetEmail)}`
@@ -631,7 +640,7 @@ export default function Messages({
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
-          const res = await fetch(`${API_BASE}/messages/location`, {
+          const res = await authFetch(`${API_BASE}/messages/location`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -724,7 +733,7 @@ export default function Messages({
           formData.append("caption", trimmed);
         }
 
-        const res = await fetch(`${API_BASE}/messages/file`, {
+        const res = await authFetch(`${API_BASE}/messages/file`, {
           method: "POST",
           body: formData,
         });
@@ -748,7 +757,7 @@ export default function Messages({
         }
       } else {
         // Send regular text message
-        const res = await fetch(`${API_BASE}/messages`, {
+        const res = await authFetch(`${API_BASE}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -832,9 +841,8 @@ export default function Messages({
       }
 
       const isMine = msg.is_mine;
-      const fileUrlWithAuth = msg.file_url
-        ? `${API_BASE}${msg.file_url}?email=${encodeURIComponent(email.trim().toLowerCase())}`
-        : null;
+      // Path only: AuthImage and openAuthedFile fetch it with the login token.
+      const filePath = msg.file_url || null;
 
       items.push(
         <div
@@ -843,26 +851,19 @@ export default function Messages({
         >
           <div className={`msg-bubble ${isMine ? "msg-bubble-mine" : "msg-bubble-theirs"}`}>
             {/* 1. Image message */}
-            {msg.message_type === "image" && fileUrlWithAuth && (
+            {msg.message_type === "image" && filePath && (
               <div className="msg-attachment-image-box">
-                <a
-                  href={fileUrlWithAuth}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="msg-image-link"
-                >
-                  <img
-                    src={fileUrlWithAuth}
-                    alt={msg.file_name || "Shared photo"}
-                    className="msg-image-thumbnail"
-                    loading="lazy"
-                  />
-                </a>
+                <AuthImage
+                  src={filePath}
+                  alt={msg.file_name || "Shared photo"}
+                  className="msg-image-thumbnail"
+                  linkClassName="msg-image-link"
+                />
               </div>
             )}
 
             {/* 2. Document message */}
-            {msg.message_type === "document" && fileUrlWithAuth && (
+            {msg.message_type === "document" && filePath && (
               <div className="msg-doc-card">
                 <div className="msg-doc-icon-box">
                   <DocIcon />
@@ -875,15 +876,21 @@ export default function Messages({
                     {formatFileSize(msg.file_size)}
                   </span>
                 </div>
-                <a
-                  href={fileUrlWithAuth}
-                  download={msg.file_name || "file"}
+                <button
+                  type="button"
                   className="msg-doc-download-btn"
                   title="Download file"
+                  onClick={() =>
+                    openAuthedFile(filePath).catch(() => {
+                      if (showToastRef.current) {
+                        showToastRef.current("Could not open the file", "error");
+                      }
+                    })
+                  }
                 >
                   <DownloadIcon />
                   <span>Download</span>
-                </a>
+                </button>
               </div>
             )}
 
@@ -899,14 +906,16 @@ export default function Messages({
                 <div className="msg-location-coords">
                   {msg.latitude?.toFixed(5)}, {msg.longitude?.toFixed(5)}
                 </div>
-                <a
-                  href={`https://www.google.com/maps?q=${msg.latitude},${msg.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="msg-location-link"
-                >
-                  Open in Google Maps &rarr;
-                </a>
+                {mapsUrl(msg.latitude, msg.longitude) && (
+                  <a
+                    href={mapsUrl(msg.latitude, msg.longitude)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="msg-location-link"
+                  >
+                    Open in Google Maps &rarr;
+                  </a>
+                )}
               </div>
             )}
 

@@ -1,7 +1,11 @@
+import { useNavigate } from "react-router-dom";
+import { PATHS } from "../routes";
 import IssueReportForm from "./IssueReportForm";
 import "./ReportIssue.css";
 
-export default function ReportIssue({ showToast, onReportSuccess, reporterEmail, setPage }) {
+export default function ReportIssue({ showToast, onReportSuccess, reporterEmail }) {
+  const navigate = useNavigate();
+
   if (!reporterEmail) {
     return (
       <div className="page report-page">
@@ -14,8 +18,8 @@ export default function ReportIssue({ showToast, onReportSuccess, reporterEmail,
                 <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
               </svg>
             </div>
-            <h2 className="form-title">Report an Issue</h2>
-            <p className="form-subtitle">Register as a volunteer to report a problem</p>
+            <h1 className="form-title">Report an Issue</h1>
+            <p className="form-subtitle">Log in or register as a volunteer to report a problem</p>
           </div>
 
           <p style={{ textAlign: "center", color: "var(--text-muted)", margin: "0.5rem 0 1.5rem", fontSize: "0.95rem", lineHeight: 1.5 }}>
@@ -25,13 +29,13 @@ export default function ReportIssue({ showToast, onReportSuccess, reporterEmail,
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             <button
               className="submit-btn"
-              onClick={() => setPage("volunteer-register")}
+              onClick={() => navigate(PATHS["volunteer-register"])}
             >
               Register as a volunteer
             </button>
             <button
               className="form-back-btn"
-              onClick={() => setPage("dashboard-login")}
+              onClick={() => navigate(PATHS["dashboard-login"])}
               style={{ width: "100%" }}
             >
               I already have an account

@@ -1,0 +1,275 @@
+/* ─── Event volunteers page (approve, remove, rate) ──────────────────
+   Tokens and ui-* components come from src/theme.css. */
+
+.ev-vol-page {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) var(--space-8);
+}
+
+.ev-vol-back-btn {
+  margin-left: calc(var(--space-4) * -1);
+  margin-bottom: var(--space-3);
+}
+
+.ev-vol-header {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+  background: linear-gradient(120deg, #ffffff 0%, #f3f8f6 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.ev-vol-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.ev-vol-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ev-vol-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+.ev-vol-progress {
+  max-width: 420px;
+}
+
+.ev-vol-section-title {
+  margin: var(--space-6) 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.ev-vol-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ev-vol-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.ev-vol-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--sage-deep);
+  background: var(--sage-light);
+  border-radius: 50%;
+}
+
+.ev-vol-info {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ev-vol-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ev-vol-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ev-vol-meta {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ev-vol-info .ui-chips {
+  margin: var(--space-1) 0;
+}
+
+.ev-vol-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+/* ─── Feedback (completed events) ────────────────────────────────── */
+
+.ev-fb-form,
+.ev-fb-result {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--mist);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.ev-fb-form-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ev-fb-result-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ev-fb-result > .ui-badge {
+  justify-self: start;
+}
+
+.ev-fb-text {
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.ev-fb-radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ev-fb-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.ev-fb-radio:has(input:checked) {
+  background: var(--sage-light);
+  border-color: var(--sage);
+}
+
+.ev-fb-radio:has(input:focus-visible) {
+  box-shadow: var(--ring);
+}
+
+.ev-fb-radio input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--sage);
+}
+
+.ev-fb-star-row {
+  display: flex;
+  gap: 2px;
+}
+
+.ev-fb-star {
+  width: 44px;
+  height: 44px;
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--border-strong);
+  background: none;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.ev-fb-star:hover {
+  transform: scale(1.12);
+}
+
+.ev-fb-star.filled {
+  color: var(--star);
+}
+
+.ev-fb-star:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.ev-fb-textarea {
+  min-height: 88px;
+}
+
+.ev-fb-counter {
+  margin-top: calc(var(--space-2) * -1);
+  font-size: var(--text-xs);
+  text-align: right;
+  color: var(--muted);
+}
+
+.ev-fb-note {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.ev-fb-submit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+@media (max-width: 640px) {
+  .ev-vol-header,
+  .ev-vol-card {
+    padding: var(--space-4);
+  }
+
+  .ev-vol-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ev-vol-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+  }
+
+  .ev-vol-actions .ui-btn {
+    flex: 1 1 0;
+  }
+
+  .ev-fb-submit-row .ui-btn {
+    width: 100%;
+  }
+}
