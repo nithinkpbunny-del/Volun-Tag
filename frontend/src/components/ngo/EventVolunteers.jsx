@@ -3,6 +3,7 @@ import "./EventVolunteers.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
 import PhaseBadge from "../PhaseBadge";
+import { Badge, Chips, EmptyState, Icon, Progress, SkeletonList } from "../ui/ui";
 import {
   formatEventDay,
   formatTimestampDate,
@@ -23,30 +24,25 @@ const initials = (name) =>
 // joined_at is a server timestamp (naive UTC), shown as an IST date.
 const formatDate = (iso) => formatTimestampDate(iso);
 
-const splitSkills = (skills) =>
-  skills
-    ? skills
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
-
 const EMPTY_DRAFT = { attendance: "", rating: 0, feedback: "" };
 
 const FEEDBACK_MAX = 1000;
-
-const renderStars = (rating) =>
-  "★".repeat(rating || 0) + "☆".repeat(5 - (rating || 0));
 
 // Read-only result for a volunteer whose feedback has been submitted.
 function FeedbackResult({ volunteer }) {
   if (volunteer.attendance_status === "attended") {
     return (
       <div className="ev-fb-result">
-        <span className="ev-fb-pill ev-fb-pill-attended">Attended</span>
-        <p className="ev-fb-stars" aria-label={`${volunteer.rating} out of 5 stars`}>
-          {renderStars(volunteer.rating)}
-        </p>
+        <div className="ev-fb-result-head">
+          <Badge tone="success" dot>Attended</Badge>
+          <p className="ev-fb-stars">
+            <span className="sr-only">{volunteer.rating} out of 5 stars</span>
+            <span className="rating-stars" aria-hidden="true">
+              {"★".repeat(volunteer.rating || 0)}
+              <span className="rating-stars__empty">{"★".repeat(5 - (volunteer.rating || 0))}</span>
+            </span>
+          </p>
+        </div>
         {volunteer.feedback && (
           <p className="ev-fb-text">{volunteer.feedback}</p>
         )}
@@ -56,7 +52,7 @@ function FeedbackResult({ volunteer }) {
 
   return (
     <div className="ev-fb-result">
-      <span className="ev-fb-pill ev-fb-pill-absent">Not attended</span>
+      <Badge tone="warning" dot>Not attended</Badge>
     </div>
   );
 }
@@ -74,6 +70,7 @@ function FeedbackForm({ volunteer, draft, busy, onChange, onSubmit }) {
 
   return (
     <div className="ev-fb-form">
+      <p className="ev-fb-form-title">Rate attendance</p>
       <div className="ev-fb-radios" role="radiogroup" aria-label="Attendance">
         <label className="ev-fb-radio">
           <input
@@ -99,7 +96,7 @@ function FeedbackForm({ volunteer, draft, busy, onChange, onSubmit }) {
 
       {attendance === "attended" && (
         <>
-          <div className="ev-fb-star-row">
+          <div className="ev-fb-star-row" role="group" aria-label="Rating">
             {[1, 2, 3, 4, 5].map((n) => (
               <button
                 key={n}
@@ -109,13 +106,14 @@ function FeedbackForm({ volunteer, draft, busy, onChange, onSubmit }) {
                 aria-pressed={n <= rating}
                 onClick={() => onChange({ rating: n })}
               >
-                {n <= rating ? "★" : "☆"}
+                ★
               </button>
             ))}
           </div>
 
           <textarea
-            className="ev-fb-textarea"
+            className="ui-textarea ev-fb-textarea"
+            aria-label={`Feedback for ${volunteer.name}`}
             placeholder="Write feedback for this volunteer"
             maxLength={FEEDBACK_MAX}
             rows={3}
@@ -132,14 +130,17 @@ function FeedbackForm({ volunteer, draft, busy, onChange, onSubmit }) {
         <p className="ev-fb-note">No rating or feedback is needed.</p>
       )}
 
-      <button
-        type="button"
-        className="ev-fb-submit-btn"
-        disabled={!canSubmit}
-        onClick={onSubmit}
-      >
-        Submit feedback
-      </button>
+      <div className="ev-fb-submit-row">
+        <button
+          type="button"
+          className="ui-btn ui-btn--primary"
+          disabled={!canSubmit}
+          onClick={onSubmit}
+        >
+          Submit feedback
+        </button>
+        <span className="ui-hint">Feedback cannot be changed after you submit it.</span>
+      </div>
     </div>
   );
 }
@@ -369,12 +370,12 @@ export default function EventVolunteers({
 
   const renderCard = (v) => (
     <div className="ev-vol-card" key={v.volunteer_id}>
-      <div className="ev-vol-avatar">{initials(v.name)}</div>
+      <div className="ev-vol-avatar" aria-hidden="true">{initials(v.name)}</div>
 
       <div className="ev-vol-info">
         <div className="ev-vol-name-row">
           <p className="ev-vol-name">{v.name}</p>
-          {v.approved && <span className="ev-vol-approved-pill">Approved</span>}
+          {v.approved && <Badge tone="success">Approved</Badge>}
         </div>
         <p className="ev-vol-meta">{v.location || "No location"}</p>
         <p className="ev-vol-meta">{v.email}</p>
@@ -383,21 +384,10 @@ export default function EventVolunteers({
           <p className="ev-vol-meta">{v.experience}</p>
         )}
 
-        {splitSkills(v.skills).length > 0 && (
-          <div className="ev-vol-chips">
-            {splitSkills(v.skills).map((skill) => (
-              <span className="ev-vol-chip" key={skill}>
-                {skill}
-              </span>
-            ))}
-          </div>
-        )}
+        <Chips items={v.skills} label="Skills" />
 
         <p className="ev-vol-meta">
-          Events attended: {v.events_attended}
-        </p>
-        <p className="ev-vol-meta">
-          Joined on {formatDate(v.joined_at)}
+          Events attended: {v.events_attended} · Joined on {formatDate(v.joined_at)}
         </p>
 
         {completed && v.approved && (
@@ -418,16 +408,17 @@ export default function EventVolunteers({
       <div className="ev-vol-actions">
         <button
           type="button"
-          className="ev-vol-connect-btn"
+          className="ui-btn ui-btn--sm"
           onClick={() => onConnect({ email: v.email, name: v.name })}
         >
+          <Icon name="chat" size={15} />
           Connect
         </button>
 
         {v.approved && registrationOpen && (
           <button
             type="button"
-            className="ev-vol-remove-btn"
+            className="ui-btn ui-btn--danger ui-btn--sm"
             disabled={busyId !== null}
             onClick={() => handleRemove(v)}
           >
@@ -438,11 +429,12 @@ export default function EventVolunteers({
         {!v.approved && registrationOpen && (
           <button
             type="button"
-            className="ev-vol-approve-btn"
+            className="ui-btn ui-btn--primary ui-btn--sm"
             disabled={busyId !== null || approveBlockedReason !== ""}
             title={approveBlockedReason || undefined}
             onClick={() => changeApproval(v, "approve")}
           >
+            <Icon name="check" size={15} />
             Approve
           </button>
         )}
@@ -452,34 +444,77 @@ export default function EventVolunteers({
 
   return (
     <div className="ev-vol-page">
-      <button type="button" className="ev-vol-back-btn" onClick={onBack}>
-        ← Back to dashboard
+      <button type="button" className="ui-btn ui-btn--ghost ev-vol-back-btn" onClick={onBack}>
+        <Icon name="arrowLeft" />
+        Back to dashboard
       </button>
 
       <div className="ev-vol-header">
         <div className="ev-vol-title-row">
           <h1 className="ev-vol-title">{title}</h1>
-          {status && <span className="ev-vol-status">{status}</span>}
-          {status !== "Cancelled" && <PhaseBadge phase={phase} />}
+          <div className="ev-vol-badges">
+            {status !== "Cancelled" && <PhaseBadge phase={phase} />}
+            {/* "Active" says nothing once the event is over. */}
+            {status && !(completed && status === "Active") && (
+              <Badge
+                tone={status === "Cancelled" ? "danger" : status === "Filled" ? "info" : "neutral"}
+                dot={status === "Active"}
+              >
+                {status}
+              </Badge>
+            )}
+          </div>
         </div>
 
-        <p className="ev-vol-count">{formatEventDay(eventDay)}</p>
+        <ul className="event-card__meta">
+          <li>
+            <Icon name="calendar" />
+            <span>{formatEventDay(eventDay)}</span>
+          </li>
+        </ul>
 
         {data && (
-          <p className="ev-vol-count">
-            {completed
-              ? `${approvedCount} approved · ${ratedCount} rated`
-              : spots != null
-              ? `${approvedCount} of ${spots} approved · ${waitingCount} waiting`
-              : `${approvedCount} approved · ${waitingCount} waiting`}
-          </p>
+          <div className="ev-vol-progress">
+            {completed ? (
+              <Progress
+                value={ratedCount}
+                total={approvedCount}
+                tone={ratedCount >= approvedCount ? "" : "muted"}
+                label={
+                  <>
+                    <strong>{approvedCount}</strong> approved · <strong>{ratedCount}</strong> rated
+                  </>
+                }
+              />
+            ) : (
+              <Progress
+                value={approvedCount}
+                total={spots != null ? spots : undefined}
+                label={
+                  spots != null ? (
+                    <>
+                      <strong>
+                        {approvedCount} of {spots}
+                      </strong>{" "}
+                      approved
+                    </>
+                  ) : (
+                    <>
+                      <strong>{approvedCount}</strong> approved
+                    </>
+                  )
+                }
+                detail={`${waitingCount} waiting`}
+              />
+            )}
+          </div>
         )}
       </div>
 
-      {loading && <p className="ev-vol-message">Loading volunteers...</p>}
+      {loading && <SkeletonList count={3} label="Loading volunteers" />}
 
       {!loading && error && !data && (
-        <p className="ev-vol-message ev-vol-error">{error}</p>
+        <p className="ui-alert ui-alert--danger" role="alert">{error}</p>
       )}
 
       {data && (
@@ -489,11 +524,11 @@ export default function EventVolunteers({
           </h2>
 
           {approvedVolunteers.length === 0 ? (
-            <p className="ev-vol-message">
+            <EmptyState icon="users" title={completed ? "Nobody to rate" : "No volunteers approved yet"}>
               {completed
                 ? "No volunteers were approved for this event."
-                : "No volunteers approved yet"}
-            </p>
+                : "Approve volunteers from the list below."}
+            </EmptyState>
           ) : (
             <div className="ev-vol-list">
               {approvedVolunteers.map(renderCard)}
@@ -505,14 +540,16 @@ export default function EventVolunteers({
               <h2 className="ev-vol-section-title">Joined volunteers</h2>
 
               {!registrationOpen && joinedVolunteers.length > 0 && (
-                <p className="ev-vol-message">
+                <p className="ui-alert ui-alert--warning">
                   Registration closed when the event day started, so these volunteers can no
                   longer be approved.
                 </p>
               )}
 
               {joinedVolunteers.length === 0 ? (
-                <p className="ev-vol-message">No volunteers waiting for approval</p>
+                <EmptyState icon="inbox" title="No volunteers waiting for approval">
+                  Volunteers who join this event appear here.
+                </EmptyState>
               ) : (
                 <div className="ev-vol-list">
                   {joinedVolunteers.map(renderCard)}

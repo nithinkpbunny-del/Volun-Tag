@@ -202,8 +202,9 @@ export default function ResultsPage({ showToast }) {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="filter-select"
+              className="filter-select ui-select"
               id="filter-category"
+              aria-label="Filter by NGO category"
             >
               <option value="">All Categories</option>
               <option value="Education">📚 Education</option>
@@ -216,8 +217,9 @@ export default function ResultsPage({ showToast }) {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="filter-select"
+              className="filter-select ui-select"
               id="sort-by"
+              aria-label="Sort matches"
             >
               <option value="score">Sort: Best Score</option>
               <option value="label">Sort: Volunteer number</option>

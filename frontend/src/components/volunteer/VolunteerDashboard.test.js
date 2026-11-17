@@ -43,7 +43,11 @@ const EVENTS = [
 const ROUTES = {
   "/volunteer-dashboard/": { name: "Asha Test", skills: "cleanup, teaching", location: "Pune" },
   "/volunteer-events/": EVENTS,
-  "/volunteer-activity/": [],
+  "/volunteer-activity/": [
+    { activity_id: 1, title: "Past drive", ngo_name: "Green Shore", event_status: "Active", phase: "completed", status_label: "Attended", attendance_status: "attended", rating: 4 },
+    { activity_id: 2, title: "Reading camp", ngo_name: "Green Shore", event_status: "Active", phase: "in_progress", status_label: "Approved", attendance_status: null },
+    { activity_id: 3, title: "Old plan", ngo_name: "Green Shore", event_status: "Cancelled", phase: "open", status_label: "Cancelled", attendance_status: null },
+  ],
   "/volunteer-issues/": [],
   "/volunteer-matches/": [],
   "/conversations/": [],
@@ -127,4 +131,25 @@ test("events show the server's phase; Join and Leave only while registration is 
   // In-progress event already joined: no Leave button any more.
   expect(screen.getByText("Joined")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Leave activity" })).not.toBeInTheDocument();
+});
+
+test("the sidebar shows real numbers from the volunteer's activity, not hard-coded zeros", async () => {
+  await renderDashboard("/volunteer/dashboard");
+
+  const stat = (label) =>
+    // eslint-disable-next-line testing-library/no-node-access
+    screen.getByText(label).closest(".ui-stat");
+
+  // Two events that were not cancelled, one of them attended.
+  expect(stat("Events joined")).toHaveTextContent("2");
+  expect(stat("Events attended")).toHaveTextContent("1");
+  expect(screen.queryByText("Contributions")).not.toBeInTheDocument();
+});
+
+test("My Activity is grouped into upcoming and past", async () => {
+  await renderDashboard("/volunteer/dashboard?tab=activity");
+
+  expect(screen.getByRole("heading", { name: "Upcoming" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Past" })).toBeInTheDocument();
+  expect(screen.getByText("Attended")).toBeInTheDocument();
 });

@@ -7,7 +7,36 @@ import "./VolunteerDashboard.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
 import { PATHS } from "../../routes";
-import { formatEventDay, formatTimestampDate, isOpenPhase } from "../../dates";
+import { Badge, Chips, EmptyState, Icon, SkeletonList } from "../ui/ui";
+import {
+  formatEventDay,
+  formatTimestampDate,
+  isCompletedPhase,
+  isOpenPhase,
+} from "../../dates";
+
+const ACTIVITY_TONES = {
+  Cancelled: "danger",
+  Attended: "success",
+  "Not attended": "warning",
+  "Awaiting NGO feedback": "info",
+  Approved: "success",
+  "Not selected": "neutral",
+  "Waiting for approval": "warning",
+};
+
+const ISSUE_TONES = {
+  Reported: "info",
+  "Under evaluation": "warning",
+  Completed: "success",
+  Resolved: "success",
+};
+
+const LEVEL_TONES = { high: "success", medium: "warning", low: "neutral" };
+const LEVEL_LABELS = { high: "High", medium: "Medium", low: "Low" };
+
+const verificationTone = (status) =>
+  status === "Approved" ? "success" : status === "Rejected" ? "danger" : "warning";
 
 // Tabs, in the order shown; the current one is kept in the address (?tab=).
 export const VOLUNTEER_TABS = ["profile", "messages", "activity", "settings"];
@@ -159,8 +188,10 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
     };
   }, [email, loadEvents]);
 
+  // Loaded once for the sidebar numbers; refreshed every 10 seconds only
+  // while My Activity is open.
   useEffect(() => {
-    if (!email || activeTab !== "activity") {
+    if (!email) {
       return;
     }
 
@@ -184,6 +215,13 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
     };
 
     fetchActivity();
+
+    if (activeTab !== "activity") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const activityIntervalId = setInterval(() => {
       if (document.visibilityState === "hidden") return;
       fetchActivity();
@@ -606,19 +644,11 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
           .toUpperCase()
       : "";
 
-  const skillList = profile?.skills
-    ? profile.skills
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 4)
-    : [];
-
   if (loadingProfile) {
     return (
       <div className="page dashboard-page">
         <div className="dashboard-shell">
-          <p className="dashboard-placeholder-text">Loading your dashboard...</p>
+          <SkeletonList count={3} label="Loading your dashboard" />
         </div>
       </div>
     );
@@ -627,6 +657,87 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
   if (!profile) {
     return null;
   }
+
+  const photoOpenError = () =>
+    showToast("Could not open the photo. Please try again.", "error");
+
+  const openChat = (target) => {
+    setChatTarget(target);
+    setActiveTab("messages");
+  };
+
+  const connectIcon = <Icon name="chat" size={15} />;
+
+  // Real numbers for the sidebar, from the volunteer's own activity list.
+  const joinedCount = activityItems.filter((item) => item.event_status !== "Cancelled").length;
+  const attendedCount = activityItems.filter((item) => item.attendance_status === "attended").length;
+
+  // My Activity: what is still ahead, then what is over.
+  const isPastActivity = (item) =>
+    item.event_status === "Cancelled" || isCompletedPhase(item.phase);
+  const upcomingActivity = activityItems.filter((item) => !isPastActivity(item));
+  const pastActivity = activityItems.filter(isPastActivity);
+
+  const renderActivityItem = (item) => (
+    <article className="activity-card" key={item.activity_id}>
+      <div className="activity-card__main">
+        <div className="activity-card__head">
+          <h3 className="activity-card__title">{item.title}</h3>
+          <div className="activity-card__badges">
+            {item.event_status !== "Cancelled" && <PhaseBadge phase={item.phase} />}
+            <Badge tone={ACTIVITY_TONES[item.status_label] || "neutral"}>{item.status_label}</Badge>
+          </div>
+        </div>
+
+        <p className="activity-card__ngo">{item.ngo_name}</p>
+
+        <ul className="event-card__meta">
+          <li>
+            <Icon name="calendar" />
+            <span>{formatEventDay(item.event_day)}</span>
+          </li>
+          {item.location && (
+            <li>
+              <Icon name="pin" />
+              <span>{item.location}</span>
+            </li>
+          )}
+        </ul>
+
+        {item.attendance_status === "attended" && (
+          <div className="activity-card__feedback">
+            <p className="activity-card__rating">
+              <span className="sr-only">Your rating: {item.rating || 0} out of 5</span>
+              <span className="rating-stars" aria-hidden="true">
+                {"★".repeat(item.rating || 0)}
+                <span className="rating-stars__empty">{"★".repeat(5 - (item.rating || 0))}</span>
+              </span>
+              <span className="activity-card__rating-label">Your rating</span>
+            </p>
+            {item.feedback && (
+              <blockquote className="activity-card__quote">
+                <span className="activity-card__quote-label">NGO feedback</span>
+                {item.feedback}
+              </blockquote>
+            )}
+          </div>
+        )}
+      </div>
+
+      {item.ngo_email && (
+        <div className="activity-card__side">
+          <button
+            type="button"
+            className="ui-btn ui-btn--sm"
+            onClick={() => openChat({ email: item.ngo_email, name: item.ngo_name })}
+          >
+            {connectIcon}
+            Message NGO
+          </button>
+        </div>
+      )}
+    </article>
+  );
 
   return (
     <div className="page dashboard-page">
@@ -680,9 +791,10 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
 
           <button
             type="button"
-            className="dashboard-report-btn"
+            className="ui-btn ui-btn--primary dashboard-report-btn"
             onClick={() => onReportProblem(email)}
           >
+            <Icon name="flag" />
             Report a problem
           </button>
         </div>
@@ -700,11 +812,11 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
         )}
 
         {activeTab === "activity" && activitySubView === "events" && (
-          <div className="dashboard-activity-list dashboard-issue-summary">
-            <div className="dashboard-activity-item">
-              <div className="dashboard-activity-info">
-                <p className="dashboard-event-title">Reported problems</p>
-                <p className="dashboard-event-meta">
+          <>
+            <div className="dashboard-side-card dashboard-side-card--row">
+              <div>
+                <p className="dashboard-side-card__title">Reported problems</p>
+                <p className="dashboard-side-card__text">
                   {loadingIssues
                     ? "Loading your reported problems..."
                     : myIssues.length === 0
@@ -713,17 +825,57 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                 </p>
               </div>
 
-              <div className="dashboard-activity-side">
-                <button
-                  type="button"
-                  className="dashboard-sidebar-msg-btn dashboard-activity-msg-btn"
-                  onClick={() => setActivitySubView("problems")}
-                >
-                  View reported problems
-                </button>
-              </div>
+              <button
+                type="button"
+                className="ui-btn"
+                onClick={() => setActivitySubView("problems")}
+              >
+                View reported problems
+              </button>
             </div>
-          </div>
+
+            {loadingActivity ? (
+              <SkeletonList count={3} label="Loading your activity" />
+            ) : activityItems.length === 0 ? (
+              <EmptyState
+                icon="calendar"
+                title="You haven't joined any events yet"
+                action={
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn--primary"
+                    onClick={() => setActiveTab("profile")}
+                  >
+                    Find events
+                  </button>
+                }
+              >
+                Events you join appear here, with the NGO's decision and, afterwards, your rating.
+              </EmptyState>
+            ) : (
+              <>
+                {upcomingActivity.length > 0 && (
+                  <>
+                    <div className="ui-section-head">
+                      <h2 className="ui-section-title">Upcoming</h2>
+                      <span className="ui-section-sub">{upcomingActivity.length} joined</span>
+                    </div>
+                    <div className="activity-list">{upcomingActivity.map(renderActivityItem)}</div>
+                  </>
+                )}
+
+                {pastActivity.length > 0 && (
+                  <>
+                    <div className="ui-section-head">
+                      <h2 className="ui-section-title">Past</h2>
+                      <span className="ui-section-sub">{pastActivity.length} total</span>
+                    </div>
+                    <div className="activity-list">{pastActivity.map(renderActivityItem)}</div>
+                  </>
+                )}
+              </>
+            )}
+          </>
         )}
 
         {activeTab === "activity" && activitySubView === "problems" && (
@@ -731,36 +883,44 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
             <div className="dashboard-issue-back">
               <button
                 type="button"
-                className="dashboard-view-btn"
+                className="ui-btn ui-btn--ghost"
                 onClick={() => {
                   cancelEditIssue();
                   setActivitySubView("events");
                 }}
               >
-                &#8592; Back to My Activity
+                <Icon name="arrowLeft" />
+                Back to My Activity
               </button>
             </div>
 
-            <div className="dashboard-section-header">
-              <span className="dashboard-section-title">Reported problems</span>
-              <span className="dashboard-section-sub">
-                {myIssues.length} total
-              </span>
+            <div className="ui-section-head">
+              <h2 className="ui-section-title">Reported problems</h2>
+              <span className="ui-section-sub">{myIssues.length} total</span>
             </div>
 
-            <div className="dashboard-issue-list">
-              {loadingIssues && (
-                <p className="dashboard-placeholder-text">Loading your reported problems...</p>
-              )}
-
-              {!loadingIssues && myIssues.length === 0 && (
-                <p className="dashboard-placeholder-text">
-                  You haven't reported any problems yet.
-                </p>
-              )}
-
-              {!loadingIssues &&
-                myIssues.map((iss) => {
+            {loadingIssues ? (
+              <SkeletonList count={2} label="Loading your reported problems" />
+            ) : myIssues.length === 0 ? (
+              <EmptyState
+                icon="flag"
+                title="You haven't reported any problems yet"
+                action={
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn--primary"
+                    onClick={() => onReportProblem(email)}
+                  >
+                    Report a problem
+                  </button>
+                }
+              >
+                Seen something in your area that needs fixing? Report it with a photo and VolunTag
+                passes it to NGOs that can help.
+              </EmptyState>
+            ) : (
+              <div className="activity-list">
+                {myIssues.map((iss) => {
                   const pillLabel = iss.solved ? "Completed" : iss.status;
                   const isReported = iss.status === "Reported";
                   // A problem that gets locked while the form is open closes the form.
@@ -769,32 +929,18 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                   const freeSlots = MAX_ISSUE_IMAGES - iss.image_count;
 
                   return (
-                    <div className="dashboard-issue-item" key={iss.complaint_id}>
-                      <div className="dashboard-issue-head">
-                        <div className="dashboard-issue-info">
-                          <p className="dashboard-event-title">{iss.location}</p>
-                          <p className="dashboard-event-meta">
-                            {iss.complaint_id} · Reported on{" "}
-                            {formatTimestampDate(iss.created_at)}
-                          </p>
-                          {iss.solved && iss.solved_by_ngo && (
-                            <p className="dashboard-event-meta">
-                              Solved by {iss.solved_by_ngo}
-                            </p>
-                          )}
-                          <p className="dashboard-issue-desc">{iss.user_description}</p>
-                        </div>
-
-                        <div className="dashboard-activity-side">
-                          <span
-                            className={`dashboard-issue-pill issue-${pillLabel
-                              .toLowerCase()
-                              .replace(/ /g, "-")}`}
-                          >
-                            {pillLabel}
-                          </span>
-                        </div>
+                    <article className="issue-card" key={iss.complaint_id}>
+                      <div className="activity-card__head">
+                        <h3 className="activity-card__title">{iss.location}</h3>
+                        <Badge tone={ISSUE_TONES[pillLabel] || "neutral"}>{pillLabel}</Badge>
                       </div>
+
+                      <p className="dash-row__meta">
+                        {iss.complaint_id} · Reported on {formatTimestampDate(iss.created_at)}
+                        {iss.solved && iss.solved_by_ngo ? ` · Solved by ${iss.solved_by_ngo}` : ""}
+                      </p>
+
+                      <p className="issue-card__desc">{iss.user_description}</p>
 
                       {iss.image_count > 0 && (
                         <div className="dashboard-issue-photos">
@@ -803,27 +949,26 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                               key={index}
                               src={issuePhotoPath(iss.complaint_id, index)}
                               alt={`Reported photo ${index + 1}`}
-                              onOpenError={() =>
-                                showToast("Could not open the photo. Please try again.", "error")
-                              }
+                              onOpenError={photoOpenError}
                             />
                           ))}
                         </div>
                       )}
 
                       {isReported && !isEditing && (
-                        <div className="dashboard-issue-actions">
+                        <div className="issue-card__actions">
                           <button
                             type="button"
-                            className="dashboard-view-btn"
+                            className="ui-btn ui-btn--sm"
                             disabled={deletingIssueId !== null}
                             onClick={() => startEditIssue(iss)}
                           >
+                            <Icon name="edit" size={15} />
                             Edit
                           </button>
                           <button
                             type="button"
-                            className="dashboard-issue-delete-btn"
+                            className="ui-btn ui-btn--danger ui-btn--sm"
                             disabled={deletingIssueId !== null}
                             onClick={() => deleteIssue(iss)}
                           >
@@ -833,7 +978,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                       )}
 
                       {!isReported && (
-                        <p className="dashboard-issue-note">
+                        <p className="issue-card__note">
                           {iss.solved
                             ? "Locked: this problem has been solved."
                             : iss.status === "Under evaluation"
@@ -843,11 +988,12 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                       )}
 
                       {isEditing && (
-                        <div className="dashboard-issue-form">
-                          <div className="form-group">
+                        <div className="issue-card__form">
+                          <div className="ui-field">
                             <label htmlFor={`issue-desc-${iss.complaint_id}`}>Description</label>
                             <textarea
                               id={`issue-desc-${iss.complaint_id}`}
+                              className="ui-textarea"
                               rows={4}
                               maxLength={5000}
                               value={editForm.user_description}
@@ -860,10 +1006,11 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                             />
                           </div>
 
-                          <div className="form-group">
+                          <div className="ui-field">
                             <label htmlFor={`issue-loc-${iss.complaint_id}`}>Location</label>
                             <input
                               id={`issue-loc-${iss.complaint_id}`}
+                              className="ui-input"
                               type="text"
                               maxLength={500}
                               value={editForm.location}
@@ -876,17 +1023,18 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                             />
                           </div>
 
-                          <div className="form-group">
+                          <div className="ui-field">
                             <label htmlFor={`issue-photos-${iss.complaint_id}`}>Add photos</label>
                             <input
                               id={`issue-photos-${iss.complaint_id}`}
+                              className="ui-file"
                               type="file"
                               accept="image/*"
                               multiple
                               disabled={freeSlots <= 0}
                               onChange={pickIssueImages(iss)}
                             />
-                            <span className="form-hint">
+                            <span className="ui-hint">
                               {freeSlots <= 0
                                 ? `This problem already has the maximum of ${MAX_ISSUE_IMAGES} photos.`
                                 : `You can add up to ${freeSlots} more photo${freeSlots === 1 ? "" : "s"}, 10 MB each. Photos you already uploaded cannot be removed.`}
@@ -898,10 +1046,10 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                             )}
                           </div>
 
-                          <div className="dashboard-issue-actions">
+                          <div className="issue-card__actions">
                             <button
                               type="button"
-                              className="dashboard-issue-save-btn"
+                              className="ui-btn ui-btn--primary"
                               disabled={savingIssue}
                               onClick={() => saveIssue(iss)}
                             >
@@ -909,7 +1057,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                             </button>
                             <button
                               type="button"
-                              className="dashboard-view-btn"
+                              className="ui-btn"
                               disabled={savingIssue}
                               onClick={cancelEditIssue}
                             >
@@ -918,103 +1066,24 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                           </div>
                         </div>
                       )}
-                    </div>
+                    </article>
                   );
                 })}
-            </div>
+              </div>
+            )}
           </>
         )}
 
-        {activeTab === "activity" && activitySubView === "events" && (
-          <div className="dashboard-activity-list">
-            {loadingActivity && (
-              <p className="dashboard-placeholder-text">Loading your activity...</p>
-            )}
-
-            {!loadingActivity && activityItems.length === 0 && (
-              <p className="dashboard-placeholder-text">
-                You haven't joined any events yet.
-              </p>
-            )}
-
-            {!loadingActivity &&
-              activityItems.map((item) => (
-                <div className="dashboard-activity-item" key={item.activity_id}>
-                  <div className="dashboard-activity-info">
-                    <p className="dashboard-event-title">{item.title}</p>
-                    <p className="dashboard-event-meta">{item.ngo_name}</p>
-                    <p className="dashboard-event-meta">
-                      {formatEventDay(item.event_day)}
-                      {item.location ? ` · ${item.location}` : ""}
-                    </p>
-                    {item.event_status !== "Cancelled" && (
-                      <div className="dashboard-phase-row">
-                        <PhaseBadge phase={item.phase} />
-                      </div>
-                    )}
-
-                    {item.attendance_status === "attended" && (
-                      <>
-                        <p className="dashboard-activity-rating">
-                          Your rating:{" "}
-                          {"★".repeat(item.rating || 0) +
-                            "☆".repeat(5 - (item.rating || 0))}
-                        </p>
-                        {item.feedback && (
-                          <div className="dashboard-activity-feedback">
-                            <span className="dashboard-activity-feedback-label">
-                              NGO feedback:
-                            </span>
-                            <p>{item.feedback}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-
-                  <div className="dashboard-activity-side">
-                    <span
-                      className={`dashboard-activity-pill activity-${item.status_label
-                        .toLowerCase()
-                        .replace(/ /g, "-")}`}
-                    >
-                      {item.status_label}
-                    </span>
-
-                    {item.ngo_email && (
-                      <button
-                        type="button"
-                        className="dashboard-sidebar-msg-btn dashboard-activity-msg-btn"
-                        onClick={() => {
-                          setChatTarget({
-                            email: item.ngo_email,
-                            name: item.ngo_name,
-                          });
-                          setActiveTab("messages");
-                        }}
-                      >
-                        Message NGO
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
-
         {activeTab === "settings" && (
-          <div className="dashboard-placeholder-card">
-            <p className="dashboard-placeholder-title">Settings</p>
-            <p className="dashboard-placeholder-text">
-              Account settings are coming soon.
-            </p>
-          </div>
+          <EmptyState icon="spark" title="Settings">
+            Account settings are coming soon.
+          </EmptyState>
         )}
 
         {activeTab === "profile" && (
           <>
             <div className="dashboard-profile-strip">
-              <div className="dashboard-avatar-circle">
+              <div className="dashboard-avatar-circle" aria-hidden="true">
                 {initials(profile.name)}
               </div>
 
@@ -1024,22 +1093,158 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                   {profile.location || "—"} · {profile.availability || "—"}
                 </p>
 
-                <div className="dashboard-skill-row">
-                  {skillList.map((skill) => (
-                    <span key={skill} className="dashboard-skill-pill">
-                      {skill}
-                    </span>
-                  ))}
-                </div>
+                <Chips items={profile.skills} max={6} label="Your skills" />
               </div>
             </div>
 
             <div className="dashboard-content-grid">
               <div className="dashboard-main-col">
+                {eventNgoGroups.length > 0 && (
+                  <>
+                    <div className="ui-section-head">
+                      <h2 className="ui-section-title">Events for you</h2>
+                      <span className="ui-section-sub">
+                        {eventNgoGroups.length}{" "}
+                        {eventNgoGroups.length === 1 ? "NGO" : "NGOs"} matching your skills
+                      </span>
+                    </div>
+
+                    <div className="ngo-group-list">
+                      {eventNgoGroups.map((group) => (
+                        <section
+                          className="ngo-group"
+                          key={`event-${group.ngo_name}`}
+                          aria-label={`Events by ${group.ngo_name}`}
+                        >
+                          <header className="ngo-group__head">
+                            <div className="ngo-group__info">
+                              <h3 className="ngo-group__name">{group.ngo_name}</h3>
+                              <p className="dash-row__meta">
+                                {group.ngo_category || "Uncategorized"} ·{" "}
+                                {group.ngo_location || "—"}
+                              </p>
+                            </div>
+
+                            <div className="ngo-group__actions">
+                              <Badge tone="success">{group.bestMatch}% match</Badge>
+
+                              <button
+                                type="button"
+                                className="ui-btn ui-btn--sm dashboard-connect-btn"
+                                disabled={!group.ngo_email}
+                                title={
+                                  !group.ngo_email
+                                    ? "This NGO has no contact email"
+                                    : `Connect with ${group.ngo_name}`
+                                }
+                                onClick={() => {
+                                  if (!group.ngo_email) return;
+                                  openChat({ email: group.ngo_email, name: group.ngo_name });
+                                }}
+                              >
+                                {connectIcon}
+                                Connect
+                              </button>
+                            </div>
+                          </header>
+
+                          <div className="vol-event-list">
+                            {group.events.map((ev) => (
+                              <article className="vol-event" key={ev.activity_id} data-event-card>
+                                <div className="vol-event__body">
+                                  <div className="activity-card__head">
+                                    <h4 className="vol-event__title">{ev.title}</h4>
+                                    <PhaseBadge phase={ev.phase} />
+                                  </div>
+
+                                  <ul className="event-card__meta">
+                                    <li>
+                                      <Icon name="calendar" />
+                                      <span>{formatEventDay(ev.event_day)}</span>
+                                    </li>
+                                    {ev.location && (
+                                      <li>
+                                        <Icon name="pin" />
+                                        <span>{ev.location}</span>
+                                      </li>
+                                    )}
+                                  </ul>
+
+                                  {ev.description && (
+                                    <p className="event-card__desc">{ev.description}</p>
+                                  )}
+
+                                  <Chips items={ev.required_skills} max={5} label="Required skills" />
+
+                                  {ev.explanation && ev.explanation.summary && (
+                                    <p className="vol-event__why">
+                                      <Icon name="spark" size={14} />
+                                      <span>{ev.explanation.summary}</span>
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="vol-event__actions">
+                                  {ev.approved && (
+                                    <Badge tone="success" dot>
+                                      Approved
+                                    </Badge>
+                                  )}
+
+                                  {ev.joined && !ev.approved && (
+                                    <>
+                                      <Badge tone="warning" dot>
+                                        Joined
+                                      </Badge>
+                                      {/* Leaving is possible only until the event day starts. */}
+                                      {isOpenPhase(ev.phase) && (
+                                        <button
+                                          type="button"
+                                          className="ui-btn ui-btn--danger ui-btn--sm"
+                                          disabled={joiningId !== null}
+                                          onClick={() => leaveActivity(ev)}
+                                        >
+                                          {joiningId === ev.activity_id
+                                            ? "Leaving..."
+                                            : "Leave activity"}
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {!ev.joined && isOpenPhase(ev.phase) && (
+                                    <button
+                                      type="button"
+                                      className="ui-btn ui-btn--primary"
+                                      disabled={joiningId !== null}
+                                      onClick={() => joinActivity(ev)}
+                                    >
+                                      {joiningId === ev.activity_id
+                                        ? "Joining..."
+                                        : "Join activity"}
+                                    </button>
+                                  )}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div className="ui-section-head">
+                  <h2 className="ui-section-title">NGOs on VolunTag</h2>
+                  <span className="ui-section-sub">
+                    {filteredNgos.length} sorted alphabetically
+                  </span>
+                </div>
+
                 <div className="dashboard-filters-row">
                   <input
                     type="search"
-                    className="dashboard-search-input"
+                    className="ui-input dashboard-search-input"
                     aria-label="Search NGOs by name"
                     placeholder="Search NGOs by name"
                     value={search}
@@ -1047,7 +1252,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                   />
 
                   <select
-                    className="dashboard-filter-select"
+                    className="ui-select"
                     aria-label="Filter NGOs by location"
                     value={locationFilter}
                     onChange={(e) => setLocationFilter(e.target.value)}
@@ -1061,7 +1266,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                   </select>
 
                   <select
-                    className="dashboard-filter-select"
+                    className="ui-select"
                     aria-label="Filter NGOs by sector"
                     value={sectorFilter}
                     onChange={(e) => setSectorFilter(e.target.value)}
@@ -1075,324 +1280,135 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem }
                   </select>
                 </div>
 
-                {eventNgoGroups.length > 0 && (
-                  <>
-                    <div className="dashboard-section-header">
-                      <span className="dashboard-section-title">
-                        NGOs with active events
-                      </span>
-                      <span className="dashboard-section-sub">
-                        {eventNgoGroups.length} matching your skills
-                      </span>
-                    </div>
+                {loadingNgos ? (
+                  <SkeletonList count={4} label="Loading NGOs" />
+                ) : filteredNgos.length === 0 ? (
+                  <EmptyState icon="search" title="No NGOs match your filters">
+                    Try a different name, location or sector.
+                  </EmptyState>
+                ) : (
+                  <div className="dash-list">
+                    {filteredNgos.map((ngo) => {
+                      const match = matchMap.get(ngo.name);
+                      const expanded = expandedNgo === ngo.name;
 
-                    <div className="dashboard-ngo-list">
-                      {eventNgoGroups.map((group) => (
-                        <div
-                          className="dashboard-ngo-row"
-                          key={`event-${group.ngo_name}`}
-                        >
-                          <div className="dashboard-ngo-row-main">
-                            <div className="dashboard-ngo-info">
-                              <p className="dashboard-ngo-name">
-                                {group.ngo_name}
-                              </p>
-                              <p className="dashboard-ngo-meta">
-                                {group.ngo_category || "Uncategorized"} ·{" "}
-                                {group.ngo_location || "—"}
+                      return (
+                        <div className="dash-row" key={ngo.name}>
+                          <div className="dash-row__main">
+                            <div className="dash-row__info">
+                              <p className="dash-row__title">{ngo.name}</p>
+                              <p className="dash-row__meta">
+                                {ngo.category || "Uncategorized"} · {ngo.location || "—"}
                               </p>
                             </div>
 
-                            <div className="dashboard-ngo-actions">
-                              <span className="dashboard-match-badge">
-                                {group.bestMatch}% match
-                              </span>
+                            <div className="dash-row__actions">
+                              {match && (
+                                <Badge tone={LEVEL_TONES[match.level] || "neutral"}>
+                                  {match.level ? `${LEVEL_LABELS[match.level] || "Low"} · ` : ""}
+                                  {match.match_percentage}% match
+                                </Badge>
+                              )}
 
                               <button
                                 type="button"
-                                className="dashboard-connect-btn"
-                                disabled={!group.ngo_email}
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
+                                aria-expanded={expanded}
+                                onClick={() => setExpandedNgo(expanded ? null : ngo.name)}
+                              >
+                                {expanded ? "Hide" : "View profile"}
+                              </button>
+
+                              <button
+                                type="button"
+                                className="ui-btn ui-btn--sm dashboard-connect-btn"
+                                disabled={!ngo.email}
                                 title={
-                                  !group.ngo_email
+                                  !ngo.email
                                     ? "This NGO has no contact email"
-                                    : `Connect with ${group.ngo_name}`
+                                    : `Connect with ${ngo.name}`
                                 }
                                 onClick={() => {
-                                  if (!group.ngo_email) return;
-                                  setChatTarget({
-                                    email: group.ngo_email,
-                                    name: group.ngo_name,
-                                  });
-                                  setActiveTab("messages");
+                                  if (!ngo.email) return;
+                                  openChat({ email: ngo.email, name: ngo.name });
                                 }}
                               >
-                                <svg
-                                  className="dashboard-chat-icon"
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  aria-hidden="true"
-                                >
-                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                                </svg>
+                                {connectIcon}
                                 Connect
                               </button>
                             </div>
                           </div>
 
-                          <div className="dashboard-event-list">
-                            {group.events.map((ev) => (
-                              <div
-                                className="dashboard-event-item"
-                                key={ev.activity_id}
-                              >
-                                <div className="dashboard-event-info">
-                                  <p className="dashboard-event-title">
-                                    {ev.title}
-                                  </p>
-                                  <p className="dashboard-event-meta">
-                                    {formatEventDay(ev.event_day)}
-                                    {ev.location ? ` · ${ev.location}` : ""}
-                                  </p>
-                                  <div className="dashboard-phase-row">
-                                    <PhaseBadge phase={ev.phase} />
-                                  </div>
-                                  {ev.description && (
-                                    <p className="dashboard-event-desc">
-                                      {ev.description}
-                                    </p>
-                                  )}
-                                  <p className="dashboard-event-skills">
-                                    Skills: {ev.required_skills}
-                                  </p>
-                                </div>
+                          {expanded && (
+                            <div className="dash-row__detail">
+                              <p className="dash-row__motto">{ngo.motto || "No motto provided."}</p>
 
-                                {ev.approved && (
-                                  <div className="dashboard-event-actions">
-                                    <span className="dashboard-approved-label">
-                                      Approved
-                                    </span>
-                                  </div>
-                                )}
-                                {ev.joined && !ev.approved && (
-                                  <div className="dashboard-event-actions">
-                                    <span className="dashboard-joined-label">
-                                      Joined
-                                    </span>
-                                    {/* Leaving is possible only until the event day starts. */}
-                                    {isOpenPhase(ev.phase) && (
-                                      <button
-                                        type="button"
-                                        className="dashboard-leave-btn"
-                                        disabled={joiningId !== null}
-                                        onClick={() => leaveActivity(ev)}
-                                      >
-                                        {joiningId === ev.activity_id
-                                          ? "Leaving..."
-                                          : "Leave activity"}
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                                {!ev.joined && isOpenPhase(ev.phase) && (
-                                  <button
-                                    type="button"
-                                    className="dashboard-join-btn"
-                                    disabled={joiningId !== null}
-                                    onClick={() => joinActivity(ev)}
-                                  >
-                                    {joiningId === ev.activity_id
-                                      ? "Joining..."
-                                      : "Join activity"}
-                                  </button>
+                              <div className="dash-row__detail-badges">
+                                <Badge tone={verificationTone(ngo.verification_status)} dot>
+                                  {ngo.verification_status || "Pending"}
+                                </Badge>
+                                {match && match.event_title && (
+                                  <Badge tone="neutral">Latest event: {match.event_title}</Badge>
                                 )}
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  </>
+                      );
+                    })}
+                  </div>
                 )}
-
-                <div className="dashboard-section-header">
-                  <span className="dashboard-section-title">NGOs on VolunTag</span>
-                  <span className="dashboard-section-sub">
-                    {filteredNgos.length} sorted alphabetically
-                  </span>
-                </div>
-
-                <div className="dashboard-ngo-list">
-                  {loadingNgos && (
-                    <p className="dashboard-placeholder-text">Loading NGOs...</p>
-                  )}
-
-                  {!loadingNgos && filteredNgos.length === 0 && (
-                    <p className="dashboard-placeholder-text">
-                      No NGOs match your filters.
-                    </p>
-                  )}
-
-                  {!loadingNgos &&
-                    filteredNgos.map((ngo) => (
-                      <div className="dashboard-ngo-row" key={ngo.name}>
-                        <div className="dashboard-ngo-row-main">
-                          <div className="dashboard-ngo-info">
-                            <p className="dashboard-ngo-name">{ngo.name}</p>
-                            <p className="dashboard-ngo-meta">
-                              {ngo.category || "Uncategorized"} ·{" "}
-                              {ngo.location || "—"}
-                            </p>
-                          </div>
-
-                          <div className="dashboard-ngo-actions">
-                            {matchMap.has(ngo.name) &&
-                              matchMap.get(ngo.name).level && (
-                                <span
-                                  className={`dashboard-level-badge level-${
-                                    matchMap.get(ngo.name).level
-                                  }`}
-                                >
-                                  {matchMap.get(ngo.name).level === "high"
-                                    ? "High"
-                                    : matchMap.get(ngo.name).level === "medium"
-                                    ? "Medium"
-                                    : "Low"}
-                                </span>
-                              )}
-
-                            {matchMap.has(ngo.name) && (
-                              <span className="dashboard-match-badge">
-                                {matchMap.get(ngo.name).event_title
-                                  ? `${matchMap.get(ngo.name).event_title} · `
-                                  : ""}
-                                {matchMap.get(ngo.name).match_percentage}% match
-                              </span>
-                            )}
-
-                            <button
-                              type="button"
-                              className="dashboard-view-btn"
-                              onClick={() =>
-                                setExpandedNgo(
-                                  expandedNgo === ngo.name ? null : ngo.name
-                                )
-                              }
-                            >
-                              {expandedNgo === ngo.name ? "Hide" : "View profile"}
-                            </button>
-
-                            <button
-                              type="button"
-                              className="dashboard-connect-btn"
-                              disabled={!ngo.email}
-                              title={
-                                !ngo.email
-                                  ? "This NGO has no contact email"
-                                  : `Connect with ${ngo.name}`
-                              }
-                              onClick={() => {
-                                if (!ngo.email) return;
-                                setChatTarget({ email: ngo.email, name: ngo.name });
-                                setActiveTab("messages");
-                              }}
-                            >
-                              <svg
-                                className="dashboard-chat-icon"
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                              >
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                              </svg>
-                              Connect
-                            </button>
-                          </div>
-                        </div>
-
-                        {expandedNgo === ngo.name && (
-                          <div className="dashboard-ngo-detail">
-                            <p>
-                              {ngo.motto ||
-                                "No motto provided."}
-                            </p>
-
-                            <span
-                              className={`dashboard-verification-tag verification-${(
-                                ngo.verification_status || "pending"
-                              ).toLowerCase()}`}
-                            >
-                              {ngo.verification_status || "Pending"}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                </div>
               </div>
 
-              <div className="dashboard-sidebar-col">
-                <p className="dashboard-sidebar-heading">Your activity</p>
+              <aside className="dashboard-sidebar-col" aria-label="Your activity">
+                <h2 className="dashboard-sidebar-heading">Your activity</h2>
 
-                <div className="dashboard-stats-row">
-                  <div className="dashboard-stat-card">
-                    <span className="dashboard-stat-value">0</span>
-                    <span className="dashboard-stat-label">Activities Joined</span>
+                <div className="ui-stats">
+                  <div className="ui-stat">
+                    <span className="ui-stat__value">{loadingActivity ? "–" : joinedCount}</span>
+                    <span className="ui-stat__label">Events joined</span>
                   </div>
 
-                  <div className="dashboard-stat-card">
-                    <span className="dashboard-stat-value">0</span>
-                    <span className="dashboard-stat-label">Contributions</span>
+                  <div className="ui-stat">
+                    <span className="ui-stat__value">{loadingActivity ? "–" : attendedCount}</span>
+                    <span className="ui-stat__label">Events attended</span>
                   </div>
                 </div>
 
-                <div className="dashboard-placeholder-card">
-                  <p className="dashboard-placeholder-title">
+                <div className="dashboard-side-card">
+                  <p className="dashboard-side-card__title">
                     Messages
-                    {unreadCount > 0 && (
-                      <span className="dashboard-sidebar-unread-badge">
-                        {unreadCount} unread
-                      </span>
-                    )}
+                    {unreadCount > 0 && <Badge tone="success">{unreadCount} unread</Badge>}
                   </p>
-                  <p className="dashboard-placeholder-text">
+                  <p className="dashboard-side-card__text">
                     Chat directly with NGOs and manage your conversations.
                   </p>
                   <button
                     type="button"
-                    className="dashboard-sidebar-msg-btn"
+                    className="ui-btn ui-btn--block"
                     onClick={() => {
                       setChatTarget(null);
                       setActiveTab("messages");
                     }}
                   >
+                    {connectIcon}
                     Open Messages
                     {unreadCount > 0 && ` (${unreadCount})`}
                   </button>
                 </div>
-              </div>
+              </aside>
             </div>
           </>
         )}
 
         <div className="dashboard-footer-actions">
           <button
-            className="form-back-btn"
+            className="ui-btn ui-btn--ghost"
             type="button"
             onClick={() => navigate(PATHS.landing)}
           >
-            &#8592; Back to Home
+            <Icon name="arrowLeft" />
+            Back to Home
           </button>
         </div>
       </div>

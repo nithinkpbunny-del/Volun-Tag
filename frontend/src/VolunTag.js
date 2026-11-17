@@ -51,6 +51,9 @@ import {
 } from "./routes";
 import { isCompletedPhase } from "./dates";
 import "./VolunTag.css";
+// Design tokens and shared components. Loaded last so it wins over older rules.
+import "./theme.css";
+import "./theme-screens.css";
 
 // The event and issue screens get their data from the router's location
 // state (set when the NGO clicks through from the dashboard). Without it

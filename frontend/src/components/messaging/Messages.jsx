@@ -101,12 +101,12 @@ function getAvatarColor(nameOrEmail) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
   const colors = [
-    { bg: "#e8f0ee", text: "#4a7c6f" }, // sage
-    { bg: "#f5ede7", text: "#c4714a" }, // clay
-    { bg: "#e6f0fa", text: "#3b7bb8" }, // blue
-    { bg: "#f3e8f7", text: "#874da0" }, // purple
-    { bg: "#fdf3e7", text: "#b37424" }, // amber
-    { bg: "#e8f5e9", text: "#388e3c" }, // green
+    { bg: "#e8f0ee", text: "#2b4f45" }, // sage
+    { bg: "#f5ede7", text: "#8a4526" }, // clay
+    { bg: "#e6f0fa", text: "#1d4e89" }, // blue
+    { bg: "#f3e8f7", text: "#6a3a80" }, // purple
+    { bg: "#fdf3e7", text: "#7d5100" }, // amber
+    { bg: "#e8f5e9", text: "#256029" }, // green
   ];
   const index = Math.abs(hash) % colors.length;
   return colors[index];

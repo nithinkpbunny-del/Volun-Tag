@@ -41,7 +41,7 @@
 }
 
 .adm-brand-label {
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -455,7 +455,7 @@
   border-radius: 999px;
   background: var(--clay);
   color: var(--white);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -517,7 +517,7 @@
 
 .adm-eyebrow {
   margin-bottom: 0.3rem;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1264,7 +1264,7 @@
 }
 
 .adm-activity-type {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1327,7 +1327,7 @@
   padding: 0.7rem 0.9rem;
   border-bottom: 1px solid var(--border);
   background: var(--mist);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1461,7 +1461,7 @@
 }
 
 .adm-mini-stat dt {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1721,7 +1721,7 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.3rem;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--ink-soft);
 }
 

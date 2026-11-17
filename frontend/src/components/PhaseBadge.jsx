@@ -1,8 +1,14 @@
 import { phaseLabel } from "../dates";
-import "./PhaseBadge.css";
+import { Badge } from "./ui/ui";
+
+const PHASE_TONES = {
+  open: "success",
+  in_progress: "clay",
+  completed: "neutral",
+};
 
 /**
- * The server-computed phase of an event as a small badge:
+ * The server-computed phase of an event as a badge:
  * "Registration open", "Happening today" or "Completed".
  * Renders nothing for a missing or unknown phase.
  */
@@ -12,8 +18,8 @@ export default function PhaseBadge({ phase, className = "" }) {
   if (!label) return null;
 
   return (
-    <span className={`phase-badge phase-badge--${phase.replace(/_/g, "-")} ${className}`.trim()}>
+    <Badge tone={PHASE_TONES[phase]} className={className}>
       {label}
-    </span>
+    </Badge>
   );
 }
