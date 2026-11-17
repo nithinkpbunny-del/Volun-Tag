@@ -7,7 +7,8 @@
 Tokens are secrets.token_urlsafe(32); only their sha256 is stored. A link is
 valid for PASSWORD_RESET_MINUTES (30), works once, and asking again cancels
 older links. A successful reset ends every session of that account, clears
-its login lockout, and sends a "password changed" notice. Tokens, links and
+its login lockouts (on every IP), confirms the email address if it was not
+confirmed yet, and sends a "password changed" notice. Tokens, links and
 passwords are never logged.
 """
 
@@ -206,6 +207,9 @@ def reset_password(
     now = datetime.utcnow()
     account.password = hash_password(payload.new_password)
     row.used_at = now
+    # Opening a link sent to the address proves the address works, so a
+    # reset also confirms an account that was still waiting for that.
+    account.email_verified = 1
 
     # End every session of this account and cancel its other links.
     db.query(UserSessionDB).filter(
@@ -220,7 +224,7 @@ def reset_password(
 
     db.commit()
 
-    login_limiter.reset_failed_logins(row.user_role, account.email or row.email)
+    login_limiter.clear_account(row.user_role, account.email or row.email)
     logger.info("Password reset completed for %s id %s", row.user_role, row.user_id)
 
     background.add_task(

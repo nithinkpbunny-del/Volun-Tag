@@ -46,8 +46,25 @@ def test_logout_ends_session(client):
     assert client.get("/session", headers=auth(token)).status_code == 401
 
 
-def test_duplicate_email_rejected(client):
+def test_duplicate_email_gets_the_generic_answer(client, mailbox):
+    """Verification on (default): no 400, no new account, a notice to the owner."""
     register_volunteer(client, "dup@example.test", name="First")
+    body = {
+        "name": "Second", "email": "DUP@example.test", "contact_number": "1", "password": PASSWORD,
+        "age": 20, "designation": "S", "gender": "F", "skills": "a", "location": "b",
+        "availability": "c",
+    }
+    res = client.post("/add-volunteer", json=body)
+    assert res.status_code == 200
+    assert res.json()["verification_required"] is True
+    assert client.post("/volunteer-login", json={"email": "dup@example.test", "password": PASSWORD}).status_code == 200
+
+
+def test_duplicate_email_rejected_when_verification_is_off(client, monkeypatch):
+    """EMAIL_VERIFICATION_REQUIRED=false keeps the old answer (documented trade-off)."""
+    import settings
+    monkeypatch.setattr(settings, "EMAIL_VERIFICATION_REQUIRED", False)
+    register_volunteer(client, "dup@example.test", name="First", verify=False)
     body = {
         "name": "Second", "email": "DUP@example.test", "contact_number": "1", "password": PASSWORD,
         "age": 20, "designation": "S", "gender": "F", "skills": "a", "location": "b",

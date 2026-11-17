@@ -71,3 +71,61 @@ def test_indexes_and_pragmas():
         assert {"ix_activities_status_event_date", "ix_activity_signups_volunteer_id", "ix_user_sessions_role_user"} <= names
         assert c.execute(text("PRAGMA foreign_keys")).scalar() == 1
         assert c.execute(text("PRAGMA journal_mode")).scalar() == "wal"
+
+
+LEGACY_VOLUNTEERS = (
+    "CREATE TABLE volunteers (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL UNIQUE, "
+    "email VARCHAR NOT NULL UNIQUE, contact_number VARCHAR NOT NULL, password VARCHAR, "
+    "age INTEGER NOT NULL, designation VARCHAR NOT NULL, gender VARCHAR NOT NULL, "
+    "skills VARCHAR, location VARCHAR, availability VARCHAR, experience VARCHAR)"
+)
+
+
+def dump(table):
+    with database.engine.connect() as c:
+        return [tuple(r) for r in c.execute(text(f"SELECT * FROM {table} ORDER BY id"))]
+
+
+def columns(table):
+    with database.engine.connect() as c:
+        return [r[1] for r in c.execute(text(f"PRAGMA table_info({table})"))]
+
+
+def test_existing_accounts_become_verified_without_rewriting_rows():
+    """An old database (no email_verified column): every existing account counts as verified."""
+    with database.engine.begin() as c:
+        c.execute(text("DROP TABLE IF EXISTS volunteers"))
+        c.execute(text(LEGACY_VOLUNTEERS))
+        c.execute(text(INSERT), {"n": "old", "e": "old@example.test"})
+    fresh()  # creates every other table; volunteers keeps its legacy shape
+    assert "email_verified" not in columns("volunteers")
+
+    result = migrations.run_migrations(database.engine, settings.DATABASE_PATH)
+    assert result["backup"] is None  # nothing had to be rewritten
+    assert "email_verified" in columns("volunteers")
+    assert "email_verified" in columns("ngos")
+
+    with database.engine.connect() as c:
+        assert c.execute(text("SELECT email_verified FROM volunteers")).scalar() == 1
+        tables = {r[0] for r in c.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+    assert "email_verification_tokens" in tables
+
+    before = (columns("volunteers"), dump("volunteers"), columns("ngos"))
+    again = migrations.run_migrations(database.engine, settings.DATABASE_PATH)
+    assert again["backup"] is None
+    assert (columns("volunteers"), dump("volunteers"), columns("ngos")) == before
+    assert backups() == []
+
+
+def test_new_rows_from_the_app_default_to_unverified():
+    fresh()
+    migrations.run_migrations(database.engine, settings.DATABASE_PATH)
+    from db_models import VolunteerDB
+    db = database.SessionLocal()
+    try:
+        row = VolunteerDB(name="n", email="n@example.test", contact_number="1", age=1, designation="d", gender="g")
+        db.add(row)
+        db.commit()
+        assert row.email_verified == 0
+    finally:
+        db.close()

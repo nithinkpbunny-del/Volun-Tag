@@ -1,61 +1,59 @@
-"""Small in-memory sliding-window rate limits (generalises login_limiter.py).
+"""Sliding-window rate limits and the one client_ip() helper every limiter uses.
 
-State lives in this process only: a restart clears it and every worker has
-its own counters, which is why DEPLOY.md asks for ONE worker.
+Counters live in the persistent SQLite store (limit_store.py), so they
+survive a restart and are shared by every worker process.
 """
 
+import ipaddress
+import logging
 import math
-import threading
-import time
-from collections import deque
+from typing import Optional
 
 from fastapi import HTTPException, Request
 
 try:
-    from .settings import TRUST_PROXY_HEADERS
+    from . import settings
+    from .limit_store import LimitStore
 except ImportError:
-    from settings import TRUST_PROXY_HEADERS
+    import settings
+    from limit_store import LimitStore
+
+
+logger = logging.getLogger(__name__)
+
+_store: Optional[LimitStore] = None
+
+
+def get_store() -> LimitStore:
+    """The shared store (created on first use at settings.RATE_LIMIT_DB_PATH)."""
+    global _store
+    if _store is None:
+        _store = LimitStore(settings.RATE_LIMIT_DB_PATH)
+    return _store
+
+
+def set_store(store: Optional[LimitStore]) -> None:
+    """Use another store (tests); None goes back to the default file."""
+    global _store
+    _store = store
 
 
 class SlidingWindowLimiter:
     """Allow at most `limit` hits per key in any `window_seconds` window."""
 
-    def __init__(self, limit: int, window_seconds: float, name: str = ""):
+    def __init__(self, limit: int, window_seconds: float, name: str):
+        if not name:
+            raise ValueError("every limiter needs a unique name (its bucket in the store)")
         self.limit = limit
         self.window = window_seconds
         self.name = name
-        self._lock = threading.Lock()
-        self._hits: dict = {}
-        self._calls = 0
-
-    def _trim(self, hits: deque, now: float) -> None:
-        while hits and hits[0] <= now - self.window:
-            hits.popleft()
-
-    def _prune(self, now: float) -> None:
-        for key in [k for k, h in self._hits.items() if not h or h[-1] <= now - self.window]:
-            del self._hits[key]
 
     def hit(self, key) -> float:
         """Record a hit. Returns 0 when allowed, else seconds until one is free.
 
         A refused hit is not recorded, so a blocked client cannot extend its own block.
         """
-        now = time.monotonic()
-
-        with self._lock:
-            self._calls += 1
-            if self._calls % 256 == 0:
-                self._prune(now)
-
-            hits = self._hits.setdefault(key, deque())
-            self._trim(hits, now)
-
-            if len(hits) >= self.limit:
-                return max(0.001, hits[0] + self.window - now)
-
-            hits.append(now)
-            return 0.0
+        return get_store().hit(self.name, key, self.limit, self.window)
 
     def check(self, key, detail: str) -> None:
         """hit(), raising 429 with Retry-After when the key is over its limit."""
@@ -69,35 +67,116 @@ class SlidingWindowLimiter:
             )
 
     def reset(self) -> None:
-        with self._lock:
-            self._hits.clear()
+        get_store().clear_bucket(self.name)
 
 
-_registry: list[SlidingWindowLimiter] = []
+_registry: dict[str, SlidingWindowLimiter] = {}
 
 
-def make_limiter(limit: int, window_seconds: float, name: str = "") -> SlidingWindowLimiter:
+def make_limiter(limit: int, window_seconds: float, name: str) -> SlidingWindowLimiter:
+    if name in _registry:
+        raise ValueError(f"a limiter named {name!r} already exists")
     limiter = SlidingWindowLimiter(limit, window_seconds, name)
-    _registry.append(limiter)
+    _registry[name] = limiter
     return limiter
 
 
 def reset_all() -> None:
-    """Forget every limiter's state (tests)."""
-    for limiter in _registry:
-        limiter.reset()
+    """Forget every limiter's state, login lockouts included (tests)."""
+    get_store().clear_all()
+
+
+# ─── Client address ───────────────────────────────────────────────
+def _parse_ip(value: str) -> Optional[str]:
+    """A normalised IP address from one X-Forwarded-For entry, or None.
+
+    Accepts "1.2.3.4", "1.2.3.4:5678", "2001:db8::1" and "[2001:db8::1]:443".
+    """
+    value = (value or "").strip().strip('"')
+    if not value:
+        return None
+
+    candidates = [value]
+    if value.startswith("[") and "]" in value:
+        candidates.append(value[1:value.index("]")])
+    elif value.count(":") == 1:
+        candidates.append(value.split(":", 1)[0])
+
+    for candidate in candidates:
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            continue
+    return None
+
+
+_warned_zero_count = False
+
+
+def trusted_proxy_count() -> int:
+    """How many proxies to step over; 0 while proxy headers are not trusted."""
+    global _warned_zero_count
+
+    if not settings.TRUST_PROXY_HEADERS:
+        return 0
+
+    count = settings.TRUSTED_PROXY_COUNT
+    if count < 1:
+        if not _warned_zero_count:
+            logger.warning(
+                "TRUST_PROXY_HEADERS is on but TRUSTED_PROXY_COUNT is 0; using 1. "
+                "Set TRUSTED_PROXY_COUNT to the number of proxies in front of the app."
+            )
+            _warned_zero_count = True
+        count = 1
+    return count
+
+
+def _forwarded_entries(request: Request, header: str) -> list[str]:
+    """Every comma-separated entry of a header, in order, across repeated headers."""
+    return [
+        part.strip()
+        for value in request.headers.getlist(header)
+        for part in value.split(",")
+        if part.strip()
+    ]
 
 
 def client_ip(request: Request) -> str:
-    """The caller's address; X-Forwarded-For is used only with TRUST_PROXY_HEADERS."""
+    """The caller's address, for rate limits and logs.
 
-    if TRUST_PROXY_HEADERS:
-        forwarded = request.headers.get("x-forwarded-for", "")
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+    Without TRUST_PROXY_HEADERS this is the address of whatever opened the
+    connection; X-Forwarded-For is ignored, so a client cannot choose its
+    own address. With it, each of the TRUSTED_PROXY_COUNT proxies appended
+    the address it received the request from, so the client is the entry
+    TRUSTED_PROXY_COUNT places from the right. Entries further left were
+    written by the client and are never used. If the header is shorter than
+    expected or the entry is not an IP address, the connection address is used.
+    """
+    peer = request.client.host if request.client else "unknown"
 
-    return request.client.host if request.client else "unknown"
+    count = trusted_proxy_count()
+    if not count:
+        return peer
+
+    entries = _forwarded_entries(request, "x-forwarded-for")
+    if len(entries) < count:
+        return peer
+
+    return _parse_ip(entries[-count]) or peer
+
+
+def request_is_https(request: Request) -> bool:
+    """True when the browser reached us over https (directly or via a trusted proxy)."""
+    if request.url.scheme == "https":
+        return True
+
+    if trusted_proxy_count():
+        entries = _forwarded_entries(request, "x-forwarded-proto")
+        # The nearest proxy (which we trust) writes or appends the last entry.
+        return bool(entries) and entries[-1].lower() == "https"
+
+    return False
 
 
 def retry_text(seconds: float) -> str:

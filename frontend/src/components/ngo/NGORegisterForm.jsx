@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./NGORegisterForm.css";
 import { API_BASE } from "../../config";
-import { loginUser } from "../../api";
+import { errorText, loginUser } from "../../api";
 import { PATHS, dashboardFor } from "../../routes";
 import { PasswordField, meetsPasswordPolicy } from "../PasswordRules";
+import { CheckEmail } from "../EmailVerification";
 
 const CATEGORIES = [
   "Education",
@@ -58,6 +59,8 @@ export default function NGORegisterForm({ showToast, onLogin }) {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // The address the confirmation mail went to (shows "Check your email").
+  const [checkEmail, setCheckEmail] = useState("");
 
   const passwordOk = meetsPasswordPolicy(form.password);
 
@@ -211,7 +214,14 @@ export default function NGORegisterForm({ showToast, onLogin }) {
     }
 
     if (!res.ok) {
-      throw new Error(data.detail || "Failed to register NGO");
+      throw new Error(errorText(data, "Failed to register NGO"));
+    }
+
+    // Email confirmation is on: the same answer comes back whether or not
+    // the address already had an account, so just ask the user to check it.
+    if (data.verification_required) {
+      setCheckEmail(form.email.trim());
+      return;
     }
 
     showToast(
@@ -239,6 +249,10 @@ export default function NGORegisterForm({ showToast, onLogin }) {
     setLoading(false);
   }
 };
+
+  if (checkEmail) {
+    return <CheckEmail role="ngo" email={checkEmail} />;
+  }
 
   if (submitted) {
     return (

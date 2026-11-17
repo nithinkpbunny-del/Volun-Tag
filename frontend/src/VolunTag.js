@@ -14,6 +14,7 @@ import About from "./components/About";
 import Contact from "./components/Contact";
 import ForgotPassword from "./components/ForgotPassword";
 import ResetPassword from "./components/ResetPassword";
+import VerifyEmail from "./components/VerifyEmail";
 import { RequireRole } from "./components/RouteGuards";
 import LandingPage from "./components/LandingPage";
 // The old VolunteerForm screen is no longer routed, but its stylesheet holds the
@@ -381,6 +382,8 @@ export default function VolunTag() {
               <Route path="/contact" element={<Contact />} />
 
               <Route path="/forgot-password" element={<ForgotPassword />} />
+
+              <Route path={PATHS["verify-email"]} element={<VerifyEmail />} />
 
               <Route
                 path="/reset-password"

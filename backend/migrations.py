@@ -27,6 +27,13 @@ CONTACT_COLUMNS = {
     "archived_at": "DATETIME",
 }
 
+# Email verification (email_verification.py). DEFAULT 1 marks every account
+# that already exists as verified; SQLite adds a column with a constant
+# default without rewriting any row, so no backup is needed.
+ACCOUNT_COLUMNS = {
+    "email_verified": "INTEGER NOT NULL DEFAULT 1",
+}
+
 # (index name, table, column expression). Created only if missing.
 INDEXES = (
     ("ix_activities_status_event_date", "activities", "status, event_date"),
@@ -78,6 +85,26 @@ def ensure_contact_columns(engine):
     """Add read_at / archived_at to contact_messages if missing (no row rewrite)."""
 
     return _add_missing_columns(engine, "contact_messages", CONTACT_COLUMNS)
+
+
+def ensure_verification_columns(engine) -> dict:
+    """Add volunteers/ngos.email_verified (existing accounts read as verified)."""
+
+    return {
+        table: _add_missing_columns(engine, table, ACCOUNT_COLUMNS)
+        for table in EMAIL_TABLES
+    }
+
+
+def ensure_verification_table(engine) -> None:
+    """Create email_verification_tokens if missing (create_all also does this)."""
+
+    try:
+        from .db_models import EmailVerificationTokenDB
+    except ImportError:
+        from db_models import EmailVerificationTokenDB
+
+    EmailVerificationTokenDB.__table__.create(bind=engine, checkfirst=True)
 
 
 def ensure_indexes(engine):
@@ -195,5 +222,7 @@ def run_migrations(engine, db_path: Path) -> dict:
 
     ensure_signup_columns(engine)
     ensure_contact_columns(engine)
+    ensure_verification_columns(engine)
+    ensure_verification_table(engine)
     ensure_indexes(engine)
     return normalize_emails(engine, db_path)

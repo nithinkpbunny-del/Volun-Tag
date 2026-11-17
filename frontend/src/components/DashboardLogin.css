@@ -177,6 +177,114 @@ a.form-back-btn {
   justify-content: center;
 }
 
+/* ─── Email confirmation: check-your-email, verify page, login notice ─ */
+
+.check-email-card {
+  text-align: left;
+}
+
+.check-email-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background: var(--tone-success-bg, #e6f1ee);
+  border: 1px solid var(--tone-success-border, #b7d3cb);
+  color: var(--sage-ink, #356054);
+}
+
+.check-email-icon--problem {
+  background: var(--tone-clay-bg, #f8ece5);
+  border-color: var(--tone-clay-border, #e6c3b0);
+  color: var(--clay-deep, #8a4526);
+}
+
+.check-email-card .form-header {
+  text-align: center;
+}
+
+.check-email-address {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.check-email-help {
+  margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--border-strong, #c3cfcb);
+  border-radius: 12px;
+}
+
+.check-email-help-title {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.check-email-help-text {
+  margin-top: 0.25rem;
+  color: var(--muted, #5f6a65);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.resend-block {
+  margin-top: 0.25rem;
+}
+
+.resend-button {
+  min-height: 44px;
+  margin-top: 0.25rem;
+}
+
+.resend-button:disabled {
+  cursor: progress;
+  color: var(--muted, #5f6a65);
+}
+
+.resend-note {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--tone-success-ink, #2b5a4d);
+}
+
+.resend-note--error {
+  color: var(--tone-danger-ink, #a8231c);
+}
+
+.login-unverified {
+  margin-bottom: 1.25rem;
+}
+
+.login-unverified .auth-message {
+  margin-bottom: 0;
+}
+
+.login-unverified .resend-block {
+  margin-top: 0.4rem;
+}
+
+/* Darker sage on the pink notice keeps the link above 4.5:1 contrast. */
+.auth-message--error .resend-button {
+  color: var(--sage-deep, #2b4f45);
+}
+
+.form-actions--single {
+  justify-content: stretch;
+}
+
+a.submit-btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  text-align: center;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 480px) {

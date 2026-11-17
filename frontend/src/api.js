@@ -4,6 +4,7 @@
 // "voluntag_session", so it survives a page refresh but ends when the tab
 // closes. The admin console keeps its own, separate token (components/admin).
 import { API_BASE } from "./config";
+import { navigateWindow, openBlankWindow, openSafeWindow } from "./safeUrl";
 
 const SESSION_KEY = "voluntag_session";
 
@@ -98,14 +99,74 @@ export async function loginUser(role, email, password) {
   }
 
   if (!res.ok) {
-    throw new Error(
-      typeof data.detail === "string" ? data.detail : "Unable to log in"
-    );
+    const err = new Error(errorText(data, "Unable to log in"));
+    // "email_not_verified" (403) lets the login screen offer a new link.
+    err.code = typeof data.code === "string" ? data.code : "";
+    err.status = res.status;
+    throw err;
   }
 
   saveSession({ token: data.token, role, email: data.email || email });
 
   return data;
+}
+
+// ─── Email verification ─────────────────────────────────────────
+export const RESEND_FALLBACK =
+  "If an account with that email is waiting to be confirmed, we have sent it a new link.";
+
+/**
+ * Ask for a new confirmation link. The server answers the same way whether
+ * or not the account exists. Resolves to the message to show; rejects with
+ * a readable Error on 429 or a network problem.
+ */
+export async function resendVerification(role, email) {
+  const res = await fetch(`${API_BASE}/resend-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, email: (email || "").trim() }),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(errorText(data, "Could not send a new link. Please try again."));
+  }
+
+  return typeof data.message === "string" && data.message ? data.message : RESEND_FALLBACK;
+}
+
+/**
+ * Confirm an email with the token from the link.
+ * Resolves to {status: "verified", role} or {status: "expired" | "used" | "invalid" | "error", message}.
+ */
+export async function verifyEmailToken(token) {
+  let res;
+  let data = {};
+
+  try {
+    res = await fetch(`${API_BASE}/verify-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    data = await res.json().catch(() => ({}));
+  } catch {
+    return {
+      status: "error",
+      message: "Could not reach VolunTag. Check your connection and try again.",
+    };
+  }
+
+  if (res.ok) return { status: "verified", role: data.role === "ngo" ? "ngo" : "volunteer" };
+
+  const byCode = {
+    verification_link_expired: "expired",
+    verification_link_used: "used",
+    verification_link_invalid: "invalid",
+  };
+  const status = byCode[data.code] || (res.status === 400 ? "invalid" : "error");
+
+  return { status, message: errorText(data, "Could not check the link. Please try again.") };
 }
 
 // How long the app waits for the server before it shows itself logged out.
@@ -183,20 +244,17 @@ export async function fetchBlobUrl(path) {
  * click, so popup blockers allow it; its address is set once the file loads.
  */
 export async function openAuthedFile(path) {
-  const win = window.open("", "_blank");
+  const win = openBlankWindow();
 
   if (win) {
-    win.opener = null;
     win.document.title = "Loading…";
   }
 
   try {
     const url = await fetchBlobUrl(path);
 
-    if (win) {
-      win.location.href = url;
-    } else {
-      window.open(url, "_blank");
+    if (!navigateWindow(win, url)) {
+      openSafeWindow(url);
     }
 
     // Give the tab time to read it before the URL is released.

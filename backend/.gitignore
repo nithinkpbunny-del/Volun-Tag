@@ -1,0 +1,14 @@
+# Runtime data the backend writes (also covered by the root .gitignore;
+# repeated here so the rules hold if backend/ is copied or deployed alone).
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite*
+*.bak*
+*.backup*
+uploads/
+admin_secret.json
+.env
+.env.*
+!.env.example

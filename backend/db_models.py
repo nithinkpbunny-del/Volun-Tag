@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary,
-    String, Text, UniqueConstraint,
+    String, Text, UniqueConstraint, text,
 )
 
 try:
@@ -32,6 +32,12 @@ class VolunteerDB(Base):
     location = Column(String, nullable=True)
     availability = Column(String, nullable=True)
     experience = Column(String, nullable=True)
+
+    # 1 once the owner opened the link mailed at signup (email_verification.py).
+    # The startup migration adds this column with DEFAULT 1, so every account
+    # that existed before email verification counts as verified without any
+    # row being rewritten. New registrations set it explicitly.
+    email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
 
 
 class NGODB(Base):
@@ -85,6 +91,12 @@ class NGODB(Base):
         DateTime,
         nullable=True,
     )
+
+    # 1 once the owner opened the link mailed at signup (email_verification.py).
+    # The startup migration adds this column with DEFAULT 1, so every account
+    # that existed before email verification counts as verified without any
+    # row being rewritten. New registrations set it explicitly.
+    email_verified = Column(Integer, nullable=False, default=0, server_default=text("1"))
 
 
 class ActivityDB(Base):
@@ -368,3 +380,25 @@ class ContactMessageDB(Base):
     # Admin console state (added by migrations.ensure_contact_columns).
     read_at = Column(DateTime, nullable=True)
     archived_at = Column(DateTime, nullable=True)
+
+
+class EmailVerificationTokenDB(Base):
+    """A one-time "confirm your email" link. Only a sha256 hash of the token is stored."""
+
+    __tablename__ = "email_verification_tokens"
+
+    __table_args__ = (
+        Index("ix_email_verification_tokens_account", "user_role", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+
+    user_role = Column(String(16), nullable=False)  # "volunteer" or "ngo"
+    user_id = Column(Integer, nullable=False)
+    email = Column(String, nullable=False)  # lowercase
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)

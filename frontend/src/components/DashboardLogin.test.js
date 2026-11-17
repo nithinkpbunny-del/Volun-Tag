@@ -90,3 +90,33 @@ test("the Forgot password link carries the selected role", () => {
     "/forgot-password?role=ngo"
   );
 });
+
+test("an unconfirmed email shows a notice with a resend button, not a toast", async () => {
+  const NOT_VERIFIED = "Please confirm your email address first. Open the link we emailed you, or send a new one.";
+  global.fetch = jest.fn((url) =>
+    url.endsWith("/volunteer-login")
+      ? jsonResponse(403, { code: "email_not_verified", message: NOT_VERIFIED, detail: NOT_VERIFIED })
+      : jsonResponse(200, { message: "If an account with that email is waiting to be confirmed, we have sent it a new link." })
+  );
+  const { showToast, onLogin } = renderLogin();
+
+  fireEvent.change(screen.getByLabelText(/Registered Email/), { target: { value: "new@example.test" } });
+  fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: "Typed@2026x" } });
+  fireEvent.click(screen.getByRole("button", { name: "View Dashboard" }));
+
+  expect(await screen.findByText(/not confirmed yet/i)).toBeInTheDocument();
+  expect(screen.getByText(NOT_VERIFIED)).toBeInTheDocument();
+  expect(showToast).not.toHaveBeenCalled();
+  expect(onLogin).not.toHaveBeenCalled();
+  expect(sessionStorage.length).toBe(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send a new link" }));
+  expect(await screen.findByText(/we have sent it a new link/)).toBeInTheDocument();
+  const [url, options] = global.fetch.mock.calls[1];
+  expect(url).toMatch(/\/resend-verification$/);
+  expect(JSON.parse(options.body)).toEqual({ role: "volunteer", email: "new@example.test" });
+
+  // Changing the email hides the notice (it belonged to the old address).
+  fireEvent.change(screen.getByLabelText(/Registered Email/), { target: { value: "other@example.test" } });
+  expect(screen.queryByText(/not confirmed yet/i)).not.toBeInTheDocument();
+});

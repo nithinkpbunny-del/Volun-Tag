@@ -10,6 +10,7 @@ suite needs no models and no network. Mail goes to a list (fake mailer).
 import hashlib
 import io
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime
@@ -27,7 +28,10 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["REPORT_MISMATCH_MODE"] = "enforce"
 os.environ["MATCH_V2"] = "false"
 os.environ["MATCH_USE_RATINGS"] = "true"
-for key in ("TRUST_PROXY_HEADERS", "APP_ENV", "ENABLE_DOCS"):
+for key in (
+    "TRUST_PROXY_HEADERS", "TRUSTED_PROXY_COUNT", "APP_ENV", "ENABLE_DOCS",
+    "RATE_LIMIT_DB_PATH", "EMAIL_VERIFICATION_REQUIRED",
+):
     os.environ.pop(key, None)
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -38,7 +42,6 @@ import database  # noqa: E402
 import embedding_store  # noqa: E402
 import event_rules  # noqa: E402
 import issue_ai_pipeline  # noqa: E402
-import login_limiter  # noqa: E402
 import mailer  # noqa: E402
 import main  # noqa: E402
 import rate_limit  # noqa: E402
@@ -46,8 +49,11 @@ import settings  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 assert settings.DATABASE_PATH.parent == TEST_DATA_DIR, "tests must never use the real database"
+assert settings.RATE_LIMIT_DB_PATH.parent == TEST_DATA_DIR
 
-PASSWORD = "Demo@12345"
+# The one password used by test accounts (meets the password policy). Test
+# files import it from here; it is never a real account's password.
+PASSWORD = "Tst-only#4821"
 
 
 # ─── Fakes ────────────────────────────────────────────────────────
@@ -99,7 +105,6 @@ def fresh_state(monkeypatch):
         leftover.unlink()
 
     rate_limit.reset_all()
-    login_limiter._state.clear()
 
     monkeypatch.setattr(embedding_store, "encode_texts", fake_encode)
     monkeypatch.setattr(issue_ai_pipeline, "encode_texts", fake_encode)
@@ -152,7 +157,42 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def register_volunteer(client, email="vol@example.test", name=None, skills="Teaching, tutoring, literacy", location="Pune, India"):
+VERIFY_LINK = re.compile(r"/verify-email\?token=([A-Za-z0-9_\-]+)")
+
+
+def mail_text(message):
+    return message.get_body(("plain",)).get_content()
+
+
+def mails_to(mailbox, email):
+    return [m for m in mailbox if m["To"].lower() == email.strip().lower()]
+
+
+def verification_token(mailbox, email):
+    """The token from the newest confirmation mail sent to email."""
+    for message in reversed(mails_to(mailbox, email)):
+        found = VERIFY_LINK.search(mail_text(message))
+        if found:
+            return found.group(1)
+    raise AssertionError(f"no verification mail for {email}")
+
+
+def verify_email(client, email):
+    """Confirm the address with the link from its mail, then drop that mail.
+
+    Dropping it keeps the mailbox as it was before registration, so tests
+    that count mails only see the ones they cause.
+    """
+    box = mailer._transport
+    res = client.post("/verify-email", json={"token": verification_token(box, email)})
+    assert res.status_code == 200, res.text
+    for message in mails_to(box, email):
+        if VERIFY_LINK.search(mail_text(message)):
+            box.remove(message)
+    return res.json()
+
+
+def register_volunteer(client, email="vol@example.test", name=None, skills="Teaching, tutoring, literacy", location="Pune, India", verify=True):
     body = {
         "name": name or email.split("@")[0],
         "email": email,
@@ -168,10 +208,12 @@ def register_volunteer(client, email="vol@example.test", name=None, skills="Teac
     }
     res = client.post("/add-volunteer", json=body)
     assert res.status_code == 200, res.text
+    if verify:
+        verify_email(client, email)
     return body
 
 
-def register_ngo(client, email="ngo@example.test", name=None, category="Education", location="Pune, India", motto="Teaching children to read"):
+def register_ngo(client, email="ngo@example.test", name=None, category="Education", location="Pune, India", motto="Teaching children to read", verify=True):
     data = {
         "name": name or email.split("@")[0],
         "email": email,
@@ -184,7 +226,14 @@ def register_ngo(client, email="ngo@example.test", name=None, category="Educatio
     }
     res = client.post("/add-ngo", data=data)
     assert res.status_code == 200, res.text
-    return res.json()["ngo_id"]
+    if verify:
+        verify_email(client, email)
+    db = db_session()
+    try:
+        from db_models import NGODB
+        return db.query(NGODB).filter(NGODB.email == email.strip().lower()).one().id
+    finally:
+        db.close()
 
 
 def login(client, role, email, password=PASSWORD):

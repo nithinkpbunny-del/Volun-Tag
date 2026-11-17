@@ -3,6 +3,7 @@ import AdminConversation, { startConversationRequest } from "./AdminConversation
 import AdminDocumentViewer from "./AdminDocumentViewer";
 import AdminProofDetail, { StatusPill, solutionTypeLabel } from "./AdminProofDetail";
 import { approveNGO, formatIST, getEvent, getNGO, orNotProvided, rejectNGO } from "./adminApi";
+import { safeExternalUrl } from "../../safeUrl";
 
 const TABS = [
   { id: "profile", label: "Profile" },
@@ -78,9 +79,10 @@ function WebsiteValue({ url }) {
   if (text === "Not provided") return text;
 
   // Only http(s) links are clickable; anything else stays plain text.
-  if (/^https?:\/\//i.test(text)) {
+  const href = safeExternalUrl(text);
+  if (href) {
     return (
-      <a className="adm-text-link" href={text} target="_blank" rel="noopener noreferrer">
+      <a className="adm-text-link" href={href} target="_blank" rel="noopener noreferrer">
         {text}
       </a>
     );

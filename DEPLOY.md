@@ -25,11 +25,14 @@ Backend (all optional, the defaults match a local laptop setup; see
 | `HF_HUB_OFFLINE` | `1` (default) uses only models already downloaded. Set `0` once to download them. |
 | `HF_HOME` | Where the model cache lives. Point it at a persistent disk. |
 | `APP_ENV` / `ENABLE_DOCS` | `APP_ENV=production` turns `/docs`, `/redoc` and `/openapi.json` off (unless `ENABLE_DOCS=true`). |
-| `TRUST_PROXY_HEADERS` | `true` only behind a proxy you control that sets `X-Forwarded-For`; rate limits then use that address. |
+| `TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_COUNT` | Where the client address for rate limits comes from (see "Behind a proxy"). Defaults `false` and `0`: the connection address, `X-Forwarded-For` ignored. |
+| `RATE_LIMIT_DB_PATH` | The SQLite file that holds every rate-limit counter (default `DATA_DIR/ratelimits.db`). |
+| `LOGIN_MAX_FAILURES`, `LOGIN_FAILURE_WINDOW_SECONDS`, `LOGIN_LOCKOUT_SECONDS`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_SECONDS`, `LOGIN_ACCOUNT_MAX_FAILURES_PER_HOUR` | Login lockout (see "Limits"). |
+| `EMAIL_VERIFICATION_REQUIRED`, `EMAIL_VERIFICATION_HOURS`, `VERIFY_LIMIT_PER_IP_PER_10_MIN`, `RESEND_LIMIT_*`, `REGISTER_NOTICE_LIMIT_PER_DAY` | Email confirmation at signup (see "Email verification"). |
 | `MAX_REQUEST_BYTES`, `MAX_IMAGE_BYTES`, `MAX_DOCUMENT_BYTES`, `MAX_IMAGE_PIXELS`, `AI_IMAGE_MAX_SIDE` | Upload limits (40 MB per request, 10 MB per photo, 5 MB per document, 25 megapixels; photos are shrunk to 1024 px before the AI models). |
 | `REPORT_LIMIT_PER_HOUR`, `VOLUNTEER_SIGNUP_LIMIT_PER_HOUR`, `NGO_SIGNUP_LIMIT_PER_HOUR`, `CONTACT_LIMIT_*` | Rate limits (see "Limits" below). |
 | `MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` | Outgoing mail (see "Mail"). |
-| `FRONTEND_BASE_URL` | Public https address of the frontend; password reset links point here. |
+| `FRONTEND_BASE_URL` | Public https address of the frontend; password reset and email confirmation links point here. |
 | `PASSWORD_RESET_MINUTES` | How long a reset link works (default 30). |
 | `CONTACT_SEND_EMAIL` | `false` (default): contact-form messages are only stored and read in the admin console (`/admin` → "Contact messages"). `true`: each one is also mailed to `CONTACT_INBOX`. |
 | `CONTACT_INBOX` | Where contact-form messages are mailed when `CONTACT_SEND_EMAIL=true`. Placeholder `contact@voluntag.example` until a real inbox exists. |
@@ -48,10 +51,13 @@ Frontend:
 Run from the `backend/` folder:
 
 ```
-uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --no-proxy-headers
 ```
 
-Do not add `--reload` on a server.
+Do not add `--reload` on a server. `--no-proxy-headers` stops uvicorn from
+rewriting the client address from `X-Forwarded-For` on its own (by default
+it trusts any request from 127.0.0.1), so only `TRUST_PROXY_HEADERS` and
+`TRUSTED_PROXY_COUNT` decide (see "Behind a proxy").
 
 ## Health check
 
@@ -82,14 +88,24 @@ the database or the models, so it only shows that the server process is up.
 
 - **HTTPS on both sides.** If the frontend is served over https, the backend
   must be https too, or browsers block the calls.
-- **One worker only.** SQLite does not handle several writer processes well,
-  and every rate limit (logins, admin login, reports, registrations,
-  password reset, contact form) is kept in memory, so each worker would have
-  its own counters and the limits would multiply.
+- **One worker only.** SQLite does not handle several writer processes
+  well, each worker would load its own copy of the AI models (about 3 GB),
+  and the admin console's lockout is still kept in memory per process. The
+  other rate limits (volunteer/NGO logins, registrations, email
+  verification, password reset, contact form, reports) are stored in
+  `ratelimits.db` (see "Limits"), so they survive a restart and would be
+  shared correctly if a second process were ever added.
 - **Never upload or deploy any `.db`, `.bak` or `.backup` file.** The local
   backups in `backend/` may hold plain-text passwords. Leave them out when
   you copy files or build an image, and start the server with an empty
   `DATA_DIR` or a migrated database.
+- **Keep database backups outside the project folder** (for example in a
+  `voluntag-backups/` folder next to the repository, or on another disk).
+  `.gitignore` and `backend/.gitignore` ignore `*.db`, `*.bak*`,
+  `*.backup*`, `*.sqlite*` and the `-wal`/`-shm` files, but a backup inside
+  the repository can still end up in an image, a zip or a copy of the folder.
+  The startup migration's own safety copies (`voluntag.db.bak-before-*`) are
+  written next to the database, so move them out after checking them.
 - **SPA rewrite on the frontend host.** Send every path that is not a real
   file to `index.html`, so reloading a page does not return a 404.
 
@@ -113,6 +129,129 @@ Without this, reloading a page or opening a link directly returns a 404.
   `/admin` needs the same rewrite. There is no link to it from the public site;
   open the address directly.
 
+## Security headers and CSP
+
+**Backend.** Every API response carries `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a
+`Permissions-Policy` that turns every powerful feature off, and
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`
+(left off `/docs` and `/redoc`, which are off in production anyway).
+`Strict-Transport-Security` is added only when the request arrived over
+https (directly, or via a trusted proxy's `X-Forwarded-Proto`).
+
+**Frontend.** `frontend/public/_headers` is copied into the build and sets
+the same headers plus a Content-Security-Policy for the app:
+
+| Directive | Allows | Why |
+| --- | --- | --- |
+| `script-src 'self'` | the built bundles only | `frontend/.env.production` sets `INLINE_RUNTIME_CHUNK=false`, so `build/index.html` has no inline script |
+| `style-src 'self' https://fonts.googleapis.com`, `font-src 'self' https://fonts.gstatic.com` | Google Fonts | DM Sans and DM Serif Display |
+| `img-src 'self' data: blob: <API>` | CSS icons, photo previews, protected photos | `data:` icons in CSS, `blob:` for previews and photos fetched with the login token |
+| `connect-src 'self' <API>` | the API | |
+| `frame-src blob:` | PDF previews in the admin console | checked in Chrome: PDFs still render |
+| `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'` | nothing else | |
+
+`Permissions-Policy` keeps `geolocation=(self)` because chat can share a
+location; camera, microphone, payment and the rest are off.
+
+**Before deploying, replace `https://api.example.com`** in the CSP line of
+`frontend/public/_headers` (it appears twice) with the real backend address,
+exactly as in `REACT_APP_API_BASE`. If it is left as is, the browser blocks
+every API call.
+
+- **Netlify, Cloudflare Pages:** `_headers` is used as it is.
+- **Vercel** ignores `_headers`. Put the same rules in `vercel.json` next to
+  the rewrite above:
+
+  ```json
+  {
+    "rewrites": [{"source": "/(.*)", "destination": "/index.html"}],
+    "headers": [{
+      "source": "/(.*)",
+      "headers": [
+        {"key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.example.com; connect-src 'self' https://api.example.com; frame-src blob:; media-src 'self' blob:; worker-src 'none'; object-src 'none'; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"},
+        {"key": "X-Content-Type-Options", "value": "nosniff"},
+        {"key": "X-Frame-Options", "value": "DENY"},
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "Permissions-Policy", "value": "geolocation=(self), camera=(), microphone=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), browsing-topics=()"},
+        {"key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"}
+      ]
+    }]
+  }
+  ```
+
+- Check after deploying: open the site and the browser console; a CSP
+  problem shows up as "Refused to ..." messages.
+
+## Sessions and XSS
+
+The login token stays in `sessionStorage` (it is sent as a Bearer header,
+not a cookie). **Decision:** moving it to an `HttpOnly` cookie would hide it
+from scripts, but it would also need CSRF protection on every write and a
+same-site API domain, which is a bigger change than this project needs now.
+The trade-off is that any script injected into the page could read the
+token, so the defence is to keep injected scripts out:
+
+- the CSP above (no inline or third-party scripts);
+- React text rendering only: no `dangerouslySetInnerHTML`, `innerHTML` or
+  `document.write` anywhere;
+- every link built from data (an NGO website, a chat location, a member's
+  link) goes through `frontend/src/safeUrl.js`, which only lets `http(s)`
+  (and, for files, `blob:`) addresses through, so a `javascript:` link
+  cannot be stored and clicked;
+- `backend/tests/test_frontend_sinks.py` scans `frontend/src` and fails if a
+  new raw-HTML sink, `window.open`, location change or unreviewed `href` /
+  `src` expression appears;
+- the token expires after 12 hours, ends on logout, and every session of an
+  account ends after a password reset.
+
+## Email verification
+
+- New volunteer and NGO accounts must open the link mailed to them before
+  they can log in (`EMAIL_VERIFICATION_REQUIRED=true`, the default). The
+  link (`{FRONTEND_BASE_URL}/verify-email?token=...`) works once, for
+  `EMAIL_VERIFICATION_HOURS` (24); asking for a new one makes the older ones
+  expire. Only a hash of each link is stored (`email_verification_tokens`).
+- Logging in with the right password before confirming gives
+  `403 {"code": "email_not_verified"}`; a wrong password still gives the
+  normal 401, so the answer never shows which emails exist.
+- Registration answers exactly the same (status, body, password hashing,
+  file checks) whether or not the email is already registered. When it is,
+  that address gets a short "someone tried to register with your address"
+  mail with a password reset link (or, if that account is still not
+  confirmed, a fresh confirmation link), at most
+  `REGISTER_NOTICE_LIMIT_PER_DAY` per address. A taken organisation or
+  volunteer NAME is still reported, because it says nothing about any email.
+- A completed password reset also confirms the email (the link reached it).
+- Accounts that existed before this change were marked confirmed by the
+  startup migration (a new `email_verified` column with default 1; no row is
+  rewritten).
+- **Demo mode without mail:** `EMAIL_VERIFICATION_REQUIRED=false` creates
+  new accounts already confirmed and keeps the old
+  `400 "Email ... is already registered"` answer. **Known trade-off:** that
+  answer tells anyone which emails have accounts. Accounts created while the
+  setting was `true` and never confirmed still cannot log in; they can use
+  "Send a new link" or reset their password.
+
+## Behind a proxy
+
+Rate limits need the real client address. One helper (`client_ip()` in
+`backend/rate_limit.py`) is used by every limiter:
+
+- `TRUST_PROXY_HEADERS=false` (default): the address of whatever opened the
+  connection. `X-Forwarded-For` is ignored, so a client cannot pick its own
+  address. Behind a proxy this means every visitor shares the proxy's
+  address and limits.
+- `TRUST_PROXY_HEADERS=true` and `TRUSTED_PROXY_COUNT=N`: each of your N
+  proxies appends the address it received the request from, so the client is
+  the entry N places from the **right** of `X-Forwarded-For`. Anything
+  further left was written by the client and is never used. Examples: a
+  platform load balancer only, `N=1`; a load balancer plus your own nginx,
+  `N=2`. If the header has fewer than N entries, the connection address is
+  used. `N=0` with `true` is treated as 1 and logged as a warning.
+- Only turn this on when the app cannot be reached except through those
+  proxies, and start uvicorn with `--no-proxy-headers` (see "Start command").
+
 ## Python packages
 
 - `backend/requirements.txt` was frozen on macOS. On the host, check that every
@@ -130,13 +269,23 @@ Without this, reloading a page or opening a link directly returns a 404.
   check `git status` before every commit.
 - If real data is ever committed, rewrite the history or move to a fresh
   repository before continuing. Deleting the file in a new commit is not enough.
+- An audit of the existing history (November 2026) found a committed database
+  backup with real accounts and plain-text passwords. It is kept outside the
+  repository; the owner decides between making the repository private and
+  rewriting the history, and the exposed passwords must be changed either way.
+- Test files use a test-only password defined once in
+  `backend/tests/conftest.py`; older commits still contain the previous
+  throwaway test password.
 
 ## Database
 
-- Startup migrations run on every start and are safe to repeat: they add
-  missing columns (including `contact_messages.read_at` and
-  `contact_messages.archived_at`, both nullable, so no row is rewritten),
-  tables (`password_reset_tokens`, `contact_messages`) and indexes, lowercase stored emails and add a unique index on `lower(email)`
+- Startup migrations run on every start (before the demo seed) and are safe
+  to repeat: they add missing columns (including `contact_messages.read_at`
+  and `contact_messages.archived_at`, both nullable, and
+  `volunteers.email_verified` / `ngos.email_verified`, `NOT NULL DEFAULT 1`
+  so every existing account counts as confirmed; no row is rewritten),
+  tables (`password_reset_tokens`, `contact_messages`,
+  `email_verification_tokens`) and indexes, lowercase stored emails and add a unique index on `lower(email)`
   for volunteers and NGOs. If any email would have to change, the database is
   first copied to `voluntag.db.bak-before-email-normalise-<time>` next to it.
   If two accounts would collide once lowercased, that table is skipped and a
@@ -145,7 +294,12 @@ Without this, reloading a page or opening a link directly returns a 404.
   timeout. WAL adds `voluntag.db-wal` and `voluntag.db-shm` next to the
   database: back up with `sqlite3 voluntag.db ".backup 'backup.db'"` (not a
   plain file copy while the server runs). These files are git-ignored.
-- Suggested nightly job: the `.backup` command above to a second disk.
+- Suggested nightly job: the `.backup` command above to a second disk
+  (outside the project folder).
+- `ratelimits.db` (next to `voluntag.db` unless `RATE_LIMIT_DB_PATH` says
+  otherwise) holds only rate-limit counters and lockouts, with emails and IP
+  addresses stored as salted hashes. It needs no backup; deleting it while
+  the server is stopped clears every limit.
 
 ## Mail
 
@@ -188,15 +342,22 @@ Without this, reloading a page or opening a link directly returns a 404.
 | What | Limit | Over the limit |
 | --- | --- | --- |
 | `POST /report-issue` | 5 per hour per volunteer | 429 |
+| `POST /volunteer-login`, `POST /ngo-login` | 5 wrong passwords per 15 minutes per (account, IP) → that pair locked 5 minutes; 30 failures per 15 minutes per IP; 50 failures per hour per account from anywhere | 429 "Too many failed logins. Try again in N minutes." (same text for unknown emails) |
 | `POST /add-volunteer` | 10 per hour per IP | 429 |
 | `POST /add-ngo` | 5 per hour per IP | 429 |
+| "Someone tried to register" notice | 3 per day per address | not sent (same answer) |
+| `POST /verify-email` | 20 per 10 minutes per IP | 429 |
+| `POST /resend-verification` | 3 per hour per account, 10 per hour per IP | same 200, nothing sent / 429 |
 | `POST /contact` | 3 per hour per IP, 3 per day per email | 429 |
 | `POST /forgot-password` | 3 per hour per account, 10 per hour per IP | same 200, nothing sent |
 | `POST /reset-password(/verify)` | 10 per 10 minutes per IP | 429 |
 | Request body | 40 MB | 413 |
 | One photo / one document | 10 MB / 5 MB, real image or PDF/DOC/DOCX content | 413 / 400 |
 
-Behind a proxy, set `TRUST_PROXY_HEADERS=true` or every visitor shares the
+All of these are stored in `ratelimits.db`, so a restart does not reset
+them and every process sees the same counts. The admin console's own
+lockout (5 wrong admin passwords → 5 minutes) is separate and still in
+memory. Behind a proxy, see "Behind a proxy", or every visitor shares the
 proxy's address (and its limits).
 
 ## Report a problem: photo / description check

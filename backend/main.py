@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -59,6 +59,8 @@ try:
     from . import uploads
     from .contact import router as contact_router
     from .password_reset import router as password_reset_router
+    from . import email_verification
+    from .security_headers import SecurityHeadersMiddleware
     from .issue_ai_pipeline import analyse_images
     from .password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from .password_policy import password_policy_error
@@ -112,6 +114,8 @@ except ImportError:
     import uploads
     from contact import router as contact_router
     from password_reset import router as password_reset_router
+    import email_verification
+    from security_headers import SecurityHeadersMiddleware
     from issue_ai_pipeline import analyse_images
     from password_hashing import DUMMY_HASH, hash_password, is_hashed, verify_password
     from password_policy import password_policy_error
@@ -221,20 +225,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Added last, so it is the outermost layer and also covers CORS preflights
+# and the 413 answers above.
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.include_router(admin_router)
 app.include_router(password_reset_router)
 app.include_router(contact_router)
+app.include_router(email_verification.router)
 
 
 # ─── Startup / Seed Data ───────────────────────────────────────────
 @app.on_event("startup")
 def seed_data():
-    """Create tables and, unless SEED_DEMO_DATA is off, load sample data."""
+    """Create tables, run the migrations, then (unless SEED_DEMO_DATA is off) load sample data.
+
+    Migrations run before seeding because the seed queries the account
+    tables, which must already have every column the models expect.
+    """
+    Base.metadata.create_all(bind=engine)
+    run_migrations(engine, DATABASE_PATH)
     if SEED_DEMO_DATA:
         run_seed()
-    else:
-        Base.metadata.create_all(bind=engine)
-    run_migrations(engine, DATABASE_PATH)
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
@@ -1564,10 +1576,34 @@ def get_resolution_file(
 
 
 # ─── Volunteer Registration ────────────────────────────────────────
+# With EMAIL_VERIFICATION_REQUIRED (default) both registration endpoints
+# answer with exactly this body whether or not the email is already
+# registered, so they cannot be used to find out which emails have accounts.
+REGISTRATION_CHECK_EMAIL = {
+    "message": (
+        "Check your email to finish signing up. We have sent a message to "
+        "the address you entered."
+    ),
+    "verification_required": True,
+}
+
+
+def _store_volunteer_vector(volunteer_id: int, skills: str) -> None:
+    """Background job: pre-compute the skills vector so the first dashboard load is fast."""
+    db = SessionLocal()
+    try:
+        refresh_vector(db, "volunteer_skills", volunteer_id, skills)
+    except Exception:
+        logger.exception("Could not store volunteer skills embedding")
+    finally:
+        db.close()
+
+
 @app.post("/add-volunteer")
 def add_volunteer(
     volunteer: Volunteer,
     request: Request,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     volunteer_signup_limiter.check(
@@ -1575,6 +1611,7 @@ def add_volunteer(
         "Too many registrations from this network. Please try again later.",
     )
 
+    # Errors that do not depend on existing accounts are shown as before.
     password_error = password_policy_error(volunteer.password)
 
     if password_error:
@@ -1583,6 +1620,28 @@ def add_volunteer(
             detail=password_error,
         )
 
+    email = (volunteer.email or "").strip().lower()
+    verification = settings.EMAIL_VERIFICATION_REQUIRED
+
+    existing_email = db.query(VolunteerDB).filter(
+        func.lower(VolunteerDB.email) == email
+    ).first() if email else None
+
+    # The password is hashed on every path, so a taken email is not faster.
+    password_hash = hash_password(volunteer.password)
+
+    if existing_email and verification:
+        email_verification.handle_existing_email(db, background, "volunteer", existing_email)
+        return REGISTRATION_CHECK_EMAIL
+
+    if existing_email:
+        # EMAIL_VERIFICATION_REQUIRED=false keeps the old answer (reveals the email exists).
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email '{volunteer.email}' is already registered",
+        )
+
+    # A taken NAME is still reported: it says nothing about any email.
     if db.query(VolunteerDB).filter(
         func.lower(VolunteerDB.name)
         == volunteer.name.lower()
@@ -1592,28 +1651,13 @@ def add_volunteer(
             detail=f"Volunteer '{volunteer.name}' already exists",
         )
 
-    if volunteer.email:
-        existing_email = db.query(VolunteerDB).filter(
-            func.lower(VolunteerDB.email)
-            == volunteer.email.lower()
-        ).first()
-
-        if existing_email:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Email '{volunteer.email}' "
-                    f"is already registered"
-                ),
-            )
-
     new_volunteer = VolunteerDB(
         name=volunteer.name,
-        email=volunteer.email or None,
+        email=email or None,
         contact_number=(
             volunteer.contact_number or None
         ),
-        password=hash_password(volunteer.password),
+        password=password_hash,
         age=volunteer.age,
         designation=volunteer.designation or None,
         gender=volunteer.gender or None,
@@ -1621,31 +1665,33 @@ def add_volunteer(
         location=volunteer.location or None,
         availability=volunteer.availability or None,
         experience=volunteer.experience or None,
+        email_verified=0 if verification else 1,
     )
 
     db.add(new_volunteer)
 
     try:
-        db.commit()
+        db.flush()
+        if verification:
+            email_verification.start_verification(db, background, "volunteer", new_volunteer)
+        else:
+            db.commit()
     except IntegrityError:
         # Lost a race with an identical registration (unique name / email index).
         db.rollback()
+        if verification and email_verification.find_account(db, "volunteer", email):
+            return REGISTRATION_CHECK_EMAIL
         raise HTTPException(
             status_code=400,
             detail="This name or email is already registered",
         )
 
-    # Pre-compute the skills vector so the first dashboard load is fast.
+    # Pre-compute the skills vector after the answer (keeps both paths equally fast).
     if new_volunteer.skills:
-        try:
-            refresh_vector(
-                db,
-                "volunteer_skills",
-                new_volunteer.id,
-                new_volunteer.skills,
-            )
-        except Exception:
-            logger.exception("Could not store volunteer skills embedding")
+        background.add_task(_store_volunteer_vector, new_volunteer.id, new_volunteer.skills)
+
+    if verification:
+        return REGISTRATION_CHECK_EMAIL
 
     total_volunteers = db.query(
         func.count(VolunteerDB.id)
@@ -1654,6 +1700,7 @@ def add_volunteer(
     return {
         "message": "Volunteer added",
         "total_volunteers": total_volunteers,
+        "verification_required": False,
     }
 
 
@@ -1661,6 +1708,7 @@ def add_volunteer(
 @app.post("/add-ngo")
 def add_ngo(
     request: Request,
+    background: BackgroundTasks,
     name: str = Form(...),
     email: str = Form(...),
     contact_number: str = Form(...),
@@ -1799,29 +1847,34 @@ def add_ngo(
             detail="Legal structure is required",
         )
 
-    # ── Duplicate NGO name ─────────────────────────────────────────
-    existing_ngo = db.query(NGODB).filter(
-        func.lower(NGODB.name)
-        == name.lower()
-    ).first()
-
-    if existing_ngo:
-        raise HTTPException(
-            status_code=400,
-            detail=f"NGO '{name}' already exists",
-        )
+    verification = settings.EMAIL_VERIFICATION_REQUIRED
 
     # ── Duplicate email ────────────────────────────────────────────
+    # With verification on, a taken email gets the same answer as a new one
+    # (after the same file checks and password hashing, see below).
     existing_email = db.query(NGODB).filter(
         func.lower(NGODB.email)
         == email.lower()
     ).first()
 
-    if existing_email:
+    if existing_email and not verification:
         raise HTTPException(
             status_code=400,
             detail=f"Email '{email}' is already registered",
         )
+
+    # ── Duplicate NGO name (says nothing about any email) ──────────
+    if not existing_email:
+        existing_ngo = db.query(NGODB).filter(
+            func.lower(NGODB.name)
+            == name.lower()
+        ).first()
+
+        if existing_ngo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"NGO '{name}' already exists",
+            )
 
     if len(work_images) > MAX_IMAGES:
         raise HTTPException(
@@ -1866,12 +1919,22 @@ def add_ngo(
         saved.cleanup()
         raise
 
+    # Hashed on every path, so a taken email is not answered faster.
+    password_hash = hash_password(password)
+
+    if existing_email:
+        # Same checks and the same answer as a new registration; the
+        # uploaded files are not kept and the owner gets a notice instead.
+        saved.cleanup()
+        email_verification.handle_existing_email(db, background, "ngo", existing_email)
+        return REGISTRATION_CHECK_EMAIL
+
     # ── Create NGO record ──────────────────────────────────────────
     ngo = NGODB(
         name=name,
         email=email,
         contact_number=contact_number,
-        password=hash_password(password),
+        password=password_hash,
         category=category,
         location=location,
         year_founded=year_founded,
@@ -1903,15 +1966,22 @@ def add_ngo(
         ),
 
         verification_status="Pending",
+        email_verified=0 if verification else 1,
     )
 
     db.add(ngo)
 
     try:
-        db.commit()
+        db.flush()
+        if verification:
+            email_verification.start_verification(db, background, "ngo", ngo)
+        else:
+            db.commit()
     except IntegrityError:
         db.rollback()
         saved.cleanup()
+        if verification and email_verification.find_account(db, "ngo", email):
+            return REGISTRATION_CHECK_EMAIL
         raise HTTPException(
             status_code=400,
             detail="This NGO name or email is already registered",
@@ -1920,6 +1990,9 @@ def add_ngo(
         db.rollback()
         saved.cleanup()
         raise
+
+    if verification:
+        return REGISTRATION_CHECK_EMAIL
 
     db.refresh(ngo)
 
@@ -1937,6 +2010,7 @@ def add_ngo(
         ),
         "ngo_id": ngo.id,
         "total_ngos": total_ngos,
+        "verification_required": False,
     }
 
 
@@ -2737,23 +2811,24 @@ class NGOLoginResponse(NGODashboardResponse):
     token: str = ""
 
 
-def check_login_with_limit(role: str, email: str, account, password: str) -> None:
-    """Apply the per-account rate limit around check_login_password.
+def check_login_with_limit(role: str, email: str, account, password: str, ip: str) -> None:
+    """Apply the login lockout (login_limiter.py) around check_login_password.
 
-    Locked accounts get 429 before any password check. A wrong password
-    (or unknown email) counts as a failure; a correct one resets the count.
+    A blocked login gets 429 before any password check. A wrong password
+    (or unknown email) counts as a failure; a correct one clears the
+    failures of this (account, IP) pair.
     """
 
-    login_limiter.check_login_allowed(role, email)
+    login_limiter.check_login_allowed(role, email, ip)
 
     try:
         check_login_password(account, password)
     except HTTPException as exc:
         if exc.status_code == 401:
-            login_limiter.record_failed_login(role, email)
+            login_limiter.record_failed_login(role, email, ip)
         raise
 
-    login_limiter.reset_failed_logins(role, email)
+    login_limiter.reset_failed_logins(role, email, ip)
 
 
 @app.post(
@@ -2762,6 +2837,7 @@ def check_login_with_limit(role: str, email: str, account, password: str) -> Non
 )
 def volunteer_login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     email = payload.email.strip().lower()
@@ -2772,7 +2848,13 @@ def volunteer_login(
             func.lower(VolunteerDB.email) == email
         ).first()
 
-    check_login_with_limit("volunteer", email, volunteer, payload.password)
+    check_login_with_limit(
+        "volunteer", email, volunteer, payload.password, rate_limit.client_ip(request),
+    )
+
+    # Only after a correct password, so this never shows which emails exist.
+    if not email_verification.is_verified(volunteer):
+        return email_verification.not_verified_response()
 
     token, _ = create_user_session(db, "volunteer", volunteer.id, volunteer.email)
     db.commit()
@@ -2789,6 +2871,7 @@ def volunteer_login(
 )
 def ngo_login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     email = payload.email.strip().lower()
@@ -2800,7 +2883,11 @@ def ngo_login(
             func.lower(NGODB.email) == email,
         ).first()
 
-    check_login_with_limit("ngo", email, ngo, payload.password)
+    check_login_with_limit("ngo", email, ngo, payload.password, rate_limit.client_ip(request))
+
+    # Only after a correct password, so this never shows which emails exist.
+    if not email_verification.is_verified(ngo):
+        return email_verification.not_verified_response()
 
     token, _ = create_user_session(db, "ngo", ngo.id, ngo.email)
     db.commit()

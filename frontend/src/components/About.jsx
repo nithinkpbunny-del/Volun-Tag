@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import "./InfoPages.css";
 import { PATHS } from "../routes";
 import { GUIDE, MISSION, PROJECT, REPO_URL, TEAM } from "../content/aboutContent";
+import { safeExternalUrl } from "../safeUrl";
 
 const filled = (value) => typeof value === "string" && value.trim() !== "";
 
@@ -139,8 +140,8 @@ export default function About() {
               {team.map((member) => (
                 <li className="info-card" key={member.name}>
                   <p className="info-card-title">
-                    {filled(member.link) ? (
-                      <a href={member.link} target="_blank" rel="noopener noreferrer">
+                    {safeExternalUrl(member.link) ? (
+                      <a href={safeExternalUrl(member.link)} target="_blank" rel="noopener noreferrer">
                         {member.name.trim()}
                       </a>
                     ) : (

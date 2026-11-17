@@ -1,0 +1,23 @@
+# Security headers for Netlify and Cloudflare Pages (copied into build/).
+# Vercel ignores this file: see DEPLOY.md for the same rules as vercel.json.
+#
+# BEFORE DEPLOYING replace https://api.example.com (two places in the
+# Content-Security-Policy line) with the real backend address, exactly as in
+# REACT_APP_API_BASE. If it is left as is, every API call is blocked.
+#
+# What the policy allows, and why:
+#   script-src 'self'          the built bundles only; the build has no inline
+#                              scripts (INLINE_RUNTIME_CHUNK=false in .env.production)
+#   style-src / font-src       Google Fonts (DM Sans, DM Serif Display)
+#   img-src data: blob:        icons in CSS, previews of chosen photos, and
+#                              protected photos fetched with the login token
+#   connect-src                this site and the API
+#   frame-src blob:            PDF documents shown in the admin console
+#   frame-ancestors 'none'     no other site may frame VolunTag
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.example.com; connect-src 'self' https://api.example.com; frame-src blob:; media-src 'self' blob:; worker-src 'none'; object-src 'none'; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(self), camera=(), microphone=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), browsing-topics=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

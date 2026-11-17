@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import "./DashboardLogin.css";
 import { loginUser } from "../api";
 import { PATHS, dashboardFor } from "../routes";
+import { ResendButton } from "./EmailVerification";
 
 const ROLES = ["volunteer", "ngo"];
 
@@ -16,6 +17,9 @@ export default function DashboardLogin({ showToast, onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // Set when the password was right but the email is not confirmed yet:
+  // {message, role, email} for the notice and its "send a new link" button.
+  const [unverified, setUnverified] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -35,6 +39,7 @@ export default function DashboardLogin({ showToast, onLogin }) {
     }
 
     setLoading(true);
+    setUnverified(null);
 
     try {
       // Sent exactly as typed. A locked account comes back as the server's 429 message.
@@ -45,9 +50,15 @@ export default function DashboardLogin({ showToast, onLogin }) {
       // Replace the /login entry so Back does not return to the login form.
       navigate(dashboardFor(role), { replace: true });
     } catch (err) {
+      setLoading(false);
+
+      if (err.code === "email_not_verified") {
+        setUnverified({ message: err.message, role, email: trimmedEmail });
+        return;
+      }
+
       // The password stays in the field so a typo can be corrected.
       showToast(err.message || "Unable to connect to backend", "error");
-      setLoading(false);
     }
   };
 
@@ -134,6 +145,18 @@ export default function DashboardLogin({ showToast, onLogin }) {
               Forgot password?
             </Link>
           </div>
+
+          {unverified && unverified.role === role && unverified.email === email.trim() && (
+            <div className="login-unverified">
+              <div className="auth-message auth-message--error" role="alert">
+                <p>
+                  <strong>Your email is not confirmed yet.</strong>
+                </p>
+                <p>{unverified.message}</p>
+                <ResendButton role={unverified.role} email={unverified.email} />
+              </div>
+            </div>
+          )}
 
           <div className="form-actions">
             <button

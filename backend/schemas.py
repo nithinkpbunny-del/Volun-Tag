@@ -972,6 +972,16 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(default="", max_length=256)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(default="", max_length=200)
+
+
+class ResendVerificationRequest(BaseModel):
+    role: Literal["volunteer", "ngo"]
+    # Not format-checked: a malformed address gets the same answer as any other.
+    email: str = Field(default="", max_length=320)
+
+
 # ─── Contact form ─────────────────────────────────────────────────
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 

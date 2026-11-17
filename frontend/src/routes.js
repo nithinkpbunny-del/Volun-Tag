@@ -22,6 +22,7 @@ export const PATHS = {
   contact: "/contact",
   "forgot-password": "/forgot-password",
   "reset-password": "/reset-password",
+  "verify-email": "/verify-email",
 };
 
 const PAGE_BY_PATH = Object.fromEntries(
@@ -81,6 +82,7 @@ const PAGE_TITLES = {
   contact: "Contact",
   "forgot-password": "Forgot password",
   "reset-password": "Reset password",
+  "verify-email": "Confirm your email",
   "event-volunteers": "Event volunteers",
   "resolve-issue": "Resolve a problem",
 };

@@ -4,6 +4,7 @@ import AuthImage from "../AuthImage";
 import { parseServerTime } from "../../dates";
 import { API_BASE } from "../../config";
 import { authFetch, openAuthedFile } from "../../api";
+import { mapsUrl } from "../../safeUrl";
 
 const BLOCKED_EXTENSIONS = [
   "exe", "bat", "cmd", "com", "msi", "scr", "sh",
@@ -905,14 +906,16 @@ export default function Messages({
                 <div className="msg-location-coords">
                   {msg.latitude?.toFixed(5)}, {msg.longitude?.toFixed(5)}
                 </div>
-                <a
-                  href={`https://www.google.com/maps?q=${msg.latitude},${msg.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="msg-location-link"
-                >
-                  Open in Google Maps &rarr;
-                </a>
+                {mapsUrl(msg.latitude, msg.longitude) && (
+                  <a
+                    href={mapsUrl(msg.latitude, msg.longitude)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="msg-location-link"
+                  >
+                    Open in Google Maps &rarr;
+                  </a>
+                )}
               </div>
             )}
 

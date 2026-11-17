@@ -14,6 +14,7 @@ import {
   isCompletedPhase,
   tomorrowInIST,
 } from "../../dates";
+import { safeExternalUrl } from "../../safeUrl";
 
 // Tabs, in the order shown; the current one is kept in the address (?tab=).
 export const NGO_TABS = ["profile", "events", "problems", "messages", "activity", "settings"];
@@ -931,9 +932,9 @@ export default function NGODashboard({
                   <div className="ngo-detail-row">
                     <dt className="ngo-detail-label">Website</dt>
                     <dd className="ngo-detail-value">
-                      {profile.website_url ? (
+                      {safeExternalUrl(profile.website_url) ? (
                         <a
-                          href={profile.website_url}
+                          href={safeExternalUrl(profile.website_url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="ngo-detail-link"
@@ -941,7 +942,7 @@ export default function NGODashboard({
                           {profile.website_url}
                         </a>
                       ) : (
-                        "—"
+                        profile.website_url || "—"
                       )}
                     </dd>
                   </div>

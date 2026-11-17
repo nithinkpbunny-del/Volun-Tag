@@ -2,7 +2,7 @@
 
 import main
 import settings
-from conftest import TEST_DATA_DIR, auth, login, png_bytes, register_ngo, register_volunteer
+from conftest import PASSWORD, TEST_DATA_DIR, auth, login, png_bytes, register_ngo, register_volunteer
 
 
 def uploads_now():
@@ -53,7 +53,7 @@ def test_request_size_cap(client, monkeypatch):
 
 def ngo_form(email="org@example.test", name="Org"):
     return {
-        "name": name, "email": email, "contact_number": "1", "password": "Demo@12345",
+        "name": name, "email": email, "contact_number": "1", "password": PASSWORD,
         "category": "Education", "location": "Pune", "motto": "m", "legal_structure": "Trust",
     }
 
@@ -105,7 +105,7 @@ def test_signup_rate_limits(client):
     for i in range(settings.VOLUNTEER_SIGNUP_LIMIT_PER_HOUR):
         register_volunteer(client, f"v{i}@example.test")
     body = {
-        "name": "late", "email": "late@example.test", "contact_number": "1", "password": "Demo@12345",
+        "name": "late", "email": "late@example.test", "contact_number": "1", "password": PASSWORD,
         "age": 20, "designation": "S", "gender": "F", "skills": "a", "location": "b", "availability": "c",
     }
     assert client.post("/add-volunteer", json=body).status_code == 429
