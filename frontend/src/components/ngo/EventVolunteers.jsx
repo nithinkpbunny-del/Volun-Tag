@@ -2,6 +2,13 @@ import { useEffect, useState } from "react";
 import "./EventVolunteers.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
+import PhaseBadge from "../PhaseBadge";
+import {
+  formatEventDay,
+  formatTimestampDate,
+  isCompletedPhase,
+  isOpenPhase,
+} from "../../dates";
 
 const initials = (name) =>
   name
@@ -13,14 +20,8 @@ const initials = (name) =>
         .toUpperCase()
     : "";
 
-const formatDate = (iso) => {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-};
+// joined_at is a server timestamp (naive UTC), shown as an IST date.
+const formatDate = (iso) => formatTimestampDate(iso);
 
 const splitSkills = (skills) =>
   skills
@@ -29,13 +30,6 @@ const splitSkills = (skills) =>
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
-
-// Event dates come from the backend as naive UTC timestamps.
-const hasPassed = (iso) => {
-  if (!iso) return false;
-  const withZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
-  return new Date(withZone).getTime() <= Date.now();
-};
 
 const EMPTY_DRAFT = { attendance: "", rating: 0, feedback: "" };
 
@@ -236,15 +230,19 @@ export default function EventVolunteers({
   const approvedVolunteers = volunteers.filter((v) => v.approved);
   const joinedVolunteers = volunteers.filter((v) => !v.approved);
 
-  const completed = data ? data.is_completed : !!event?.is_completed;
+  // The phase comes from the server (IST); the browser never works it out.
+  const phase = (data && data.phase) || event?.phase;
+  const eventDay = data ? data.event_day : event?.event_day;
+  const completed = isCompletedPhase(phase);
+  // Approve and Remove are possible only before the event day starts.
+  const registrationOpen = isOpenPhase(phase);
   const ratedCount = approvedVolunteers.filter((v) => v.attendance_status).length;
 
-  const isPast = hasPassed(event?.event_date);
   const allFilled = spots != null && approvedCount >= spots;
 
   let approveBlockedReason = "";
   if (status && status !== "Active") approveBlockedReason = "Event is not active";
-  else if (isPast) approveBlockedReason = "This event has already passed";
+  else if (!registrationOpen) approveBlockedReason = "Registration for this event has closed";
   else if (allFilled) approveBlockedReason = "All spots are filled";
 
   // Same fetch as the 10-second refresh: no loading state, errors ignored.
@@ -426,7 +424,7 @@ export default function EventVolunteers({
           Connect
         </button>
 
-        {v.approved && !isPast && !completed && (
+        {v.approved && registrationOpen && (
           <button
             type="button"
             className="ev-vol-remove-btn"
@@ -437,7 +435,7 @@ export default function EventVolunteers({
           </button>
         )}
 
-        {!v.approved && (
+        {!v.approved && registrationOpen && (
           <button
             type="button"
             className="ev-vol-approve-btn"
@@ -460,9 +458,12 @@ export default function EventVolunteers({
 
       <div className="ev-vol-header">
         <div className="ev-vol-title-row">
-          <h2 className="ev-vol-title">{title}</h2>
+          <h1 className="ev-vol-title">{title}</h1>
           {status && <span className="ev-vol-status">{status}</span>}
+          {status !== "Cancelled" && <PhaseBadge phase={phase} />}
         </div>
+
+        <p className="ev-vol-count">{formatEventDay(eventDay)}</p>
 
         {data && (
           <p className="ev-vol-count">
@@ -483,9 +484,9 @@ export default function EventVolunteers({
 
       {data && (
         <>
-          <h3 className="ev-vol-section-title">
+          <h2 className="ev-vol-section-title">
             {completed ? "Volunteers to rate" : "Approved volunteers"}
-          </h3>
+          </h2>
 
           {approvedVolunteers.length === 0 ? (
             <p className="ev-vol-message">
@@ -501,7 +502,14 @@ export default function EventVolunteers({
 
           {!completed && (
             <>
-              <h3 className="ev-vol-section-title">Joined volunteers</h3>
+              <h2 className="ev-vol-section-title">Joined volunteers</h2>
+
+              {!registrationOpen && joinedVolunteers.length > 0 && (
+                <p className="ev-vol-message">
+                  Registration closed when the event day started, so these volunteers can no
+                  longer be approved.
+                </p>
+              )}
 
               {joinedVolunteers.length === 0 ? (
                 <p className="ev-vol-message">No volunteers waiting for approval</p>

@@ -805,3 +805,14 @@
     padding: 2.5rem 1.25rem 1.5rem;
   }
 }
+/* ─── Stats strip built from /stats (only non-zero counters) ─────── */
+
+.stat-group {
+  display: contents;
+}
+
+.footer-bottom a {
+  color: var(--sage);
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}

@@ -220,9 +220,9 @@ export default function VolunteerRegisterForm({ showToast, onLogin }) {
               </svg>
             </div>
 
-            <h2 className="success-title">
+            <h1 className="success-title">
               Registration Complete
-            </h2>
+            </h1>
 
             <p className="success-desc">
               You have been registered on VolunTag. Your skills
@@ -281,9 +281,9 @@ export default function VolunteerRegisterForm({ showToast, onLogin }) {
             </svg>
           </div>
 
-          <h2 className="form-title">
+          <h1 className="form-title">
             Register as Volunteer
-          </h2>
+          </h1>
 
           <p className="form-subtitle">
             Complete the form to create your volunteer profile

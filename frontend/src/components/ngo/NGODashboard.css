@@ -410,3 +410,29 @@
 .dashboard-view-btn:disabled:hover {
   border-color: var(--border);
 }
+
+/* ─── Labelled fields of the event forms ─────────────────────────── */
+
+.ngo-event-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.ngo-event-field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ngo-event-field .dashboard-search-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.ngo-event-hint {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}

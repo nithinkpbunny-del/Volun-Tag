@@ -1,17 +1,27 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import "./DashboardLogin.css";
 import { loginUser } from "../api";
 import { PATHS, dashboardFor } from "../routes";
 
+const ROLES = ["volunteer", "ngo"];
+
 export default function DashboardLogin({ showToast, onLogin }) {
   const navigate = useNavigate();
-  const [role, setRole] = useState("volunteer");
+  const { state } = useLocation();
+  // The reset-password page sends the user here with the role they reset.
+  const [role, setRole] = useState(() =>
+    state && ROLES.includes(state.role) ? state.role : "volunteer"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (loading) return;
+
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
@@ -24,21 +34,19 @@ export default function DashboardLogin({ showToast, onLogin }) {
       return;
     }
 
-    // Sent exactly as typed, then cleared so it is not kept after submit.
-    const attempt = password;
-    setPassword("");
     setLoading(true);
 
     try {
-      // A locked account comes back as the server's 429 message.
-      const account = await loginUser(role, trimmedEmail, attempt);
+      // Sent exactly as typed. A locked account comes back as the server's 429 message.
+      const account = await loginUser(role, trimmedEmail, password);
 
+      setPassword("");
       onLogin({ role, email: account.email || trimmedEmail });
       // Replace the /login entry so Back does not return to the login form.
       navigate(dashboardFor(role), { replace: true });
     } catch (err) {
+      // The password stays in the field so a typo can be corrected.
       showToast(err.message || "Unable to connect to backend", "error");
-    } finally {
       setLoading(false);
     }
   };
@@ -47,17 +55,23 @@ export default function DashboardLogin({ showToast, onLogin }) {
     <div className="page form-page">
       <div className="form-card dashboard-login-card">
         <div className="form-header">
-          <h2 className="form-title">View My Dashboard</h2>
+          <h1 className="form-title">View My Dashboard</h1>
           <p className="form-subtitle">
             Enter your registered email and password to view your profile
           </p>
         </div>
 
-        <div className="form-step fade-in">
+        <form className="form-step fade-in" onSubmit={handleSubmit} noValidate>
           <div className="form-group">
-            <label>I am a</label>
+            <span className="form-label" id="dashboard-login-role-label">
+              I am a
+            </span>
 
-            <div className="radio-group" role="radiogroup" aria-label="Role">
+            <div
+              className="radio-group"
+              role="radiogroup"
+              aria-labelledby="dashboard-login-role-label"
+            >
               <label className="radio-option">
                 <input
                   type="radio"
@@ -95,6 +109,7 @@ export default function DashboardLogin({ showToast, onLogin }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
+              required
             />
           </div>
 
@@ -109,7 +124,15 @@ export default function DashboardLogin({ showToast, onLogin }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              required
             />
+
+            <Link
+              className="dashboard-login-forgot"
+              to={`${PATHS["forgot-password"]}?role=${role}`}
+            >
+              Forgot password?
+            </Link>
           </div>
 
           <div className="form-actions">
@@ -122,15 +145,15 @@ export default function DashboardLogin({ showToast, onLogin }) {
             </button>
 
             <button
+              type="submit"
               className={`submit-btn ${loading ? "loading" : ""}`}
-              onClick={handleSubmit}
               disabled={loading}
               id="dashboard-login-submit"
             >
               {loading ? "Loading..." : "View Dashboard"}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

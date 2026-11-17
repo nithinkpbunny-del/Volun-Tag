@@ -174,7 +174,7 @@ export default function ResolveIssue({ issue, ngoEmail, showToast, onBack }) {
     return (
       <div className="page rs-page">
         <div className="form-card rs-card rs-success">
-          <h2 className="form-title">Proof submitted</h2>
+          <h1 className="form-title">Proof submitted</h1>
           <p className="rs-success-text">
             Your proof has been submitted for evaluation. If it is verified and the issue is solved, it will be listed in your Activities section.
           </p>
@@ -194,7 +194,7 @@ export default function ResolveIssue({ issue, ngoEmail, showToast, onBack }) {
         </button>
 
         <div className="form-header">
-          <h2 className="form-title">How was this issue solved?</h2>
+          <h1 className="form-title">How was this issue solved?</h1>
         </div>
 
         <div className="rs-summary">

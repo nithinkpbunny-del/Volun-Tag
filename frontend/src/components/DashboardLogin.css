@@ -97,6 +97,86 @@
   border-color: var(--sage-mid);
 }
 
+/* ─── Group caption that is not tied to one input (radio groups) ── */
+
+.form-group .form-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.01em;
+}
+
+/* ─── Links and messages on the login and password screens ───────── */
+
+.dashboard-login-forgot,
+.auth-link {
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--sage);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dashboard-login-forgot:focus-visible,
+.auth-link:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.auth-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+/* A link that looks like the shared Back button. */
+a.form-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.auth-message {
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  background: var(--mist);
+  color: var(--ink);
+}
+
+.auth-message p + p {
+  margin-top: 0.4rem;
+}
+
+.auth-message--success {
+  border-color: var(--sage-mid);
+  background: var(--sage-light);
+}
+
+.auth-message--error {
+  border-color: #e0b49c;
+  background: #fbefe8;
+  color: #7a2e12;
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  justify-content: center;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 480px) {

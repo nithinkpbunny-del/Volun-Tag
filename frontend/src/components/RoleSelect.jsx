@@ -9,7 +9,12 @@ export default function RoleSelect({ embedded = false }) {
     <div className={embedded ? "role-select-page role-select-embedded" : "page role-select-page"}>
       <div className="role-select-container">
         <div className="role-select-header">
-          <h1 className="role-select-title">Join VolunTag</h1>
+          {/* On the landing page this sits under the page's own h1. */}
+          {embedded ? (
+            <h2 className="role-select-title">Join VolunTag</h2>
+          ) : (
+            <h1 className="role-select-title">Join VolunTag</h1>
+          )}
           <p className="role-select-subtitle">
             A platform that connects volunteers with NGOs through
             AI-powered skill matching.

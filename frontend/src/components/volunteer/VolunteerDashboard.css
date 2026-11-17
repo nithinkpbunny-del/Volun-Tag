@@ -880,3 +880,56 @@
     flex-direction: column;
   }
 }
+
+/* ─── Phase badge row on event items ─────────────────────────────── */
+
+.dashboard-phase-row {
+  margin-top: 0.35rem;
+}
+
+/* ─── Phones: nothing may push past the screen edge ──────────────── *
+ * Long NGO names used to push the Connect button off the right edge at
+ * 480px. Text columns may shrink and wrap; the action row wraps below. */
+
+.dashboard-ngo-info,
+.dashboard-event-info,
+.dashboard-activity-info {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .dashboard-ngo-row-main {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .dashboard-ngo-info {
+    flex: 1 1 100%;
+  }
+
+  .dashboard-ngo-actions {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .dashboard-filters-row .dashboard-search-input,
+  .dashboard-filters-row .dashboard-filter-select {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  /* The tab bar scrolls sideways instead of clipping the last tab. */
+  .dashboard-subnav-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    gap: 18px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard-subnav-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}

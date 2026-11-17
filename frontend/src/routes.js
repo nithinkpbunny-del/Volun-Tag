@@ -18,6 +18,10 @@ export const PATHS = {
   "ngo-dashboard": "/ngo/dashboard",
   report: "/report",
   "report-results": "/report/results",
+  about: "/about",
+  contact: "/contact",
+  "forgot-password": "/forgot-password",
+  "reset-password": "/reset-password",
 };
 
 const PAGE_BY_PATH = Object.fromEntries(
@@ -38,8 +42,8 @@ export const resolveIssuePath = (complaintId) =>
 
 /**
  * The old `page` name for an address, or "" for an address that is not a
- * screen of the app (for example /news or a typo). The navbar still expects
- * these names.
+ * screen of the app (for example /news or a typo). Used for the page's CSS
+ * class and its document title.
  */
 export function pageFromPath(pathname) {
   const clean = (pathname || "/").replace(/\/+$/, "") || "/";
@@ -57,9 +61,41 @@ export function pageFromPath(pathname) {
 // Pages that only say "Coming soon" for now: address -> title.
 export const COMING_SOON_PAGES = {
   "/news": "News",
-  "/about": "About",
-  "/contact": "Contact",
 };
+
+// Browser tab titles, by page name (see pageFromPath).
+const SITE_NAME = "VolunTag";
+const HOME_TITLE = "VolunTag — AI-Powered Volunteer-NGO Matching";
+const PAGE_TITLES = {
+  "role-select": "Join VolunTag",
+  features: "Features",
+  results: "Matching demo",
+  "volunteer-register": "Register as a volunteer",
+  "ngo-register": "Register your NGO",
+  "dashboard-login": "Log in",
+  "volunteer-dashboard": "Volunteer dashboard",
+  "ngo-dashboard": "NGO dashboard",
+  report: "Report a problem",
+  "report-results": "Report received",
+  about: "About",
+  contact: "Contact",
+  "forgot-password": "Forgot password",
+  "reset-password": "Reset password",
+  "event-volunteers": "Event volunteers",
+  "resolve-issue": "Resolve a problem",
+};
+
+/** The document title for an address: "<Page> · VolunTag", or "Page not found". */
+export function pageTitle(pathname) {
+  const page = pageFromPath(pathname);
+
+  if (page === "landing") return HOME_TITLE;
+
+  const comingSoon = COMING_SOON_PAGES[cleanPath(pathname)];
+  const name = PAGE_TITLES[page] || comingSoon || "Page not found";
+
+  return `${name} · ${SITE_NAME}`;
+}
 
 function cleanPath(pathname) {
   return ((pathname || "/").replace(/\/+$/, "") || "/").toLowerCase();

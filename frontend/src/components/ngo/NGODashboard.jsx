@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
+import PhaseBadge from "../PhaseBadge";
 import "./NGODashboard.css";
 import { API_BASE } from "../../config";
 import { authFetch, errorText, openAuthedFile } from "../../api";
 import { PATHS } from "../../routes";
+import {
+  eventDayInputValue,
+  formatEventDay,
+  formatTimestampDate,
+  isCompletedPhase,
+  isOpenPhase,
+  tomorrowInIST,
+} from "../../dates";
+
+// Tabs, in the order shown; the current one is kept in the address (?tab=).
+export const NGO_TABS = ["profile", "events", "problems", "messages", "activity", "settings"];
+const DEFAULT_TAB = "profile";
 
 // Looks like a link; opens a protected file through the login token.
 const LINK_BUTTON_STYLE = {
@@ -19,7 +32,7 @@ const LINK_BUTTON_STYLE = {
 };
 
 // One clickable thumbnail; hidden entirely if the image cannot be loaded.
-function PhotoThumb({ src, alt, caption }) {
+function PhotoThumb({ src, alt, caption, onOpenError }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) return null;
@@ -31,9 +44,88 @@ function PhotoThumb({ src, alt, caption }) {
         src={src}
         alt={alt}
         onFail={() => setFailed(true)}
+        onOpenError={onOpenError}
       />
       {caption && <span className="ngo-photo-caption">{caption}</span>}
     </div>
+  );
+}
+
+// The labelled fields of the create and edit event forms.
+function EventFormFields({ idPrefix, formData, onField, minDate }) {
+  const id = (name) => `${idPrefix}-${name}`;
+
+  return (
+    <>
+      <div className="ngo-event-field">
+        <label htmlFor={id("title")}>
+          Event title <span className="required">*</span>
+        </label>
+        <input
+          id={id("title")}
+          type="text"
+          className="dashboard-search-input"
+          value={formData.title}
+          onChange={onField("title")}
+          required
+        />
+      </div>
+
+      <div className="ngo-event-field">
+        <label htmlFor={id("skills")}>
+          Required skills <span className="required">*</span>
+        </label>
+        <input
+          id={id("skills")}
+          type="text"
+          className="dashboard-search-input"
+          placeholder="For example: teaching, first aid"
+          value={formData.required_skills}
+          onChange={onField("required_skills")}
+          required
+        />
+      </div>
+
+      <div className="ngo-event-field">
+        <label htmlFor={id("location")}>Location</label>
+        <input
+          id={id("location")}
+          type="text"
+          className="dashboard-search-input"
+          value={formData.location}
+          onChange={onField("location")}
+        />
+      </div>
+
+      <div className="ngo-event-field">
+        <label htmlFor={id("date")}>Event date</label>
+        <input
+          id={id("date")}
+          type="date"
+          className="dashboard-search-input"
+          min={minDate}
+          value={formData.event_date}
+          onChange={onField("event_date")}
+          aria-describedby={id("date-hint")}
+        />
+        <span className="ngo-event-hint" id={id("date-hint")}>
+          Registration closes when the event day starts (India time), so pick tomorrow or later.
+        </span>
+      </div>
+
+      <div className="ngo-event-field">
+        <label htmlFor={id("spots")}>Spots available</label>
+        <input
+          id={id("spots")}
+          type="number"
+          className="dashboard-search-input"
+          placeholder="Leave empty for no limit"
+          min="1"
+          value={formData.spots_available}
+          onChange={onField("spots_available")}
+        />
+      </div>
+    </>
   );
 }
 
@@ -50,7 +142,6 @@ export default function NGODashboard({
   showToast,
   onViewVolunteers,
   onMarkSolved,
-  initialTab,
   initialChat,
   onInitialConsumed,
 }) {
@@ -62,15 +153,20 @@ export default function NGODashboard({
 
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  // The dashboard remounts on every page change, so these props only seed the initial state.
-  const [activeTab, setActiveTab] = useState(
-    initialChat ? "messages" : initialTab || "profile"
-  );
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab = NGO_TABS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  // Each tab change is a history entry, so Back returns to the previous tab.
+  const setActiveTab = (tab) => {
+    if (tab === activeTab) return;
+    setSearchParams(tab === DEFAULT_TAB ? {} : { tab });
+  };
   const [unreadCount, setUnreadCount] = useState(0);
+  // A chat chosen on the event volunteers screen opens once on arrival.
   const [chatTarget, setChatTarget] = useState(initialChat || null);
 
   useEffect(() => {
-    if (initialTab || initialChat) {
+    if (initialChat) {
       onInitialConsumed && onInitialConsumed();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,9 +416,8 @@ export default function NGODashboard({
         title: formData.title.trim(),
         required_skills: formData.required_skills.trim(),
         location: formData.location.trim() || "",
-        event_date: formData.event_date
-          ? new Date(formData.event_date).toISOString()
-          : null,
+        // The day exactly as picked ("YYYY-MM-DD"); no time zone involved.
+        event_date: formData.event_date || null,
         spots_available: formData.spots_available
           ? Number(formData.spots_available)
           : null,
@@ -363,9 +458,8 @@ export default function NGODashboard({
         title: formData.title.trim(),
         required_skills: formData.required_skills.trim(),
         location: formData.location.trim() || "",
-        event_date: formData.event_date
-          ? new Date(formData.event_date).toISOString()
-          : null,
+        // The day exactly as picked ("YYYY-MM-DD"); no time zone involved.
+        event_date: formData.event_date || null,
         spots_available: formData.spots_available
           ? Number(formData.spots_available)
           : null,
@@ -461,14 +555,7 @@ export default function NGODashboard({
     return "dashboard-verification-tag verification-pending";
   };
 
-  const formatDate = (iso) => {
-    if (!iso) return "—";
-    return new Date(iso).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  const formatDate = (iso) => formatTimestampDate(iso);
 
   // The pill reflects this NGO's own proof, never the shared issue status.
   const issuePillLabel = (iss) => {
@@ -505,13 +592,14 @@ export default function NGODashboard({
   // Count only active events for the stat card
   const activeEventCount = events.filter((ev) => ev.status === "Active").length;
 
-  // Completed (per the backend) events move to the Activities tab; cancelled ones stay in Events.
-  const completedEvents = events.filter(
-    (ev) => ev.is_completed && ev.status !== "Cancelled"
-  );
-  const listedEvents = events.filter(
-    (ev) => !(ev.is_completed && ev.status !== "Cancelled")
-  );
+  // Completed events (phase from the server) move to the Activities tab;
+  // cancelled ones stay in Events.
+  const isDone = (ev) => isCompletedPhase(ev.phase) && ev.status !== "Cancelled";
+  const completedEvents = events.filter(isDone);
+  const listedEvents = events.filter((ev) => !isDone(ev));
+  const minEventDay = tomorrowInIST();
+  const photoOpenError = () =>
+    showToast("Could not open the photo. Please try again.", "error");
 
   // Open problems stay in Reported Problems; problems this NGO solved move to Activities.
   const openIssues = issues.filter((iss) => !iss.solved);
@@ -520,14 +608,17 @@ export default function NGODashboard({
   return (
     <div className="page dashboard-page">
       <div className="dashboard-shell">
+        <h1 className="sr-only">NGO dashboard</h1>
+
         {/* ── Subnav ──────────────────────────────────────────── */}
         <div className="dashboard-subnav">
-          <div className="dashboard-subnav-tabs">
-            {["profile", "events", "problems", "messages", "activity", "settings"].map((tab) => (
+          <div className="dashboard-subnav-tabs" role="group" aria-label="Dashboard sections">
+            {NGO_TABS.map((tab) => (
               <button
                 key={tab}
                 type="button"
                 className={`dashboard-subnav-tab ${activeTab === tab ? "active" : ""}`}
+                aria-current={activeTab === tab ? "page" : undefined}
                 onClick={() => {
                   if (tab === "messages") {
                     setChatTarget(null);
@@ -587,14 +678,15 @@ export default function NGODashboard({
 
               {!loadingEvents &&
                 [...completedEvents]
-                  .sort((a, b) => new Date(b.event_date) - new Date(a.event_date))
+                  // Newest day first ("YYYY-MM-DD" sorts as text).
+                  .sort((a, b) => String(b.event_day || "").localeCompare(String(a.event_day || "")))
                   .map((ev) => (
                     <div className="dashboard-ngo-row" key={ev.id}>
                       <div className="dashboard-ngo-row-main">
                         <div className="dashboard-ngo-info">
                           <p className="dashboard-ngo-name">{ev.title}</p>
                           <p className="dashboard-ngo-meta">
-                            {ev.location || "No location"} · {formatDate(ev.event_date)}
+                            {ev.location || "No location"} · {formatEventDay(ev.event_day)}
                           </p>
                           <p className="dashboard-ngo-meta">
                             {ev.approved_count === 0
@@ -604,9 +696,7 @@ export default function NGODashboard({
                         </div>
 
                         <div className="dashboard-ngo-actions">
-                          <span className="ngo-event-status-badge status-completed">
-                            Completed
-                          </span>
+                          <PhaseBadge phase={ev.phase} />
 
                           {ev.approved_count > 0 && (
                             <button
@@ -706,11 +796,13 @@ export default function NGODashboard({
                         {iss.resolution_id && (
                           <div className="ngo-photo-list">
                             <PhotoThumb
+                              onOpenError={photoOpenError}
                               src={resolutionFilePath(iss.resolution_id, "before")}
                               alt="Before photo"
                               caption="Your before photo"
                             />
                             <PhotoThumb
+                              onOpenError={photoOpenError}
                               src={resolutionFilePath(iss.resolution_id, "after")}
                               alt="After photo"
                               caption="Your after photo"
@@ -872,48 +964,12 @@ export default function NGODashboard({
             </div>
 
             {showForm && (
-              <form className="ngo-event-form" onSubmit={handleOrganize}>
-                <input
-                  type="text"
-                  className="dashboard-search-input"
-                  placeholder="Event title *"
-                  value={formData.title}
-                  onChange={onField("title")}
-                  required
-                />
-
-                <input
-                  type="text"
-                  className="dashboard-search-input"
-                  placeholder="Required skills *"
-                  value={formData.required_skills}
-                  onChange={onField("required_skills")}
-                  required
-                />
-
-                <input
-                  type="text"
-                  className="dashboard-search-input"
-                  placeholder="Location"
-                  value={formData.location}
-                  onChange={onField("location")}
-                />
-
-                <input
-                  type="date"
-                  className="dashboard-search-input"
-                  placeholder="Event date"
-                  value={formData.event_date}
-                  onChange={onField("event_date")}
-                />
-
-                <input
-                  type="number"
-                  className="dashboard-search-input"
-                  placeholder="Spots available"
-                  min="1"
-                  value={formData.spots_available}
-                  onChange={onField("spots_available")}
+              <form className="ngo-event-form" onSubmit={handleOrganize} aria-label="Organize an event">
+                <EventFormFields
+                  idPrefix="new-event"
+                  formData={formData}
+                  onField={onField}
+                  minDate={minEventDay}
                 />
 
                 <button
@@ -955,11 +1011,12 @@ export default function NGODashboard({
                       <div className="dashboard-ngo-info">
                         <p className="dashboard-ngo-name">{ev.title}</p>
                         <p className="dashboard-ngo-meta">
-                          {ev.location || "No location"} · {formatDate(ev.event_date)}
+                          {ev.location || "No location"} · {formatEventDay(ev.event_day)}
                         </p>
                       </div>
 
                       <div className="dashboard-ngo-actions">
+                        {ev.status !== "Cancelled" && <PhaseBadge phase={ev.phase} />}
                         <span
                           className={`ngo-event-status-badge status-${(ev.status || "active").toLowerCase()}`}
                         >
@@ -981,48 +1038,17 @@ export default function NGODashboard({
                     {expandedEvent === ev.id && (
                       <div className="dashboard-ngo-detail">
                         {editingEventId === ev.id ? (
-                          <form className="ngo-event-form" onSubmit={handleUpdateEvent}>
-                            <input
-                              type="text"
-                              className="dashboard-search-input"
-                              placeholder="Event title *"
-                              value={formData.title}
-                              onChange={onField("title")}
-                              required
-                            />
-
-                            <input
-                              type="text"
-                              className="dashboard-search-input"
-                              placeholder="Required skills *"
-                              value={formData.required_skills}
-                              onChange={onField("required_skills")}
-                              required
-                            />
-
-                            <input
-                              type="text"
-                              className="dashboard-search-input"
-                              placeholder="Location"
-                              value={formData.location}
-                              onChange={onField("location")}
-                            />
-
-                            <input
-                              type="date"
-                              className="dashboard-search-input"
-                              placeholder="Event date"
-                              value={formData.event_date}
-                              onChange={onField("event_date")}
-                            />
-
-                            <input
-                              type="number"
-                              className="dashboard-search-input"
-                              placeholder="Spots available"
-                              min="1"
-                              value={formData.spots_available}
-                              onChange={onField("spots_available")}
+                          <form className="ngo-event-form" onSubmit={handleUpdateEvent} aria-label={`Edit ${ev.title}`}>
+                            <EventFormFields
+                              idPrefix={`edit-event-${ev.id}`}
+                              formData={formData}
+                              onField={onField}
+                              // An unchanged earlier day (an event happening today) must stay valid.
+                              minDate={
+                                ev.event_day && ev.event_day < minEventDay
+                                  ? eventDayInputValue(ev.event_day)
+                                  : minEventDay
+                              }
                             />
 
                             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -1080,7 +1106,7 @@ export default function NGODashboard({
                                       title: ev.title || "",
                                       required_skills: ev.required_skills || "",
                                       location: ev.location || "",
-                                      event_date: ev.event_date ? ev.event_date.slice(0, 10) : "",
+                                      event_date: eventDayInputValue(ev.event_day),
                                       spots_available: ev.spots_available != null ? String(ev.spots_available) : "",
                                     });
                                   }}
@@ -1120,7 +1146,8 @@ export default function NGODashboard({
                                   Cancel event
                                 </button>
                               )}
-                              {ev.status === "Filled" && (
+                              {/* Reopening is refused once the event day has started. */}
+                              {ev.status === "Filled" && isOpenPhase(ev.phase) && (
                                 <button
                                   type="button"
                                   className="dashboard-view-btn"
@@ -1291,6 +1318,7 @@ export default function NGODashboard({
                             <div className="ngo-photo-list">
                               {Array.from({ length: iss.image_count }, (_, index) => (
                                 <PhotoThumb
+                                  onOpenError={photoOpenError}
                                   key={index}
                                   src={issuePhotoPath(iss.complaint_id, index)}
                                   alt={`Reported photo ${index + 1}`}
@@ -1303,11 +1331,13 @@ export default function NGODashboard({
                         {iss.resolution_id && (
                           <div className="ngo-photo-list">
                             <PhotoThumb
+                              onOpenError={photoOpenError}
                               src={resolutionFilePath(iss.resolution_id, "before")}
                               alt="Before photo"
                               caption="Your before photo"
                             />
                             <PhotoThumb
+                              onOpenError={photoOpenError}
                               src={resolutionFilePath(iss.resolution_id, "after")}
                               alt="After photo"
                               caption="Your after photo"

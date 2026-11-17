@@ -258,9 +258,9 @@ export default function NGORegisterForm({ showToast, onLogin }) {
               </svg>
             </div>
 
-            <h2 className="success-title">
+            <h1 className="success-title">
               Registration Submitted
-            </h2>
+            </h1>
 
             <p className="success-desc">
               Your organization has been registered successfully.
@@ -321,7 +321,7 @@ export default function NGORegisterForm({ showToast, onLogin }) {
             </svg>
           </div>
 
-          <h2 className="form-title">Register NGO</h2>
+          <h1 className="form-title">Register NGO</h1>
 
           <p className="form-subtitle">
             Complete the form to register your organization on VolunTag

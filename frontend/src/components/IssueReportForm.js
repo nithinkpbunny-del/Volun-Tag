@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import ImagePreviewCard from "./ImagePreviewCard";
 import { API_BASE } from "../config";
 import { authFetch, errorText, getSession } from "../api";
@@ -20,12 +20,32 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
   // photo and the description do not match). The typed text and the chosen
   // photos stay, so the user can fix them and submit again.
   const [submitError, setSubmitError] = useState("");
+  // True when the error is the photo/description mismatch (it gets extra advice).
+  const [isMismatch, setIsMismatch] = useState(false);
+  const errorRef = useRef(null);
 
+  // Preview URLs are released when a photo is removed and when the form goes
+  // away, never while the photo is still in the form (a kept photo must keep
+  // its preview after a rejected submit).
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  useEffect(
+    () => () => imagesRef.current.forEach((image) => URL.revokeObjectURL(image.preview)),
+    []
+  );
+
+  // Bring a server error into view and to the screen reader's attention.
   useEffect(() => {
-    return () => {
-      images.forEach((image) => URL.revokeObjectURL(image.preview));
-    };
-  }, [images]);
+    const el = errorRef.current;
+    if (!submitError || !el) return;
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center" });
+    el.focus({ preventScroll: true });
+  }, [submitError]);
+
+  const clearSubmitError = () => {
+    setSubmitError("");
+    setIsMismatch(false);
+  };
 
   const validate = () => {
     const errs = {};
@@ -43,13 +63,23 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
       preview: URL.createObjectURL(file),
       name: file.name,
     }));
-    setImages((prev) => [...prev, ...nextImages].slice(0, 6));
-    setSubmitError("");
+    setImages((prev) => {
+      const kept = [...prev, ...nextImages];
+      kept.slice(6).forEach((image) => URL.revokeObjectURL(image.preview));
+      return kept.slice(0, 6);
+    });
+    // The same file can be picked again after it was removed.
+    event.target.value = "";
+    clearSubmitError();
   };
 
   const removeImage = (index) => {
-    setImages((prev) => prev.filter((_, idx) => idx !== index));
-    setSubmitError("");
+    setImages((prev) => {
+      const removed = prev[index];
+      if (removed) URL.revokeObjectURL(removed.preview);
+      return prev.filter((_, idx) => idx !== index);
+    });
+    clearSubmitError();
   };
 
   const handleSubmit = async () => {
@@ -64,7 +94,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
     }
 
     setLoading(true);
-    setSubmitError("");
+    clearSubmitError();
 
     const formData = new FormData();
     formData.append("user_description", form.user_description.trim());
@@ -88,22 +118,24 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
       }
 
       if (response.status === 422 && payload.code === "image_description_mismatch") {
-        setSubmitError(payload.message);
+        setIsMismatch(true);
+        setSubmitError(
+          payload.message ||
+            "The photo and the description do not seem to describe the same problem."
+        );
         return;
       }
 
       if (!response.ok) {
-        throw new Error(errorText(payload, "Could not submit the issue"));
+        // Shown in the form (not a toast), so it stays while the user fixes it.
+        setSubmitError(errorText(payload, "Could not submit the issue. Please try again."));
+        return;
       }
 
       showToast("Issue reported successfully!", "success");
       onReportSuccess(payload);
-    } catch (error) {
-      if (error instanceof TypeError) {
-        showToast("Unable to connect to the backend. Please try again.", "error");
-      } else {
-        showToast(error.message || "Unable to connect to backend", "error");
-      }
+    } catch {
+      setSubmitError("Unable to reach VolunTag. Check your connection and submit again.");
     } finally {
       setLoading(false);
     }
@@ -115,7 +147,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
     return (
       <div className="form-card report-card">
         <div className="form-header">
-          <h2 className="form-title">Report an Issue</h2>
+          <h1 className="form-title">Report an Issue</h1>
           <p className="form-subtitle">Log in as a volunteer to report a problem</p>
         </div>
       </div>
@@ -138,7 +170,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
             <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
           </svg>
         </div>
-        <h2 className="form-title">Report an Issue</h2>
+        <h1 className="form-title">Report an Issue</h1>
         <p className="form-subtitle">
           {step === 1 ? "Tell us what happened" : "Add photos and review your report"}
         </p>
@@ -155,7 +187,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
               id="issue-description"
               placeholder="Describe the problem: where it happened, what you observed, who is affected..."
               value={form.user_description}
-              onChange={(e) => { setForm({ ...form, user_description: e.target.value }); setErrors({ ...errors, user_description: "" }); }}
+              onChange={(e) => { setForm({ ...form, user_description: e.target.value }); setErrors({ ...errors, user_description: "" }); clearSubmitError(); }}
               className={errors.user_description ? "input-error" : ""}
               rows={5}
             />
@@ -169,7 +201,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
               type="text"
               placeholder="e.g. Sector 17, Gurugram"
               value={form.location}
-              onChange={(e) => { setForm({ ...form, location: e.target.value }); setErrors({ ...errors, location: "" }); }}
+              onChange={(e) => { setForm({ ...form, location: e.target.value }); setErrors({ ...errors, location: "" }); clearSubmitError(); }}
               className={errors.location ? "input-error" : ""}
             />
             {errors.location && <span className="error-text">{errors.location}</span>}
@@ -207,7 +239,7 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
           {images.length > 0 && (
             <div className="preview-grid">
               {images.map((image, index) => (
-                <ImagePreviewCard key={index} file={image} onRemove={() => removeImage(index)} />
+                <ImagePreviewCard key={image.preview} file={image} onRemove={() => removeImage(index)} />
               ))}
             </div>
           )}
@@ -223,20 +255,25 @@ export default function IssueReportForm({ showToast, onReportSuccess }) {
           </p>
 
           {submitError && (
-            <div className="form-error-banner" role="alert">
+            <div className="form-error-banner" role="alert" tabIndex={-1} ref={errorRef}>
               <p>{submitError}</p>
-              <p>
-                Your description and photos are still here: change the photo or go back to edit
-                the description, then submit again.
-              </p>
+              {isMismatch ? (
+                <p>
+                  Your description and photos are still here: remove or change the photo, or go
+                  back to edit the description, then submit again.
+                </p>
+              ) : (
+                <p>Your description and photos are still here, so you can submit again.</p>
+              )}
             </div>
           )}
 
           <div className="form-actions">
-            <button className="form-back-btn" onClick={() => setStep(1)}>
+            <button type="button" className="form-back-btn" onClick={() => setStep(1)}>
               ← Back
             </button>
             <button
+              type="button"
               className={`submit-btn ${loading ? "loading" : ""}`}
               onClick={handleSubmit}
               disabled={loading}

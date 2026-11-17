@@ -18,7 +18,7 @@ export default function ReportIssue({ showToast, onReportSuccess, reporterEmail 
                 <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
               </svg>
             </div>
-            <h2 className="form-title">Report an Issue</h2>
+            <h1 className="form-title">Report an Issue</h1>
             <p className="form-subtitle">Log in or register as a volunteer to report a problem</p>
           </div>
 

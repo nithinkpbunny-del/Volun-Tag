@@ -9,6 +9,11 @@ import {
 } from "react-router-dom";
 import Nav from "./components/Nav";
 import ComingSoon from "./components/ComingSoon";
+import NotFound from "./components/NotFound";
+import About from "./components/About";
+import Contact from "./components/Contact";
+import ForgotPassword from "./components/ForgotPassword";
+import ResetPassword from "./components/ResetPassword";
 import { RequireRole } from "./components/RouteGuards";
 import LandingPage from "./components/LandingPage";
 // The old VolunteerForm screen is no longer routed, but its stylesheet holds the
@@ -41,8 +46,10 @@ import {
   dashboardFor,
   eventVolunteersPath,
   pageFromPath,
+  pageTitle,
   resolveIssuePath,
 } from "./routes";
+import { isCompletedPhase } from "./dates";
 import "./VolunTag.css";
 
 // The event and issue screens get their data from the router's location
@@ -112,9 +119,8 @@ export default function VolunTag() {
   // the same session itself, this just decides which screen to show.
   const reporterEmail = dashboardRole === "volunteer" ? dashboardEmail : "";
   const loggedIn = dashboardRole === "volunteer" || dashboardRole === "ngo";
+  // A chat to open when the NGO comes back from the event volunteers screen.
   const [ngoChatTarget, setNgoChatTarget] = useState(null);
-  const [ngoReturnTab, setNgoReturnTab] = useState(null);
-  const [volunteerInitialTab, setVolunteerInitialTab] = useState(null);
 
   // The 401 handler below is registered once, so it reaches navigate through a
   // ref (navigate itself changes whenever the address changes).
@@ -123,6 +129,11 @@ export default function VolunTag() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
+  }, [location.pathname]);
+
+  // One title per screen, so browser tabs and history are readable.
+  useEffect(() => {
+    document.title = pageTitle(location.pathname);
   }, [location.pathname]);
 
   const handleLogin = ({ role, email }) => {
@@ -197,9 +208,12 @@ export default function VolunTag() {
     navigate(PATHS.report);
   };
 
+  // Dashboard tabs live in the address (?tab=...), so links and Back keep them.
+  const dashboardTabPath = (role, tab) =>
+    tab ? `${dashboardFor(role)}?tab=${encodeURIComponent(tab)}` : dashboardFor(role);
+
   const goToVolunteerDashboard = (tab) => {
-    setVolunteerInitialTab(tab || null);
-    navigate(PATHS["volunteer-dashboard"]);
+    navigate(dashboardTabPath("volunteer", tab));
   };
 
   return (
@@ -260,8 +274,6 @@ export default function VolunTag() {
                       email={dashboardEmail}
                       showToast={showToast}
                       onReportProblem={handleReportProblem}
-                      initialTab={volunteerInitialTab}
-                      onInitialConsumed={() => setVolunteerInitialTab(null)}
                     />
                   </RequireRole>
                 }
@@ -280,12 +292,8 @@ export default function VolunTag() {
                       onMarkSolved={(iss) =>
                         navigate(resolveIssuePath(iss.complaint_id), { state: { issue: iss } })
                       }
-                      initialTab={ngoReturnTab}
                       initialChat={ngoChatTarget}
-                      onInitialConsumed={() => {
-                        setNgoReturnTab(null);
-                        setNgoChatTarget(null);
-                      }}
+                      onInitialConsumed={() => setNgoChatTarget(null)}
                     />
                   </RequireRole>
                 }
@@ -299,16 +307,19 @@ export default function VolunTag() {
                       ngoEmail={dashboardEmail}
                       showToast={showToast}
                       onBack={(event) => {
-                        setNgoReturnTab(
-                          event.is_completed && event.status !== "Cancelled"
-                            ? "activity"
-                            : "events"
+                        // Completed events are listed under Activities.
+                        navigate(
+                          dashboardTabPath(
+                            "ngo",
+                            isCompletedPhase(event.phase) && event.status !== "Cancelled"
+                              ? "activity"
+                              : "events"
+                          )
                         );
-                        navigate(PATHS["ngo-dashboard"]);
                       }}
                       onConnect={(target) => {
                         setNgoChatTarget(target);
-                        navigate(PATHS["ngo-dashboard"]);
+                        navigate(dashboardTabPath("ngo", "messages"));
                       }}
                     />
                   </RequireRole>
@@ -322,10 +333,7 @@ export default function VolunTag() {
                     <ResolveIssueRoute
                       ngoEmail={dashboardEmail}
                       showToast={showToast}
-                      onBack={() => {
-                        setNgoReturnTab("problems");
-                        navigate(PATHS["ngo-dashboard"]);
-                      }}
+                      onBack={() => navigate(dashboardTabPath("ngo", "problems"))}
                     />
                   </RequireRole>
                 }
@@ -365,12 +373,22 @@ export default function VolunTag() {
                 }
               />
 
+              <Route path="/about" element={<About />} />
+
+              <Route path="/contact" element={<Contact />} />
+
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+
+              <Route
+                path="/reset-password"
+                element={<ResetPassword showToast={showToast} />}
+              />
+
               {Object.entries(COMING_SOON_PAGES).map(([path, title]) => (
                 <Route key={path} path={path} element={<ComingSoon title={title} />} />
               ))}
 
-              {/* Any other unknown address goes home. */}
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           )}
         </div>

@@ -1,4 +1,4 @@
-/* ─── Coming soon pages (News, About, Contact) ───────────────────── */
+/* ─── Coming soon pages (News) and the 404 page ──────────────────── */
 
 .coming-soon-page {
   display: flex;
@@ -73,4 +73,22 @@
   .coming-soon-card {
     padding: 2.25rem 1.25rem;
   }
+}
+
+/* ─── 404 page (reuses the card above) ───────────────────────────── */
+
+.not-found-path {
+  font-size: 0.85em;
+  background: var(--mist);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  word-break: break-all;
+}
+
+.not-found-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem 1.5rem;
 }

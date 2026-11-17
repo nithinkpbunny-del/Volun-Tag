@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Messages from "../messaging/Messages";
 import AuthImage from "../AuthImage";
+import PhaseBadge from "../PhaseBadge";
 import "./VolunteerDashboard.css";
 import { API_BASE } from "../../config";
 import { authFetch } from "../../api";
 import { PATHS } from "../../routes";
+import { formatEventDay, formatTimestampDate, isOpenPhase } from "../../dates";
+
+// Tabs, in the order shown; the current one is kept in the address (?tab=).
+export const VOLUNTEER_TABS = ["profile", "messages", "activity", "settings"];
+const DEFAULT_TAB = "profile";
 
 const SECTORS = ["Education", "Health", "Environment", "Animal Welfare", "Social Services"];
 const MAX_ISSUE_IMAGES = 6;
@@ -24,7 +30,7 @@ const readErrorDetail = async (res, fallback) => {
 };
 
 // One clickable thumbnail of a reported photo; hidden if the image cannot be loaded.
-function IssuePhotoThumb({ src, alt }) {
+function IssuePhotoThumb({ src, alt, onOpenError }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) return null;
@@ -35,11 +41,12 @@ function IssuePhotoThumb({ src, alt }) {
       alt={alt}
       linkClassName="dashboard-issue-photo"
       onFail={() => setFailed(true)}
+      onOpenError={onOpenError}
     />
   );
 }
 
-export default function VolunteerDashboard({ email, showToast, onReportProblem, initialTab, onInitialConsumed }) {
+export default function VolunteerDashboard({ email, showToast, onReportProblem }) {
   const navigate = useNavigate();
   // navigate changes whenever the address does; keep it out of effect
   // dependencies so the data below is not reloaded by a navigation.
@@ -50,7 +57,14 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [ngos, setNgos] = useState([]);
   const [loadingNgos, setLoadingNgos] = useState(true);
-  const [activeTab, setActiveTab] = useState(initialTab || "profile");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab = VOLUNTEER_TABS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  // Each tab change is a history entry, so Back returns to the previous tab.
+  const setActiveTab = (tab) => {
+    if (tab === activeTab) return;
+    setSearchParams(tab === DEFAULT_TAB ? {} : { tab });
+  };
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
@@ -72,13 +86,6 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
   const [deletingIssueId, setDeletingIssueId] = useState(null);
   // Bumped after a save or delete so an older in-flight refresh cannot overwrite the result.
   const issuesEpochRef = useRef(0);
-
-  useEffect(() => {
-    if (initialTab) {
-      onInitialConsumed && onInitialConsumed();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!email || activeTab === "messages") {
@@ -624,11 +631,14 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
   return (
     <div className="page dashboard-page">
       <div className="dashboard-shell">
+        <h1 className="sr-only">Volunteer dashboard</h1>
+
         <div className="dashboard-subnav">
-          <div className="dashboard-subnav-tabs">
+          <div className="dashboard-subnav-tabs" role="group" aria-label="Dashboard sections">
             <button
               type="button"
               className={`dashboard-subnav-tab ${activeTab === "profile" ? "active" : ""}`}
+              aria-current={activeTab === "profile" ? "page" : undefined}
               onClick={() => setActiveTab("profile")}
             >
               Profile
@@ -637,6 +647,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
             <button
               type="button"
               className={`dashboard-subnav-tab ${activeTab === "messages" ? "active" : ""}`}
+              aria-current={activeTab === "messages" ? "page" : undefined}
               onClick={() => {
                 setChatTarget(null);
                 setActiveTab("messages");
@@ -651,6 +662,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
             <button
               type="button"
               className={`dashboard-subnav-tab ${activeTab === "activity" ? "active" : ""}`}
+              aria-current={activeTab === "activity" ? "page" : undefined}
               onClick={() => setActiveTab("activity")}
             >
               My Activity
@@ -659,6 +671,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
             <button
               type="button"
               className={`dashboard-subnav-tab ${activeTab === "settings" ? "active" : ""}`}
+              aria-current={activeTab === "settings" ? "page" : undefined}
               onClick={() => setActiveTab("settings")}
             >
               Settings
@@ -762,11 +775,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
                           <p className="dashboard-event-title">{iss.location}</p>
                           <p className="dashboard-event-meta">
                             {iss.complaint_id} · Reported on{" "}
-                            {new Date(iss.created_at).toLocaleDateString("en-IN", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })}
+                            {formatTimestampDate(iss.created_at)}
                           </p>
                           {iss.solved && iss.solved_by_ngo && (
                             <p className="dashboard-event-meta">
@@ -794,6 +803,9 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
                               key={index}
                               src={issuePhotoPath(iss.complaint_id, index)}
                               alt={`Reported photo ${index + 1}`}
+                              onOpenError={() =>
+                                showToast("Could not open the photo. Please try again.", "error")
+                              }
                             />
                           ))}
                         </div>
@@ -932,15 +944,14 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
                     <p className="dashboard-event-title">{item.title}</p>
                     <p className="dashboard-event-meta">{item.ngo_name}</p>
                     <p className="dashboard-event-meta">
-                      {item.event_date
-                        ? new Date(item.event_date).toLocaleDateString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                            year: "numeric",
-                          })
-                        : "Date to be announced"}
+                      {formatEventDay(item.event_day)}
                       {item.location ? ` · ${item.location}` : ""}
                     </p>
+                    {item.event_status !== "Cancelled" && (
+                      <div className="dashboard-phase-row">
+                        <PhaseBadge phase={item.phase} />
+                      </div>
+                    )}
 
                     {item.attendance_status === "attended" && (
                       <>
@@ -1027,8 +1038,9 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
               <div className="dashboard-main-col">
                 <div className="dashboard-filters-row">
                   <input
-                    type="text"
+                    type="search"
                     className="dashboard-search-input"
+                    aria-label="Search NGOs by name"
                     placeholder="Search NGOs by name"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -1036,6 +1048,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
 
                   <select
                     className="dashboard-filter-select"
+                    aria-label="Filter NGOs by location"
                     value={locationFilter}
                     onChange={(e) => setLocationFilter(e.target.value)}
                   >
@@ -1049,6 +1062,7 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
 
                   <select
                     className="dashboard-filter-select"
+                    aria-label="Filter NGOs by sector"
                     value={sectorFilter}
                     onChange={(e) => setSectorFilter(e.target.value)}
                   >
@@ -1142,18 +1156,12 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
                                     {ev.title}
                                   </p>
                                   <p className="dashboard-event-meta">
-                                    {ev.event_date
-                                      ? new Date(ev.event_date).toLocaleDateString(
-                                          "en-IN",
-                                          {
-                                            day: "numeric",
-                                            month: "short",
-                                            year: "numeric",
-                                          }
-                                        )
-                                      : "Date to be announced"}
+                                    {formatEventDay(ev.event_day)}
                                     {ev.location ? ` · ${ev.location}` : ""}
                                   </p>
+                                  <div className="dashboard-phase-row">
+                                    <PhaseBadge phase={ev.phase} />
+                                  </div>
                                   {ev.description && (
                                     <p className="dashboard-event-desc">
                                       {ev.description}
@@ -1176,31 +1184,32 @@ export default function VolunteerDashboard({ email, showToast, onReportProblem, 
                                     <span className="dashboard-joined-label">
                                       Joined
                                     </span>
-                                    <button
-                                      type="button"
-                                      className="dashboard-leave-btn"
-                                      disabled={joiningId !== null}
-                                      onClick={() => leaveActivity(ev)}
-                                    >
-                                      {joiningId === ev.activity_id
-                                        ? "Leaving..."
-                                        : "Leave activity"}
-                                    </button>
+                                    {/* Leaving is possible only until the event day starts. */}
+                                    {isOpenPhase(ev.phase) && (
+                                      <button
+                                        type="button"
+                                        className="dashboard-leave-btn"
+                                        disabled={joiningId !== null}
+                                        onClick={() => leaveActivity(ev)}
+                                      >
+                                        {joiningId === ev.activity_id
+                                          ? "Leaving..."
+                                          : "Leave activity"}
+                                      </button>
+                                    )}
                                   </div>
                                 )}
-                                {!ev.joined && (
-                                <button
-                                  type="button"
-                                  className="dashboard-join-btn"
-                                  disabled={ev.joined || joiningId !== null}
-                                  onClick={() => joinActivity(ev)}
-                                >
-                                  {ev.joined
-                                    ? "Joined"
-                                    : joiningId === ev.activity_id
-                                    ? "Joining..."
-                                    : "Join activity"}
-                                </button>
+                                {!ev.joined && isOpenPhase(ev.phase) && (
+                                  <button
+                                    type="button"
+                                    className="dashboard-join-btn"
+                                    disabled={joiningId !== null}
+                                    onClick={() => joinActivity(ev)}
+                                  >
+                                    {joiningId === ev.activity_id
+                                      ? "Joining..."
+                                      : "Join activity"}
+                                  </button>
                                 )}
                               </div>
                             ))}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import "./Messages.css";
 import AuthImage from "../AuthImage";
+import { parseServerTime } from "../../dates";
 import { API_BASE } from "../../config";
 import { authFetch, openAuthedFile } from "../../api";
 
@@ -22,7 +23,9 @@ function formatFileSize(bytes) {
 function formatLocalTime(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   } catch {
     return "";
@@ -40,7 +43,9 @@ function isSameDay(d1, d2) {
 function formatDateSeparator(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
@@ -61,7 +66,9 @@ function formatDateSeparator(isoStr) {
 function formatConvoTime(isoStr) {
   if (!isoStr) return "";
   try {
-    const d = new Date(isoStr);
+    // Server times are naive UTC; read them as UTC, show them in local time.
+    const d = parseServerTime(isoStr);
+    if (!d) return "";
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
